@@ -1,0 +1,1292 @@
+// Procedural PBR materials for the city: facades (with interior mapping), roofs, roads, footways, ground.
+import * as THREE from 'three';
+import { U } from './globals.js';
+import { NOISE, AA } from './shaderlib.js';
+import { makeSignAtlas } from './signAtlas.js';
+import { makeInteriorAtlas } from './interiorAtlas.js';
+import { HF, HF_GLSL } from './heightfield.js';
+
+export const LIT = { office: { value: 0.0 }, resi: { value: 0.0 } };
+// planar reflection of the bay, reused (approximately) for wet roads — set by Water
+// planar reflection shared by water and wet roads; road = 1 when it was rendered about the street plane (no water on
+// screen) so roads project their real height into it, 0 when it mirrors about the water level
+export const REFL = { tex: { value: null }, mat: { value: null }, on: { value: 0 }, road: { value: 0 } };
+
+// IBL control: neutralise the blue sky irradiance (fake bounce light) and scale reflections separately
+export const IBL_CHUNK = /* glsl */`
+#include <lights_fragment_maps>
+iblIrradiance = mix(vec3(dot(iblIrradiance, vec3(0.3333))), iblIrradiance, 0.45) * uIblDiffuse;
+radiance *= uIblSpec * uIblSpecMat;
+`;
+// City height field lighting (see heightfield.js): far-field sun shadow beyond the shadow map's box scales the sun,
+// street-canyon sky visibility scales sky/ambient light. Works from view-space data, so any patched material gets it.
+const HF_EVAL = /* glsl */`
+  float hfSun = 1.0, hfSky = 1.0;
+  if (uHFOn > 0.5) {
+    vec3 hfP = cameraPosition + (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
+    vec3 hfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+    float farW = smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(hfP.xz - uHFShadowC.xz));
+    if (farW > 0.0) hfSun = mix(1.0, hfSunVis(hfP, hfN, uHFSun), farW);
+    // canyon occlusion fades out with distance (haze hides it; saves 18 taps on the far city)
+    float hfD = length(hfP - cameraPosition);
+    if (hfD < 900.0) hfSky = mix(hfSkyVis(hfP, hfN), 1.0, smoothstep(600.0, 900.0, hfD));
+  }
+`;
+const HF_LIGHTS = THREE.ShaderChunk.lights_fragment_begin.replace('getDirectionalLightInfo( directionalLight, directLight );', 'getDirectionalLightInfo( directionalLight, directLight ); directLight.color *= hfSun;');
+const HF_APPLY = /* glsl */`
+  { float sk = mix(0.42, 1.0, hfSky); irradiance *= sk; iblIrradiance *= sk; radiance *= mix(0.7, 1.0, hfSky); }
+`;
+function patch(mat, { uniforms = {}, vertexHead = '', vertexBody = '', fragHead = '', fragAfterMetal = '', fragAfterNormal = '', fragAfterIbl = '', fragAfterEmissive = '', key, specMul = 1, hf = true }) {
+  mat.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, uniforms, { uIblDiffuse: U.iblDiffuse, uIblSpec: U.iblSpec, uIblSpecMat: { value: specMul } });
+    if (hf) Object.assign(shader.uniforms, { uHF: HF.tex, uHFRect: HF.rect, uHFOn: HF.on, uHFShadowC: HF.shadowCenter, uHFShadowR: HF.shadowR, uHFSun: U.sunDir });
+    const head = 'uniform float uIblDiffuse; uniform float uIblSpec; uniform float uIblSpecMat;\n' + (hf ? HF_GLSL + 'uniform vec3 uHFSun;\n' : '') + fragHead;
+    shader.vertexShader = vertexHead + '\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + vertexBody);
+    shader.fragmentShader = head + '\n' + shader.fragmentShader
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n' + fragAfterMetal)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + (hf ? HF_EVAL : '') + fragAfterNormal)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + fragAfterEmissive)
+      .replace('#include <lights_fragment_begin>', hf ? HF_LIGHTS : '#include <lights_fragment_begin>')
+      .replace('#include <lights_fragment_maps>', IBL_CHUNK + fragAfterIbl + (hf ? HF_APPLY : ''));
+    mat.userData.shader = shader;
+  };
+  mat.customProgramCacheKey = () => key + (hf ? '-hf1' : '');
+  return mat;
+}
+
+const COMMON_U = () => ({ uTime: U.time, uNight: U.night, uWet: U.wet, uRain: U.rain, uOfficeLit: LIT.office, uResiLit: LIT.resi, uDetailDist: U.detailDist });
+const COMMON_HEAD = /* glsl */`
+uniform float uTime; uniform float uNight; uniform float uWet; uniform float uRain; uniform float uOfficeLit; uniform float uResiLit; uniform float uDetailDist;
+varying vec3 vWPos; varying vec3 vWN;
+${NOISE}
+${AA}
+`;
+const COMMON_VHEAD = /* glsl */`varying vec3 vWPos; varying vec3 vWN;`;
+const COMMON_VBODY = /* glsl */`vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal);`;
+
+// ------------------------------------------------------------------ facades
+// cheap variant for the half-res planar water reflection: wall colour, the window grid (filtered to its average where
+// windows are sub-pixel) and lit windows at night; no interior mapping, weathering, signs, trims or normal tilt
+const FACADE_REFLECTION_FRAG = /* glsl */`
+      float fStyle = floor(vF1.x + 0.5);
+      float fSeed = vF1.y; float fh = vF1.z; float fBase = vF1.w;
+      float wallLen = vF2.x; float fTop = vF2.y;
+      float fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
+      vec3 wallCol = diffuseColor.rgb, albedo = wallCol;
+      float fRough = 0.86, fMetal = 0.0;
+      vec3 fEmis = vec3(0.0);
+      if (fStyle < 11.5) {
+        float colW = 0.0; vec2 lo = vec2(0.2, 0.3), hi = vec2(0.8, 0.8);
+        if (fStyle < 0.5) { colW = 1.6; lo = vec2(0.03, 0.11); hi = vec2(0.97, 0.985); albedo = mix(albedo * 0.55, vec3(0.32), 0.35); fMetal = 0.6; fRough = 0.35; }
+        else if (fStyle < 1.5) { colW = 2.8; lo = vec2(0.05, 0.30); hi = vec2(0.95, 0.88); }
+        else if (fStyle < 2.5) { colW = 2.7; lo = vec2(0.14, 0.22); hi = vec2(0.86, 0.84); }
+        else if (fStyle < 3.5) { colW = fFlag > 4.5 ? 0.0 : 3.0; lo = vec2(0.22, 0.34); hi = vec2(0.78, 0.80); }
+        else if (fStyle < 4.5) { colW = 2.5; lo = vec2(0.22, 0.14); hi = vec2(0.78, 0.84); }
+        else if (fStyle < 5.5) { colW = 3.0; lo = vec2(0.18, 0.30); hi = vec2(0.82, 0.82); }
+        else if (fStyle < 6.5) { colW = 3.4; lo = vec2(0.3, 0.18); hi = vec2(0.7, 0.82); }
+        else if (fStyle < 7.5) { colW = 6.0; lo = vec2(0.07, 0.36); hi = vec2(0.93, 0.94); }
+        else if (fStyle > 8.5 && fStyle < 9.5) { colW = 7.0; lo = vec2(0.3, 0.72); hi = vec2(0.7, 0.9); }
+        else if (fStyle > 9.5 && fStyle < 10.5) { colW = 2.0; lo = vec2(0.03, 0.05); hi = vec2(0.97, 0.95); }
+        if (colW > 0.0 && fh > 0.5) {
+          float nCols = max(1.0, floor(wallLen / colW + 0.5)), cw = wallLen / nCols;
+          vec2 cell = vec2(vWall.x / cw, (vWall.y - fBase) / fh), cid = floor(cell);
+          float nFloors = max(1.0, floor((fTop - fBase) / fh + 0.01));
+          vec2 fw = fwidth(cell);
+          float win = mix(aaBox(fract(cell), lo, hi), (hi.x - lo.x) * (hi.y - lo.y), smoothstep(0.2, 0.6, max(fw.x, fw.y)));
+          win *= step(0.0, cell.y) * step(cell.y, nFloors - 0.02);
+          bool resi = fStyle > 1.5 && fStyle < 4.5;
+          float litFrac = resi ? uResiLit : uOfficeLit;
+          litFrac = clamp(litFrac * (resi ? mix(0.7, 1.3, fract(fSeed * 23.7)) : mix(0.3, 1.75, fract(fSeed * 41.3))), 0.0, 1.0);
+          float lit = step(hash13(vec3(cid.yx + 17.0, fSeed * 31.0)), litFrac);
+          vec3 lampCol = resi ? vec3(1.0, 0.7, 0.42) : vec3(0.85, 0.9, 1.0);
+          vec3 gAlb = fStyle < 0.5 ? mix(vec3(0.03), wallCol * 1.1, 0.75) : vec3(0.02, 0.025, 0.03);
+          albedo = mix(albedo, gAlb, win);
+          fMetal = mix(fMetal, fStyle < 0.5 ? 0.35 : 0.06, win); fRough = mix(fRough, 0.06, win);
+          fEmis += (lampCol * lit * (resi ? 0.3 : 0.2) + 0.03 * (1.0 - uNight)) * win;
+        }
+      }
+      fRough = mix(fRough, fRough * 0.5, uWet);
+      diffuseColor.rgb = albedo;
+      roughnessFactor = fRough;
+      metalnessFactor = fMetal;
+`;
+
+export function createFacadeMaterial({ reflection = false } = {}) {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.0 });
+  if (reflection) return patch(mat, {
+    key: 'facade-refl-v2', specMul: 1.35, hf: false,
+    uniforms: COMMON_U(),
+    vertexHead: COMMON_VHEAD + /* glsl */`
+      attribute vec2 aWall; attribute vec4 aF1; attribute vec4 aF2;
+      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
+    vertexBody: COMMON_VBODY + `vWall = aWall; vF1 = aF1; vF2 = aF2;`,
+    fragHead: COMMON_HEAD + `varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
+    fragAfterMetal: FACADE_REFLECTION_FRAG,
+    fragAfterEmissive: `totalEmissiveRadiance += fEmis;`,
+  });
+  return patch(mat, {
+    key: 'facade-v3', specMul: 1.35,
+    uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir },
+    vertexHead: COMMON_VHEAD + /* glsl */`
+      attribute vec2 aWall; attribute vec4 aF1; attribute vec4 aF2;
+      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
+    vertexBody: COMMON_VBODY + `vWall = aWall; vF1 = aF1; vF2 = aF2;`,
+    fragHead: COMMON_HEAD + /* glsl */`
+      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;
+      uniform sampler2D uSigns; uniform sampler2D uInterior; uniform vec3 uSunDirF;
+      // local clock time from the sun vector (inverse of sky.js sunDirection: late-October declination, lat 1.29 N)
+      float localHour() {
+        const float sD = -0.19937, cD = 0.97992, sL = 0.022512, cL = 0.99975;
+        float H = atan(-uSunDirF.x / cD, (uSunDirF.y - sD * sL) / (cD * cL));
+        return mod(13.08 + H * 3.819719, 24.0);
+      }
+      // share of shops trading at this hour: shutters go up 07:00-09:30 (kopitiams and bakeries from ~06:00), most
+      // trade until ~21:00, the late ones until ~23:00, nearly all shut overnight
+      float shopOpenFrac(float hr, float early) {
+        float o = smoothstep(6.4 - early, 9.4 - early * 1.6, hr) * (1.0 - smoothstep(20.3 + early * 0.9, 22.9 + early * 0.6, hr));
+        return mix(0.025, 0.95, o);
+      }
+      // interior atlas (interiorAtlas.js): 8 back-wall scenes in 4 x 2 cells over the top 80% of the texture
+      vec3 interiorCell(float i, vec2 lc, vec2 gx, vec2 gy) {
+        lc = clamp(lc, vec2(0.015), vec2(0.985));
+        vec2 uv = vec2((mod(i, 4.0) + lc.x) * 0.25, 1.0 - (floor(i / 4.0) + 1.0 - lc.y) * 0.4);
+        return textureGrad(uInterior, uv, gx * vec2(0.25, 0.4), gy * vec2(0.25, 0.4)).rgb;
+      }
+      vec3 hdbAccent(float i) {
+        i = mod(i, 8.0);
+        if (i < 0.5) return vec3(0.69, 0.10, 0.08);
+        if (i < 1.5) return vec3(0.05, 0.25, 0.58);
+        if (i < 2.5) return vec3(0.10, 0.48, 0.10);
+        if (i < 3.5) return vec3(0.87, 0.42, 0.06);
+        if (i < 4.5) return vec3(0.27, 0.15, 0.47);
+        if (i < 5.5) return vec3(0.02, 0.45, 0.38);
+        if (i < 6.5) return vec3(0.76, 0.20, 0.05);
+        return vec3(0.59, 0.07, 0.20);
+      }
+      vec3 shutterCol(float h) {
+        if (h < 0.25) return vec3(0.05, 0.22, 0.12);
+        if (h < 0.5) return vec3(0.04, 0.13, 0.28);
+        if (h < 0.75) return vec3(0.22, 0.10, 0.04);
+        return vec3(0.55, 0.52, 0.45);
+      }
+      // one signboard from the atlas (60 boards, 4 x 15) with trilinear-safe gradients
+      vec4 signBoard(float idx, vec2 bp, vec2 gx, vec2 gy) {
+        vec2 o = vec2(mod(idx, 4.0), floor(idx / 4.0));
+        return textureGrad(uSigns, (o + vec2(bp.x, 1.0 - bp.y)) / vec2(4.0, 16.0), gx / vec2(4.0, 16.0), gy / vec2(4.0, 16.0));
+      }`,
+    fragAfterMetal: /* glsl */`
+      float fStyle = floor(vF1.x + 0.5);
+      float fSeed = vF1.y; float fh = vF1.z; float fBase = vF1.w;
+      float wallLen = vF2.x; float fTop = vF2.y;
+      float fAccent = mod(vF2.w, 16.0), fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
+      // building use (tools/building-uses.mjs): 0 unknown, 1 retail, 2 health, 3 edu, 4 civic, 5 religious, 6 resi, 7 office, 8 hotel, 9 industrial, 10 parking
+      float fUse = floor(vF2.w / 128.0 + 0.001);
+      bool shopUse = fUse < 1.5;   // only shops (and unknowns) get shopfronts and signboards
+      float fy0 = vWall.y - fBase;
+      vec3 wallCol = diffuseColor.rgb;
+      vec3 albedo = wallCol;
+      float fRough = 0.86, fMetal = 0.0;
+      vec3 fEmis = vec3(0.0);
+      vec3 fNTilt = vec3(0.0);
+      float fSpecOcc = 1.0, fAmbOcc = 1.0;   // covered five-foot-ways / void decks see little sky
+      float camDist = length(vWPos - cameraPosition);
+      vec3 N = normalize(vWN);
+      bool horiz = abs(N.y) > 0.7;
+      float wallId = horiz ? 0.0 : floor(atan(N.z, N.x) * 2.0 + 10.0);
+      bool special = fStyle > 11.5; // arcade soffit / columns / five-foot-way floor
+      if (special || fFlag > 1.5 && fFlag < 3.5) { fSpecOcc = 0.2; fAmbOcc = fStyle > 12.5 && fStyle < 13.5 ? 0.8 : 0.55; }
+
+      if (!special) {
+        // weathering: large scale tone, rain streaks, base dirt, tropical mould creeping up from the ground
+        float big = vnoise(vWPos.xz * 0.013 + vWPos.y * 0.004 + fSeed * 7.0);
+        float streak = vnoise(vec2(vWall.x * 0.9 + wallId * 13.0, vWall.y * 0.022 + fSeed * 10.0));
+        float grime = smoothstep(0.5, 0.95, streak) * (fStyle < 0.5 ? 0.06 : 0.22);
+        albedo *= (0.9 + big * 0.2) * (1.0 - grime);
+        albedo *= mix(0.7, 1.0, smoothstep(-0.2, 1.4, vWall.y));
+        float mould = (1.0 - smoothstep(0.0, 1.2 + 1.6 * vnoise(vec2(vWall.x * 0.6 + wallId * 7.0, fSeed * 5.0)), vWPos.y)) * step(0.5, fStyle);
+        albedo = mix(albedo, albedo * vec3(0.6, 0.66, 0.55), mould * 0.55);
+        albedo *= 1.0 - uWet * 0.28;
+      } else if (fStyle < 12.5) {
+        // ---- arcade / void-deck ceiling: plaster with lamps (warm bulbs for shophouses, tubes for HDB)
+        bool hdbS = fFlag > 2.5;
+        float sp = hdbS ? 6.5 : 5.2;
+        albedo = mix(wallCol, vec3(0.86, 0.85, 0.8), 0.6) * (0.85 + 0.15 * vnoise(vWall * 0.7));
+        vec2 lq = vec2((fract(vWall.x / sp) - 0.5) * sp, vWall.y - (hdbS ? 1.05 : 0.95));
+        float lampM = hdbS ? (1.0 - smoothstep(0.55, 0.62, abs(lq.x))) * (1.0 - smoothstep(0.035, 0.06, abs(lq.y)))
+                           : 1.0 - smoothstep(0.09, 0.14, length(lq));
+        vec3 lc = hdbS ? vec3(0.85, 0.95, 1.0) : vec3(1.0, 0.7, 0.38);
+        fEmis += lc * lampM * (0.25 + uNight * 7.0);
+        fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * uNight * 0.45;
+        fRough = 0.92;
+      } else if (fStyle < 13.5) {
+        // ---- columns: shophouse piers wear a Peranakan tile dado, HDB pillars a painted base band
+        bool hdbP = fFlag > 2.5;
+        float y = vWall.y;
+        albedo = wallCol * (0.9 + 0.12 * vnoise(vec2(vWall.x * 2.0, y * 1.5) + fSeed));
+        if (!hdbP && y < 1.2) {
+          vec2 tq = vec2(vWall.x, y + 0.02) / 0.15;
+          vec2 tid = floor(tq), tf = fract(tq);
+          float pal = hash12(vec2(fSeed * 3.0, 1.0));
+          vec3 base = mix(vec3(0.62, 0.78, 0.72), vec3(0.86, 0.62, 0.58), step(0.5, pal));
+          float r = length(tf - 0.5);
+          float petal = smoothstep(0.36, 0.3, r) * (0.5 + 0.5 * cos(atan(tf.y - 0.5, tf.x - 0.5) * 4.0));
+          vec3 tc = mix(vec3(0.93, 0.91, 0.85), base, smoothstep(0.5, 0.42, r) * 0.7);
+          tc = mix(tc, mix(vec3(0.72, 0.18, 0.25), vec3(0.15, 0.38, 0.58), step(0.5, hash12(tid + pal * 9.0))), petal * 0.85);
+          float grout = 1.0 - aaBand(tf.x, 0.04, 0.96) * aaBand(tf.y, 0.04, 0.96);
+          albedo = mix(tc, vec3(0.6), grout * 0.6);
+          if (y > 1.1) albedo = vec3(0.8, 0.78, 0.72);
+          fRough = 0.32;
+        } else if (hdbP && y < 1.05) albedo = mix(albedo, hdbAccent(fAccent) * 0.85, 0.9);
+        albedo *= mix(0.65, 1.0, smoothstep(-0.2, 0.8, y));
+      } else {
+        // ---- five-foot-way / void-deck floor: patterned cement tiles, terrazzo for HDB
+        vec2 tq = vWall / (fFlag > 2.5 ? 0.4 : 0.22); vec2 tid = floor(tq), tf = fract(tq);
+        float chk = mod(tid.x + tid.y, 2.0);
+        albedo = fFlag > 2.5 ? wallCol * (0.9 + 0.15 * hash12(tid)) : mix(wallCol, wallCol * vec3(0.55, 0.42, 0.36), chk);
+        if (fFlag < 2.5) { float m = smoothstep(0.3, 0.22, length(tf - 0.5)); albedo = mix(albedo, vec3(0.75, 0.72, 0.62), m * 0.5); }
+        float grout = 1.0 - aaBand(tf.x, 0.03, 0.97) * aaBand(tf.y, 0.03, 0.97);
+        albedo = mix(albedo, albedo * 0.55, grout);
+        albedo *= 0.8 + 0.3 * vnoise(vWall * 0.8 + fSeed * 9.0);
+        fRough = mix(0.55, 0.2, uWet);
+      }
+
+      bool shop = fStyle > 3.5 && fStyle < 4.5;
+      bool hdb = fStyle > 2.5 && fStyle < 3.5;
+      float glassType = fract(fSeed * 3.17);
+      float colW = 0.0; vec2 wLo = vec2(0.2, 0.3), wHi = vec2(0.8, 0.8);
+      if (special) { colW = 0.0; }
+      else if (fStyle < 0.5) { colW = 1.4 + fSeed * 0.6; wLo = vec2(0.03, 0.11); wHi = vec2(0.97, 0.985);
+        if (glassType > 0.45 && glassType < 0.72) { wLo = vec2(0.02, 0.38); wHi = vec2(0.98, 0.97); } }
+      else if (fStyle < 1.5) { colW = 2.6 + fSeed * 0.8; wLo = vec2(0.05, 0.30); wHi = vec2(0.95, 0.88); }
+      else if (fStyle < 2.5) { colW = 2.7; wLo = vec2(0.14, 0.22); wHi = vec2(0.86, 0.84); }
+      else if (fStyle < 3.5) { colW = fFlag > 4.5 ? 0.0 : 3.0; wLo = vec2(0.22, 0.34); wHi = vec2(0.78, 0.80); }
+      else if (fStyle < 4.5) { colW = 2.5; wLo = vec2(0.22, 0.14); wHi = vec2(0.78, 0.84); }
+      else if (fStyle < 5.5) { colW = 3.0; wLo = vec2(0.18, 0.30); wHi = vec2(0.82, 0.82); }
+      else if (fStyle < 6.5) { colW = 3.4; wLo = vec2(0.3, 0.18); wHi = vec2(0.7, 0.82); }
+      else if (fStyle < 7.5) { colW = 6.0; wLo = vec2(0.07, 0.36); wHi = vec2(0.93, 0.94); }
+      else if (fStyle < 8.5) { colW = 0.0; }
+      else if (fStyle < 9.5) { colW = 7.0; wLo = vec2(0.3, 0.72); wHi = vec2(0.7, 0.9); }
+      else if (fStyle < 10.5) { colW = 2.0; wLo = vec2(0.03, 0.05); wHi = vec2(0.97, 0.95); }
+
+      if (fStyle > 8.5 && fStyle < 9.5) albedo *= 0.88 + 0.12 * step(0.5, fract(vWall.x * 3.0)); // corrugated cladding
+
+      // ---- HDB end walls: blank, two accent pinstripes and the painted block number near the top
+      if (hdb && fFlag > 4.5) {
+        float ex = min(vWall.x, wallLen - vWall.x);
+        albedo = mix(albedo, hdbAccent(fAccent), aaBand(ex, 0.9, 1.25) * step(fBase + fh, vWall.y) * 0.85);
+        float num = floor(1.0 + hash12(vec2(fSeed * 91.0, 3.0)) * 698.0);
+        float nd = num < 9.5 ? 1.0 : (num < 99.5 ? 2.0 : 3.0);
+        float dH = clamp(wallLen * 0.16, 1.8, 3.0), dW = dH * 0.6;
+        float lx = ((wallLen - vWall.x) - (wallLen - nd * dW) * 0.5) / dW, ly = (vWall.y - (fTop - 1.4 - dH)) / dH;
+        if (lx >= 0.0 && lx < nd && ly >= 0.0 && ly < 1.0) {
+          float di = floor(lx);
+          float dig = mod(floor(num / pow(10.0, nd - 1.0 - di) + 1e-3), 10.0);
+          // sample the inner 86% of the glyph cell so mips never bleed in the neighbouring cells / board row
+          vec2 g = vec2(lx, -ly) * 0.86 / vec2(10.0, 16.0);
+          float a = textureGrad(uSigns, vec2((dig + 0.07 + fract(lx) * 0.86) / 10.0, (15.07 + (1.0 - ly) * 0.86) / 16.0), dFdx(g), dFdy(g)).a;
+          albedo = mix(albedo, hdbAccent(fAccent) * 0.55, a);
+        }
+      }
+
+      if (colW > 0.0 && fh > 0.5) {
+        float nCols = max(1.0, floor(wallLen / colW + 0.5));
+        float cw = wallLen / nCols;
+        vec2 cell = vec2(vWall.x / cw, fy0 / fh);
+        vec2 cid = floor(cell);
+        vec2 cf = fract(cell);
+        float nFloors = max(1.0, floor((fTop - fBase) / fh + 0.01));
+        bool ground = cid.y < 0.5 && fBase < 1.0;
+        bool shopFront = shop && shopUse && fFlag > 0.5 && fFlag < 1.5;     // facade above the five-foot-way
+        bool shopRecess = shop && shopUse && fFlag > 1.5 && fFlag < 2.5;    // shopfront behind the arcade
+        // glazed double-height lobby: offices, hotels, hospitals, condos, civic towers (and unknown towers over 60 m)
+        bool lobby = ground && fStyle < 2.5 && fFlag < 0.5 && ((fUse > 1.5 && fUse < 8.5 && fUse != 3.0 && fUse != 5.0) || (fUse < 0.5 && fStyle < 1.5 && fTop >= 60.0));
+        bool hdbCorr = hdb && fFlag > 3.5 && fFlag < 4.5;
+        bool hdbVoid = hdb && fFlag > 2.5 && fFlag < 3.5;
+        // ground-floor shops trade by the clock: per-unit hours, ~6% vacant units, a family of goods per unit
+        bool shopG = ground && shop && shopUse;
+        float famH = hash12(vec2(cid.x * 3.7 + wallId * 1.9, fSeed * 53.0));
+        float shopFam = famH < 0.24 ? 0.0 : famH < 0.42 ? 1.0 : famH < 0.52 ? 4.0 : famH < 0.64 ? 5.0 : famH < 0.8 ? 6.0 : 7.0;
+        bool shopOpen = false, glassFront = shopFam > 3.5 && shopFam != 6.0; // goldsmith, bakery, pharmacy: air-conditioned
+        if (shopG) {
+          float early = shopFam == 1.0 || shopFam == 5.0 ? 1.0 : 0.0;
+          bool vacant = hash12(vec2(cid.x * 5.1 + wallId, fSeed * 71.0)) < 0.04;
+          shopOpen = !vacant && hash12(vec2(cid.x * 2.3 + wallId * 7.0, fSeed * 13.0)) < shopOpenFrac(localHour(), early);
+        }
+        bool healthLobby = false;
+        vec2 lo = wLo, hi = wHi;
+        if (ground) {
+          if (lobby) { lo = vec2(0.015, 0.0); hi = vec2(0.985, 0.9); healthLobby = fUse > 1.5 && fUse < 2.5 && wallLen > 14.0; if (healthLobby) hi.y = 0.7; }
+          else if (shopRecess) { lo = vec2(0.05, 0.0); hi = vec2(0.95, 0.76); }
+          else if (hdb) { lo = vec2(0.1, 0.0); hi = vec2(0.9, 0.93); }
+          else if (shop) { lo = vec2(0.07, 0.0); hi = vec2(0.93, 0.8); }
+          else if (fStyle < 6.5) { lo = vec2(0.04, 0.02); hi = vec2(0.96, 0.9); }
+        }
+        if (shopFront && cid.y > 0.5 && cid.y < 1.5) lo.y = 0.4;   // first floor windows sit above the signboard
+        if (hdbCorr) { lo = vec2(0.52, 0.5); hi = vec2(0.9, 0.84); }
+        // condos: bays of balconies (floor-to-ceiling glazing behind a glass balustrade) between punched windows
+        bool condo = fStyle > 1.5 && fStyle < 2.5 && !ground;
+        bool balc = condo && fract(fSeed * 5.1) < 0.8 && mod(cid.x + floor(fract(fSeed * 3.3) * 4.0), 3.0 + step(0.5, fract(fSeed * 13.1))) < 1.0 + step(0.45, fract(fSeed * 7.7));
+        if (balc) { lo = vec2(0.03, 0.07); hi = vec2(0.97, 0.97); }
+        float win = aaBox(cell, lo, hi);
+        if (cell.y > nFloors - 0.02 || cell.y < 0.0) win = 0.0;
+        if (hdbVoid) win *= step(hash12(vec2(cid.x, fSeed * 13.0)), 0.3); // a few open passages through the void deck
+        // arched openings (civic windows, shophouse fronts that face no street)
+        if ((fStyle > 5.5 && fStyle < 6.5) || (ground && shop && !shopRecess)) {
+          float archY = mix(lo.y, hi.y, 0.72);
+          vec2 q = vec2((cf.x - 0.5) * cw, (cf.y - archY) * fh);
+          float r = (hi.x - lo.x) * 0.5 * cw;
+          float inArch = 1.0 - smoothstep(r - 0.05, r + 0.05, length(q));
+          if (cf.y > archY) win *= inArch;
+        }
+        vec2 fw = fwidth(cell);
+        float far = smoothstep(0.2, 0.6, max(fw.x, fw.y));
+        float farLit = smoothstep(0.3, 1.1, max(fw.x, fw.y));
+        float cover = (hi.x - lo.x) * (hi.y - lo.y);
+        win = mix(win, cover * step(cell.y, nFloors) * step(0.0, cell.y), far);
+
+        float h = hash13(vec3(cid, fSeed * 97.0 + wallId));
+        float h2 = hash13(vec3(cid.yx + 17.0, fSeed * 31.0 + wallId * 3.0));
+        bool resi = fStyle > 1.5 && fStyle < 4.5;
+        float litFrac = resi ? uResiLit : uOfficeLit;
+        // occupancy differs per building: one tower still glowing at 23:00, its neighbour nearly dark
+        litFrac = clamp(litFrac * (resi ? mix(0.7, 1.3, fract(fSeed * 23.7)) : mix(0.3, 1.75, fract(fSeed * 41.3))), 0.0, 1.0);
+        if (ground) litFrac = max(litFrac, 0.6 * uNight);
+        // offices light whole open-plan floor zones (a few stray desks on dark floors); homes window by window
+        float zone = floor(cid.x / 5.0);
+        float hf = hash12(vec2(cid.y * 1.37 + zone * 17.3, fSeed * 61.0 + wallId));
+        bool floorOn = hf < litFrac * 1.08;
+        bool lit = resi || ground ? h2 < litFrac : (floorOn ? h2 < 0.9 : h2 < 0.04);
+
+        // ---- non-window wall details per style
+        if (fStyle < 0.5) {
+          // curtain wall: frame + spandrel tinted metal; ribbon glazing has solid spandrel panels; some towers have fins
+          albedo = mix(albedo * 0.55, vec3(0.32), 0.35);
+          fMetal = 0.6; fRough = 0.35;
+          if (glassType > 0.72) {
+            float fin = (1.0 - aaStep(0.13, cf.x)) * (1.0 - far * 0.6);
+            albedo = mix(albedo, mix(vec3(0.62, 0.64, 0.66), wallCol * 1.3, 0.3), fin);
+            fMetal = mix(fMetal, 0.85, fin); fRough = mix(fRough, 0.28, fin);
+            win *= 1.0 - fin;
+          }
+        } else if (hdb) {
+          vec3 acc = hdbAccent(fAccent);
+          if (ground) {
+            // void deck back wall: tiled dado, lift doors, letterboxes
+            albedo = mix(albedo * 0.9, vec3(0.8, 0.8, 0.76), aaBand(vWall.y, -1.0, 1.15) * 0.8);
+            float lift = aaBand(cf.x, 0.38, 0.62) * (1.0 - aaStep(0.72, cf.y)) * step(0.6, hash12(vec2(cid.x * 3.1, fSeed)));
+            albedo = mix(albedo, vec3(0.55, 0.57, 0.6) * (0.9 + 0.1 * step(0.5, fract(cf.x * 2.0 * cw / (0.24 * cw) ))), lift);
+            fMetal = mix(fMetal, 0.7, lift); fRough = mix(fRough, 0.3, lift);
+          } else if (hdbCorr) {
+            // common corridor: parapet wall with an accent coping, dark corridor behind, doors and gates
+            float par = 1.0 - aaStep(0.42, cf.y);
+            float corr = (1.0 - par) * (1.0 - aaStep(0.97, cf.y));
+            albedo = mix(albedo, acc, aaBand(cf.y, 0.37, 0.42) * 0.9);
+            vec3 back = wallCol * 0.42;
+            float door = aaBand(cf.x, 0.1, 0.36) * aaBand(cf.y, 0.42, 0.9);
+            float gate = step(0.5, fract(cf.x * cw * 9.0)) * door;
+            back = mix(back, vec3(0.28, 0.17, 0.1), door);
+            back = mix(back, vec3(0.12), gate * 0.6);
+            albedo = mix(albedo, back * (0.6 + 0.4 * smoothstep(0.97, 0.6, cf.y)), corr);
+            vec2 lq = vec2((cf.x - 0.62) * cw, (cf.y - 0.93) * fh);
+            fEmis += vec3(0.85, 0.95, 1.0) * (1.0 - smoothstep(0.25, 0.32, abs(lq.x))) * (1.0 - smoothstep(0.03, 0.05, abs(lq.y))) * (0.2 + uNight * 3.0) * corr * (1.0 - far);
+            fEmis += vec3(0.6, 0.65, 0.7) * uNight * 0.08 * corr;
+          } else {
+            // AC ledges / planter bands at every floor, stair core with breeze blocks
+            float ledge = 1.0 - aaStep(0.09, cf.y);
+            albedo = mix(albedo, albedo * 1.08, ledge);
+            albedo *= 1.0 - 0.28 * aaBand(cf.y, 0.09, 0.16) * (1.0 - far);
+            float core = step(abs(cid.x - floor(nCols * (0.3 + 0.4 * fract(fSeed * 7.0)))), 0.5) * step(22.0, wallLen) * step(0.5, cell.y);
+            if (core > 0.5) {
+              // stair core: accent panel with a column of breeze-block vents
+              vec2 bq = fract(vec2(cf.x * cw, cf.y * fh) / 0.3);
+              float hole = aaBand(bq.x, 0.25, 0.75) * aaBand(bq.y, 0.25, 0.75) * aaBand(cf.x, 0.3, 0.7) * aaBand(cf.y, 0.25, 0.85) * (1.0 - far);
+              albedo = mix(mix(albedo, acc, 0.55), albedo * 0.25, hole * 0.8);
+              win = 0.0;
+            }
+            if (cell.y > nFloors - 1.0) albedo = mix(albedo, acc, 0.85);
+            // outdoor aircon condensers on the ledge under most windows (0.85 x 0.6 m, fan grille, drip stain)
+            float acH = hash12(vec2(cid.x * 7.3 + wallId, cid.y * 3.1 + fSeed * 17.0));
+            if (acH < 0.6 && core < 0.5 && far < 0.9 && cell.y < nFloors - 1.0) {
+              vec2 am = vec2((cf.x - 0.3 - 0.25 * fract(acH * 7.0)) * cw, (cf.y - 0.1) * fh);
+              if (am.x > 0.0 && am.x < 0.85 && am.y > 0.0 && am.y < 0.6) {
+                float rr = length(am - vec2(0.32, 0.3));
+                float fan = 1.0 - smoothstep(0.19, 0.22, rr);
+                float grille = 0.55 + 0.45 * step(0.5, fract(rr * 28.0));
+                vec3 unitC = vec3(0.8, 0.8, 0.77) * (0.92 + 0.1 * acH);
+                unitC = mix(unitC, vec3(0.22) * grille, fan * 0.85);
+                unitC *= 1.0 - 0.35 * aaBand(am.x, 0.66, 0.7);       // side vents
+                albedo = mix(albedo, unitC, 1.0 - far);
+                fRough = mix(fRough, 0.5, 1.0 - far);
+              } else if (am.x > 0.05 && am.x < 0.8 && am.y < 0.0 && am.y > -0.9) {
+                albedo *= 1.0 - 0.18 * (1.0 + am.y / 0.9) * (1.0 - far);   // grime streak under the unit
+              }
+            }
+          }
+        } else if (shop) {
+          // pilasters at the party walls, moulded cornice at every floor, ventilation grilles over the windows
+          float ex = min(vWall.x, wallLen - vWall.x);
+          float pil = (1.0 - aaStep(0.38, ex)) * step(0.5, cell.y);
+          float pil2 = mod(cid.x, 2.0) < 0.5 && !shopFront ? (1.0 - aaStep(0.09, cf.x)) * step(0.5, cell.y) : 0.0;
+          vec3 trim = mix(vec3(0.9, 0.88, 0.82), wallCol * 1.15, 0.25);
+          albedo = mix(albedo, trim, max(pil, pil2 * 0.75));
+          albedo *= 1.0 - 0.25 * aaBand(ex, 0.38, 0.46) * step(0.5, cell.y);          // pilaster side shadow
+          if (!ground) {
+            float corn = 1.0 - aaStep(0.07, cf.y);
+            albedo = mix(albedo, trim, corn * 0.85);
+            albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.07, 0.11) * (1.0 - far);
+            float vent = aaBand(cf.x, lo.x + 0.04, hi.x - 0.04) * aaBand(cf.y, hi.y + 0.03, hi.y + 0.1);
+            albedo = mix(albedo, albedo * (0.55 + 0.45 * step(0.5, fract(cf.x * cw * 12.0))), vent * (1.0 - far));
+          }
+          float cornice = (cell.y > nFloors - 0.18) ? 1.0 : 0.0;
+          albedo = mix(albedo, trim, cornice * 0.8);
+          albedo *= 1.0 - 0.35 * aaBand(cell.y, nFloors - 0.2, nFloors - 0.17);
+          if (!ground) albedo *= 1.0 - 0.25 * aaBand(cf.y, hi.y, hi.y + 0.03);
+        } else if (fStyle > 5.5 && fStyle < 6.5) {
+          if (ground) albedo *= 0.88 + 0.12 * step(0.12, fract(vWall.y * 1.6));
+          albedo *= 1.0 - 0.2 * aaBand(cf.y, 0.0, 0.04);
+        } else if (fStyle > 6.5 && fStyle < 7.5) {
+          albedo *= 1.0 - 0.15 * aaBand(cf.y, 0.0, 0.08);
+        } else if (condo) {
+          // exposed slab edges at every floor, a darker reveal under each slab
+          albedo = mix(albedo, vec3(0.9, 0.89, 0.86), (1.0 - aaStep(0.07, cf.y)) * 0.8);
+          albedo *= 1.0 - 0.22 * aaBand(cf.y, 0.07, 0.1) * (1.0 - far);
+        } else {
+          albedo *= 1.0 + 0.12 * aaBand(cf.y, lo.y - 0.05, lo.y);
+        }
+
+        // ---- windows
+        if (win > 0.001) {
+          vec3 gAlb; float gMetal, gRough, transmit;
+          if (fStyle < 0.5) {
+            // real glazing, not chrome: clear low-E (dark, the floors behind visible), tinted reflective, and a few
+            // silver-coated towers; specular comes from Fresnel + the coating, not from treating glass as metal
+            float gk = fract(fSeed * 13.7);
+            if (gk < 0.4) { gAlb = vec3(0.018, 0.024, 0.028) * (0.9 + 0.2 * h); gMetal = 0.05; gRough = 0.035 + 0.04 * h; transmit = 1.0; }
+            else if (gk < 0.82) { gAlb = mix(vec3(0.03), wallCol * 0.9, 0.5) * (0.94 + 0.12 * h); gMetal = 0.3; gRough = 0.03 + 0.04 * h; transmit = 0.7; }
+            else { gAlb = mix(vec3(0.04), wallCol * 1.05, 0.7) * (0.95 + 0.1 * h); gMetal = 0.58; gRough = 0.025 + 0.03 * h; transmit = 0.35; }
+            // panels are never perfectly coplanar: a slight tilt per panel breaks reflections up (more = crumpled foil)
+            vec3 Tw = vec3(-N.z, 0.0, N.x);
+            vec2 tl = (vec2(hash12(cid + fSeed * 11.0), hash12(cid.yx + fSeed * 23.0)) - 0.5) * 0.012;
+            fNTilt = (viewMatrix * vec4(Tw * tl.x + vec3(0.0, tl.y, 0.0), 0.0)).xyz * (1.0 - far);
+          } else if (fStyle > 9.5) {
+            gAlb = vec3(0.05, 0.07, 0.08); gMetal = 0.3; gRough = 0.08; transmit = 0.8;
+          } else {
+            gAlb = vec3(0.02, 0.025, 0.03); gMetal = 0.08; gRough = 0.05 + 0.05 * h; transmit = 1.0;
+          }
+          if (lobby) {
+            // clear low-iron glazing in slim mullions every 1.6 m
+            gAlb = vec3(0.015, 0.02, 0.022); gMetal = 0.1; gRough = 0.03; transmit = 1.0;
+            win *= 1.0 - (1.0 - aaBand(fract(vWall.x / 1.6), 0.03, 0.97)) * (1.0 - far);
+          }
+          // ---- interior (lit room, interior mapping when close)
+          vec3 roomBase = mix(vec3(0.55, 0.5, 0.42), vec3(0.75, 0.75, 0.78), h);
+          if (resi) roomBase = mix(vec3(0.62, 0.5, 0.38), vec3(0.7, 0.66, 0.6), h);
+          // colour temperature: offices mix cool 4000-5000K and warm 3000K floors; HDB homes half cool fluorescent
+          float warmF = hash12(vec2(cid.y + zone * 3.1, fSeed * 13.0 + 5.0));
+          vec3 lampCol = resi ? (hdb && h > 0.5 ? vec3(0.8, 0.9, 1.0) : mix(vec3(1.0, 0.62, 0.32), vec3(1.0, 0.8, 0.55), h))
+                              : (warmF < 0.25 + 0.25 * fract(fSeed * 3.3) ? vec3(1.0, 0.78, 0.52) : mix(vec3(0.74, 0.85, 1.0), vec3(0.88, 0.94, 1.0), warmF));
+          // per-window on/off up close; fades to the floor/zone average where windows are sub-pixel (no sparkle)
+          float floorLit = resi || ground ? step(hash12(vec2(cid.y, fSeed * 61.0 + wallId)), min(1.0, litFrac * 1.15)) * 0.75 + litFrac * 0.25 : (floorOn ? 0.85 : 0.04);
+          float litAmt = mix(lit ? 1.0 : 0.0, floorLit, farLit);
+          float lampI = litAmt * (resi ? 1.2 : 0.72) * mix(0.75 + 0.5 * h, 0.55, farLit);
+          float dayI = 0.07 * (1.0 - uNight);
+          // open shops are lit day and night
+          // lobbies are lit day and night: cool white for offices/hospitals, warm for hotels and condos
+          if (lobby) { lampI = 0.42 + 0.18 * h; lampCol = fUse > 7.5 || fUse == 6.0 ? vec3(1.0, 0.8, 0.58) : vec3(0.92, 0.95, 1.0); roomBase = mix(vec3(0.74, 0.71, 0.66), vec3(0.5, 0.47, 0.44), h2); }
+          // trading shops are lit day and night: fluorescent provision shops/kopitiams, warm goldsmiths and bakeries
+          if (shopG) { lampI = shopOpen ? (0.62 + 0.25 * h) * mix(1.0, 0.55, uNight) : 0.0; lampCol = shopFam == 4.0 || shopFam == 5.0 ? vec3(1.0, 0.8, 0.58) : mix(vec3(0.86, 0.95, 1.0), vec3(1.0, 0.9, 0.76), step(0.7, h2)); roomBase = mix(vec3(0.55, 0.38, 0.22), vec3(0.42, 0.45, 0.4), h2); }
+          vec3 interior;
+          if (camDist < uDetailDist && far < 0.5 && !(ground && hdb)) {
+            vec3 T = vec3(-N.z, 0.0, N.x);
+            vec3 V = normalize(vWPos - cameraPosition);
+            vec3 d = vec3(dot(V, T), V.y, -dot(V, N));
+            d.z = max(d.z, 0.03);
+            float roomW = cw, roomH = fh, roomD = cw * (0.9 + h * 0.9);
+            vec3 p = vec3(cf.x * roomW, cf.y * roomH, 0.0);
+            // a lobby is one deep open hall behind the mullions, not a row of cells
+            if (lobby) { roomW = 14.0; roomD = 16.0; p.x = mod(vWall.x + fSeed * 7.0, roomW); }
+            float tx = d.x > 0.0 ? (roomW - p.x) / max(d.x, 1e-4) : -p.x / min(d.x, -1e-4);
+            float ty = d.y > 0.0 ? (roomH - p.y) / max(d.y, 1e-4) : -p.y / min(d.y, -1e-4);
+            float tz = roomD / d.z;
+            float t = min(min(tx, ty), tz);
+            vec3 hp = p + d * t;
+            vec3 c; float lm = 1.0;
+            if (t == tz) {
+              c = roomBase * 0.9;
+              c *= mix(0.45, 1.0, smoothstep(0.22, 0.32, hp.y / roomH));
+              vec2 bw = vec2(hp.x / roomW, hp.y / roomH);
+              // analytic texel footprint (no derivatives inside this branch): ~1 mrad per pixel at the back wall
+              float pxw = (camDist + t) * 0.0011;
+              vec2 bgx = vec2(pxw / roomW, 0.0), bgy = vec2(0.0, pxw / roomH);
+              // (room x runs right-to-left seen from outside, like the signboards: mirror the artwork back)
+              if (shopG) c = interiorCell(shopFam, vec2(1.0 - bw.x, bw.y), bgx, bgy) * 0.85;          // the shop's own goods, counter, menus
+              else if (lobby) {
+                // hospital halls alternate registration counters and the pharmacy; offices show their reception
+                float hall = hash12(vec2(floor((vWall.x + fSeed * 7.0) / roomW), fSeed * 19.0));
+                c = interiorCell(fUse > 1.5 && fUse < 2.5 ? (hall < 0.6 ? 3.0 : 7.0) : 2.0, vec2(1.0 - bw.x, min(bw.y * 1.25, 1.0)), bgx, bgy * 1.25) * 0.9;
+              }
+              else if (h > 0.6 && abs(bw.x - 0.5) < 0.18 && abs(bw.y - 0.55) < 0.1) c = resi ? vec3(0.2, 0.3, 0.5) : vec3(0.1);
+            } else if (t == ty) {
+              if (d.y < 0.0) { c = resi ? vec3(0.32, 0.2, 0.12) : vec3(0.25, 0.25, 0.27); lm = 0.8; }
+              else { c = vec3(0.85); lm = 1.6;
+                float panel = aaBox(vec2(hp.x / 1.2, hp.z / 1.2), vec2(0.2), vec2(0.8));
+                if (!resi) lm += 1.5 * panel; else if (shopRecess) lm += 0.6 * panel; }
+            } else {
+              c = roomBase * 0.75;
+              if (shopG) { // the back wall's shelving continues down the party walls
+                float k = clamp(hp.z / roomD, 0.0, 1.0) * 0.18, pxs = (camDist + t) * 0.0011;
+                c = interiorCell(shopFam, vec2(d.x < 0.0 ? 0.98 - k : 0.02 + k, hp.y / roomH), vec2(pxs / roomD, 0.0), vec2(0.0, pxs / roomH)) * 0.62;
+              }
+            }
+            c *= mix(1.0, 0.55, clamp(hp.z / roomD, 0.0, 1.0));
+            interior = c * (lampCol * lampI * lm * 0.45 + dayI);
+          } else {
+            // ceiling lighting: rooms read brighter towards the top of the glazing
+            float grad = resi ? 1.0 : mix(0.45, 1.3, smoothstep(lo.y, hi.y, cf.y));
+            interior = roomBase * 0.7 * (lampCol * lampI * 0.55 * grad + dayI);
+          }
+          // blinds / curtains
+          float wy = (cf.y - lo.y) / max(hi.y - lo.y, 0.01);
+          float blind = 1.0 - h * (resi ? 0.9 : 0.35);  // offices: roller blinds only part-way down
+          if (wy > blind && !shopG && !lobby) {
+            vec3 bc = resi ? mix(vec3(0.7, 0.55, 0.4), vec3(0.85, 0.82, 0.75), h2) : vec3(0.42, 0.42, 0.4);
+            bc *= 0.85 + 0.15 * step(0.5, fract(cf.y * fh * 12.0));
+            interior = bc * (lampCol * lampI * 0.35 + dayI * 1.5);
+          }
+          // TV flicker
+          if (resi && lit && h > 0.93) interior += vec3(0.15, 0.25, 0.6) * (0.6 + 0.4 * sin(uTime * 13.0 + h * 40.0)) * 0.8;
+          float wx = (cf.x - lo.x) / max(hi.x - lo.x, 0.01);
+          if (shop && !ground && h < 0.75) {
+            // louvred timber shutters: closed, or folded back to the jambs
+            vec3 sc = shutterCol(fract(fSeed * 7.0 + fAccent * 0.13));
+            sc *= 0.62 + 0.38 * step(0.42, fract(cf.y * fh * 9.0));
+            sc *= 1.0 - 0.3 * aaBand(wx, 0.48, 0.52);
+            float shut = h < 0.45 ? 1.0 : (1.0 - aaBand(wx, 0.22, 0.78));
+            albedo = mix(albedo, sc, win * shut); fRough = mix(fRough, 0.6, win * shut);
+            fEmis += sc * lampCol * (lit ? 0.1 : 0.0) * win * shut;
+            if (shut < 0.5) {
+              albedo = mix(albedo, gAlb, win * (1.0 - shut));
+              fEmis += interior * win * (1.0 - shut);
+            }
+          } else if (shopG && !shopOpen) {
+            // roller shutter pulled down
+            vec3 rs = vec3(0.42, 0.43, 0.44) * (0.75 + 0.25 * step(0.5, fract(cf.y * fh * 14.0)));
+            albedo = mix(albedo, rs, win); fMetal = mix(fMetal, 0.5, win); fRough = mix(fRough, 0.45, win);
+          } else if (ground && hdb) {
+            // passage through the void deck: open dark space
+            albedo = mix(albedo, vec3(0.05), win);
+            fEmis += vec3(0.8, 0.9, 1.0) * uNight * 0.6 * aaBand(cf.y, 0.86, 0.9) * win;
+          } else if (fStyle > 6.5 && fStyle < 7.5) {
+            albedo = mix(albedo, vec3(0.05), win);
+            fEmis += vec3(0.85, 0.95, 1.0) * uNight * 1.2 * aaBand(cf.y, 0.86, 0.9) * win;
+          } else {
+            float F = pow(1.0 - clamp(abs(dot(N, normalize(cameraPosition - vWPos))), 0.0, 1.0), 5.0);
+            // open shopfronts (kopitiams, provision and hardware shops) have no glass: nothing to reflect
+            bool openFront = shopG && shopOpen && !glassFront;
+            if (openFront) { F = 0.0; gAlb = vec3(0.0); gMetal = 0.0; gRough = 1.0; transmit = 1.0; }
+            // window reveal: the frame casts a soft shadow along the head and jambs (fake depth)
+            float wTop = (hi.y - cf.y) * fh, wSide = min(cf.x - lo.x, hi.x - cf.x) * cw;
+            float reveal = fStyle < 0.5 ? 0.0 : ((1.0 - smoothstep(0.0, 0.4, wTop)) * 0.6 + (1.0 - smoothstep(0.0, 0.16, wSide)) * 0.35) * (1.0 - far);
+            // HDB: grey aluminium frames with a mullion, some with security grilles
+            if (hdb && !ground) {
+              float frame = (1.0 - aaBand(wx, 0.04, 0.96)) + aaBand(wx, 0.48, 0.52) + (1.0 - aaBand(wy, 0.05, 0.95));
+              float grille = step(0.7, h2) * step(0.5, fract(cf.x * cw * 6.0)) * 0.8;
+              albedo = mix(albedo, vec3(0.6, 0.62, 0.63), clamp(frame, 0.0, 1.0) * win * (1.0 - far));
+              reveal = max(reveal, grille);
+            }
+            albedo = mix(albedo, gAlb * (1.0 - reveal), win);
+            fMetal = mix(fMetal, gMetal, win);
+            fRough = mix(fRough, gRough, win);
+            fEmis += interior * transmit * (1.0 - F) * win * (1.0 - reveal * 0.7);
+            if (shopG && shopOpen) fEmis += lampCol * uNight * 0.12 * win;
+          }
+        }
+        // ---- balconies: shade under the slab above, tinted glass balustrade with a slim top rail in front of the glazing
+        if (balc && cell.y < nFloors - 0.02) {
+          float bw = 1.0 - far;
+          albedo *= 1.0 - 0.4 * (1.0 - smoothstep(0.0, 0.45, (1.0 - cf.y) * fh)) * win * bw;
+          float rail = aaBand(cf.y, 0.07, 0.38) * aaBand(cf.x, 0.02, 0.98);
+          float topRail = aaBand(cf.y, 0.36, 0.385) * aaBand(cf.x, 0.02, 0.98);
+          albedo = mix(albedo, mix(albedo, vec3(0.3, 0.42, 0.44), 0.55), rail * bw);
+          albedo = mix(albedo, vec3(0.72, 0.73, 0.72), topRail * bw);
+          fMetal = mix(fMetal, 0.35, rail * bw); fRough = mix(fRough, 0.12, rail * bw);
+          fEmis *= 1.0 - 0.45 * rail;
+        }
+        // ---- lobby entrance: a pair of sliding doors in the middle bay (frames, centre meeting stile, transom)
+        if (lobby && fy0 < 2.75 && far < 0.9) {
+          float dx = abs((wallLen - vWall.x) - wallLen * 0.5);
+          float fr = max(aaBand(dx, 1.6, 1.74), 1.0 - aaStep(0.035, dx)) * step(dx, 1.74);
+          fr = max(fr, aaBand(fy0, 2.5, 2.62) * step(dx, 1.74));
+          fr = max(fr, aaBand(fy0, 0.95, 1.0) * aaBand(dx, 0.12, 0.42) * 0.8);   // push bars
+          albedo = mix(albedo, vec3(0.16, 0.17, 0.18), fr); fMetal = mix(fMetal, 0.6, fr); fRough = mix(fRough, 0.35, fr);
+          fEmis *= 1.0 - fr;
+        }
+        // ---- hospital fascia over the lobby glazing: backlit name letters and the red block plaque beside them
+        if (healthLobby && ground && cf.y > 0.7) {
+          float u = wallLen - vWall.x;                                           // left to right seen from outside
+          float sh = clamp(fh * 0.2, 0.75, 1.5), sw = sh * 4.0, x0 = (wallLen - sw) * 0.5 - sh;
+          float yb = fh * 0.76, pxs = camDist * 0.0011;
+          vec2 sp = vec2((u - x0) / sw, (fy0 - yb) / sh);
+          if (sp.x > 0.0 && sp.x < 1.0 && sp.y > 0.0 && sp.y < 1.0) {
+            float m = dot(textureGrad(uInterior, vec2(sp.x * 0.5, sp.y * 0.2), vec2(pxs / sw * 0.5, 0.0), vec2(0.0, pxs / sh * 0.2)).rgb, vec3(0.333));
+            m = smoothstep(0.25, 0.75, m);
+            albedo = mix(albedo, vec3(0.93), m); fMetal = mix(fMetal, 0.0, m); fRough = mix(fRough, 0.4, m);
+            fEmis += vec3(0.95, 1.0, 1.0) * m * (0.03 + uNight * 2.4);
+          }
+          float blk = floor(vF2.z + 0.5);
+          if (blk > 0.5 && blk < 8.5) {
+            float ph = sh * 0.9, pw = ph * 2.0, px0 = x0 + sw + 0.6;
+            vec2 pp = vec2((u - px0) / pw, (fy0 - yb - (sh - ph) * 0.5) / ph);
+            if (pp.x > 0.0 && pp.x < 1.0 && pp.y > 0.0 && pp.y < 1.0) {
+              float k = blk - 1.0;
+              vec2 puv = vec2(0.5 + (mod(k, 4.0) + clamp(pp.x, 0.03, 0.97)) * 0.125, 1.0 - (512.0 + floor(k / 4.0) * 64.0 + (1.0 - clamp(pp.y, 0.04, 0.96)) * 64.0) / 640.0);
+              vec3 pc = textureGrad(uInterior, puv, vec2(pxs / pw * 0.125, 0.0), vec2(0.0, pxs / ph * 0.1)).rgb;
+              albedo = pc; fMetal = 0.0; fRough = 0.45;
+              fEmis += pc * (0.02 + uNight * 0.9);
+            }
+          }
+        }
+        // ---- shop signboards: over the five-foot-way (atlas boards, one per bay) and small boards over shopfronts
+        if (shopFront && cid.y > 0.5 && cid.y < 1.5 && cf.y < 0.37) {
+          float nb = max(1.0, floor(wallLen / 5.5 + 0.5)), bw = wallLen / nb;
+          vec2 bc = vec2((wallLen - vWall.x) / bw, (fy0 / fh - 1.0)); // u runs right-to-left seen from outside
+          vec2 bp = vec2((fract(bc.x) - 0.07) / 0.86, (bc.y - 0.06) / 0.27);
+          if (bp.x > 0.0 && bp.x < 1.0 && bp.y > 0.0 && bp.y < 1.0) {
+            float hb = hash12(vec2(floor(bc.x) * 1.7 + 3.0, fSeed * 91.0 + wallId));
+            if (hb < 0.9) {
+              float idx = floor(hash12(vec2(floor(bc.x) * 5.3 + wallId * 1.3, fSeed * 37.0)) * 60.0);
+              vec2 gx = dFdx(bc) / vec2(0.86, 0.27), gy = dFdy(bc) / vec2(0.86, 0.27);
+              vec3 sg = signBoard(idx, bp, gx, gy).rgb;
+              albedo = sg * (1.0 - 0.25 * aaBand(bp.y, 0.0, 0.08));
+              fRough = 0.5; fMetal = 0.0;
+              fEmis += sg * (hb < 0.45 ? 0.04 + uNight * 0.9 : uNight * 0.12);
+            }
+          }
+          // shadow line under the board onto the fascia
+          albedo *= 1.0 - 0.3 * aaBand(bc.y, 0.0, 0.05);
+        }
+        if (ground && shopUse && !lobby && ((fStyle > 3.5 && fStyle < 5.5) || (fStyle > 0.5 && fStyle < 1.5 && fTop < 60.0)) && cf.y > (shopRecess ? 0.79 : 0.82) && cf.y < 0.985) {
+          float hb = hash12(vec2(cid.x * 1.7, fSeed * 91.0 + wallId));
+          if (hb < (fStyle < 1.5 && fUse < 0.5 ? 0.45 : 0.78)) {
+            float y0b = shopRecess ? 0.79 : 0.82;
+            vec2 bp = vec2((0.96 - cf.x) / 0.92, (cf.y - y0b) / (0.985 - y0b));
+            float idx = floor(hash12(vec2(cid.x * 2.9 + wallId * 3.7 + 7.0, fSeed * 17.0)) * 60.0);
+            vec2 g = vec2(cell.x / 0.92, cell.y / (0.985 - y0b));
+            vec3 sg = signBoard(idx, clamp(bp, 0.0, 1.0), dFdx(g), dFdy(g)).rgb;
+            float panel = aaBand(cf.x, 0.04, 0.96);
+            albedo = mix(albedo, sg, panel);
+            fEmis += sg * panel * (0.05 + uNight * (hb < 0.4 ? 1.0 : 0.25));
+            fRough = 0.45; fMetal = 0.0;
+          }
+        }
+        // feature lighting at night: a few towers wash their crown, others run coloured LED bands along the slabs
+        float fk = fract(fSeed * 5.3);
+        if (fStyle < 0.5 && fTop > 140.0 && cell.y > nFloors - 1.5 && fk > 0.45 && fk < 0.6) fEmis += mix(vec3(0.5, 0.7, 1.0), vec3(1.0, 0.85, 0.6), fract(fSeed * 9.1)) * uNight * 0.35;
+        if (fStyle < 1.5 && fTop > 110.0 && fk > 0.88 && cell.y > nFloors * 0.7) {
+          float k = floor(fract(fSeed * 17.0) * 5.0);
+          vec3 led = k < 1.0 ? vec3(0.1, 0.75, 1.0) : k < 2.0 ? vec3(1.0, 0.18, 0.65) : k < 3.0 ? vec3(1.0, 0.7, 0.25) : k < 4.0 ? vec3(0.25, 1.0, 0.5) : vec3(0.55, 0.3, 1.0);
+          if (fract(fSeed * 29.0) > 0.6) led = 0.5 + 0.5 * cos(6.2832 * (uTime * 0.04 + cell.y * 0.015 + vec3(0.0, 0.33, 0.67)));
+          float band = aaBand(cf.y, 0.0, 0.045) * step(0.5, mod(cid.y + floor(fSeed * 4.0), 2.0));
+          fEmis += led * band * uNight * 1.0;
+        }
+      }
+      // aviation obstruction lights
+      if (fTop > 110.0 && vWall.y > fTop - 1.2 && vWall.x < 0.8 && !special) fEmis += vec3(1.0, 0.05, 0.02) * uNight * 12.0 * step(0.5, fract(uTime * 0.5 + fSeed));
+      fRough = mix(fRough, fRough * 0.5, uWet);
+      diffuseColor.rgb = albedo;
+      roughnessFactor = fRough;
+      metalnessFactor = fMetal;
+    `,
+    fragAfterNormal: `normal = normalize(normal + fNTilt);`,
+    fragAfterIbl: `radiance *= fSpecOcc; iblIrradiance *= fAmbOcc;`,
+    fragAfterEmissive: `totalEmissiveRadiance += fEmis;`,
+  });
+}
+
+// ------------------------------------------------------------------ roofs
+export function createRoofMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.0 });
+  return patch(mat, {
+    key: 'roof-v2',
+    uniforms: COMMON_U(),
+    vertexHead: COMMON_VHEAD + `attribute vec4 aRoof; varying vec4 vRoof;`,
+    vertexBody: COMMON_VBODY + `vRoof = aRoof;`,
+    fragHead: COMMON_HEAD + `varying vec4 vRoof;`,
+    fragAfterMetal: /* glsl */`
+      vec3 albedo = diffuseColor.rgb;
+      float n = fbm3(vWPos.xz * 0.25);
+      float rgh = 0.9, mtl = 0.0;
+      vec3 rEmis = vec3(0.0);
+      float rs = floor(vRoof.x + 0.5);
+      if (rs > 19.5) {
+        // rooftop features laid as decal quads by the city builder; uv in vRoof.zw (0..1 across the quad)
+        vec2 uv = vRoof.zw, q = uv - 0.5;
+        if (rs < 20.5) {
+          // helipad: dark deck, white touchdown ring, yellow H, perimeter lights
+          float r = length(q);
+          albedo = vec3(0.09, 0.095, 0.1) * (0.85 + 0.3 * n);
+          albedo = mix(albedo, vec3(0.85), aaBand(r, 0.33, 0.37));
+          float H = (aaBand(q.x, -0.17, -0.11) + aaBand(q.x, 0.11, 0.17)) * aaBand(q.y, -0.2, 0.2) + aaBand(q.x, -0.11, 0.11) * aaBand(q.y, -0.03, 0.03);
+          albedo = mix(albedo, vec3(0.95, 0.75, 0.1), clamp(H, 0.0, 1.0));
+          float edge = max(abs(q.x), abs(q.y));
+          albedo = mix(albedo, vec3(0.9, 0.9, 0.85), aaBand(edge, 0.46, 0.48) * step(0.5, fract((q.x + q.y) * 12.0)));
+          float lamp = (1.0 - smoothstep(0.008, 0.016, abs(edge - 0.49))) * step(0.85, fract(atan(q.y, q.x) * 3.82));
+          rEmis += vec3(0.3, 1.0, 0.4) * lamp * (0.2 + uNight * 6.0);
+          rgh = 0.75;
+        } else if (rs < 21.5) {
+          // rooftop pool: tiled edge, turquoise water with moving caustics, underwater lights at night
+          float edge = max(abs(q.x) * 2.0, abs(q.y) * 2.0);
+          float c1 = vnoise(vWPos.xz * 1.3 + uTime * 0.35), c2 = vnoise(vWPos.zx * 1.7 - uTime * 0.28);
+          float caus = pow(1.0 - abs(c1 - c2), 6.0);
+          vec3 water = mix(vec3(0.02, 0.32, 0.42), vec3(0.1, 0.6, 0.7), caus * 0.6);
+          albedo = mix(water, vec3(0.86, 0.85, 0.8), smoothstep(0.9, 0.93, edge));
+          rgh = mix(0.04, 0.6, smoothstep(0.9, 0.93, edge)); mtl = 0.0;
+          rEmis += vec3(0.1, 0.55, 0.65) * (1.0 - smoothstep(0.9, 0.93, edge)) * uNight * (0.6 + caus * 0.8);
+        } else if (rs < 22.5) {
+          // roof garden: lawn, shrub clumps and paved paths
+          float g = fbm3(vWPos.xz * 0.6);
+          albedo = mix(vec3(0.07, 0.16, 0.04), vec3(0.16, 0.28, 0.07), g);
+          float shrub = smoothstep(0.62, 0.7, vnoise(vWPos.xz * 0.45));
+          albedo = mix(albedo, vec3(0.04, 0.1, 0.03), shrub);
+          float path = aaBand(q.x, -0.04, 0.04) + aaBand(q.y, -0.04, 0.04);
+          albedo = mix(albedo, vec3(0.6, 0.57, 0.5), clamp(path, 0.0, 1.0));
+          rgh = 0.95;
+        } else {
+          // photovoltaic array: tilted rows of dark blue cells in silver frames, maintenance gaps
+          vec2 cell = vec2(q.x * 14.0, q.y * 6.0);
+          vec2 cf = fract(cell);
+          float gap = aaBand(cf.y, 0.08, 0.92) * aaBand(cf.x, 0.02, 0.98);
+          vec2 sub = fract(vec2(cell.x * 6.0, cell.y * 10.0));
+          float grid = aaBand(sub.x, 0.05, 0.95) * aaBand(sub.y, 0.05, 0.95);
+          vec3 pv = mix(vec3(0.55, 0.57, 0.6), vec3(0.02, 0.04, 0.1) * (0.8 + 0.4 * hash12(floor(cell))), grid);
+          albedo = mix(albedo * 0.8, pv, gap);
+          rgh = mix(rgh, 0.18, gap * grid); mtl = gap * 0.4;
+        }
+      } else if (vRoof.z > 0.5) {
+        float rows = fract(vWPos.y * 3.2);
+        albedo *= 0.78 + 0.22 * smoothstep(0.0, 0.25, rows);
+        albedo *= 0.85 + 0.3 * hash12(floor(vec2(vWPos.x + vWPos.z, vWPos.y * 3.2) * vec2(4.0, 1.0)));
+        // moss / soot on old clay tiles
+        albedo = mix(albedo, albedo * vec3(0.45, 0.5, 0.42), smoothstep(0.55, 0.85, vnoise(vWPos.xz * 0.3)) * 0.6);
+        rgh = 0.7;
+      } else {
+        // flat concrete slab: screed tiles, ponding stains, darker drains and patching
+        albedo *= 0.75 + 0.45 * n;
+        albedo *= 1.0 - 0.25 * smoothstep(0.6, 0.8, vnoise(vWPos.xz * 0.08));
+        vec2 tq = fract(vWPos.xz / 1.2);
+        albedo *= 1.0 - 0.12 * (1.0 - aaBand(tq.x, 0.03, 0.97) * aaBand(tq.y, 0.03, 0.97));
+        float pond = smoothstep(0.55, 0.75, fbm3(vWPos.xz * 0.05 + 3.0));
+        albedo = mix(albedo, albedo * vec3(0.55, 0.57, 0.5), pond * 0.6);
+      }
+      albedo *= 1.0 - uWet * 0.3;
+      diffuseColor.rgb = albedo;
+      roughnessFactor = mix(rgh, 0.25, uWet);
+      metalnessFactor = mtl;
+    `,
+    fragAfterEmissive: `totalEmissiveRadiance += rEmis;`,
+  });
+}
+
+// ------------------------------------------------------------------ roads & footways
+// Street lookup texture, filled by StreetDetail at load: R = near a traffic signal (crossing style),
+// B = yellow-box junction. A 1x1 black placeholder keeps the program identical before/after it is set.
+const _black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); _black.needsUpdate = true;
+// lamp: street-light map baked by Props (ground illuminance from every street lamp, sqrt-encoded over 0..4);
+// glow: overall strength of that light at night (runtime tunable)
+// wear: city wear map baked by StreetDetail (R = grime: soil round tree bases; G = foot polish: shop fronts, crossing
+// kerbs, bus stops). pave: small tiling microstructure for paving seen up close (R albedo, G height, B roughness).
+export const STREET = { sig: { value: _black }, sigOrigin: { value: new THREE.Vector2(0, 0) }, sigSize: { value: new THREE.Vector2(1, 1) },
+  lamp: { value: _black }, lampOrigin: { value: new THREE.Vector2(0, 0) }, lampSize: { value: new THREE.Vector2(1, 1) }, glow: { value: 1 },
+  wear: { value: _black }, wearOrigin: { value: new THREE.Vector2(0, 0) }, wearSize: { value: new THREE.Vector2(1, 1) }, pave: { value: null } };
+const STREET_U = () => ({ uSig: STREET.sig, uSigOrigin: STREET.sigOrigin, uSigSize: STREET.sigSize, uLamp: STREET.lamp, uLampOrigin: STREET.lampOrigin, uLampSize: STREET.lampSize, uStreetGlow: STREET.glow,
+  uWear: STREET.wear, uWearOrigin: STREET.wearOrigin, uWearSize: STREET.wearSize, uPave: STREET.pave.value ? STREET.pave : (STREET.pave.value = paveDetail(), STREET.pave) });
+
+// 256x256 tiling paving microstructure (cast concrete / granite): mottling, sand-blasted pits and grains, polish
+function paveDetail() {
+  const N = 256, px = new Uint8Array(N * N * 4);
+  const h = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+  const vn = (x, y, p) => { // periodic value noise with period p cells
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const c = (a, b) => h(((a % p) + p) % p, ((b % p) + p) % p);
+    return (c(xi, yi) * (1 - u) + c(xi + 1, yi) * u) * (1 - v) + (c(xi, yi + 1) * (1 - u) + c(xi + 1, yi + 1) * u) * v;
+  };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const m = vn(x / 32, y / 32, 8) * 0.5 + vn(x / 16, y / 16, 16) * 0.3 + vn(x / 4, y / 4, 64) * 0.2; // periods divide 256: seamless
+    const grain = h(x + 0.37, y + 0.71), pit = grain > 0.965 ? 0 : 1, agg = grain < 0.06 ? 1 : 0;
+    const i = (y * N + x) * 4;
+    px[i] = Math.round(Math.min(1, Math.max(0, 0.5 + (m - 0.5) * 0.9 - (1 - pit) * 0.25 + agg * 0.18)) * 255);
+    px[i + 1] = Math.round(Math.min(1, Math.max(0, 0.5 + (vn(x / 8, y / 8, 32) - 0.5) * 0.6 - (1 - pit) * 0.45 + agg * 0.2)) * 255);
+    px[i + 2] = Math.round(Math.min(1, Math.max(0, 0.5 + (vn(x / 64, y / 64, 4) - 0.5) * 0.8 + agg * 0.25)) * 255);
+    px[i + 3] = 255;
+  }
+  const t = new THREE.DataTexture(px, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+  return t;
+}
+
+// shared street-surface GLSL: procedural bump, joints, paver bonds
+const STREET_GLSL = /* glsl */`
+uniform sampler2D uSig; uniform vec2 uSigOrigin; uniform vec2 uSigSize; uniform float uStreetGlow;
+uniform sampler2D uLamp; uniform vec2 uLampOrigin; uniform vec2 uLampSize;
+uniform sampler2D uWear; uniform vec2 uWearOrigin; uniform vec2 uWearSize; uniform sampler2D uPave;
+// street-lamp light on the ground at night: lux-like illuminance from the baked lamp map (1 = under a lamp head), a
+// touch stronger far away where the pools blur into the lit street grid seen from the air
+vec3 lampLight(vec2 wp, float camD) {
+  float e = texture2D(uLamp, (wp - uLampOrigin) / uLampSize).r; e = e * e * 4.0;
+  e = e / (1.0 + 0.45 * e); // overlapping pools (junctions, both kerbs) saturate instead of washing the asphalt out
+  return vec3(1.0, 0.92, 0.8) * (e * 0.75 + 0.015) * mix(1.0, 1.6, smoothstep(250.0, 900.0, camD)) * uNight * uStreetGlow;
+}
+// perturb the view-space shading normal by a procedural height field h (metres) — Mikkelsen's surface-gradient bump
+vec3 bumpNormal(vec3 n, float h, vec3 viewPos) {
+  vec3 dpdx = dFdx(-viewPos), dpdy = dFdy(-viewPos);
+  vec3 r1 = cross(dpdy, n), r2 = cross(n, dpdx);
+  float det = dot(dpdx, r1);
+  vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
+  return normalize(abs(det) * n - grad);
+}
+// 1 while a pattern of 'freq' cells per metre spans several pixels, fading to 0 before it would alias
+float cellFade(vec2 p, float freq) { float px = max(fwidth(p.x), fwidth(p.y)) * freq; return 1.0 - smoothstep(0.22, 0.55, px); }
+// gradient (Perlin) noise, ~0.15..0.85 around 0.5: its iso-contours are round, so thresholding it gives pebble-like
+// shapes, where thresholded value noise shows the square lattice
+float gnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  float va = dot(hash22(i) * 2.0 - 1.0, f), vb = dot(hash22(i + vec2(1.0, 0.0)) * 2.0 - 1.0, f - vec2(1.0, 0.0));
+  float vc = dot(hash22(i + vec2(0.0, 1.0)) * 2.0 - 1.0, f - vec2(0.0, 1.0)), vd = dot(hash22(i + vec2(1.0, 1.0)) * 2.0 - 1.0, f - vec2(1.0));
+  return 0.5 + 0.7 * mix(mix(va, vb, u.x), mix(vc, vd, u.x), u.y);
+}
+// fine isotropic grain (paver grit, grass blades, granite crystals), 0..1 around 0.5: two gradient-noise octaves on
+// rotated lattices with a contrast curve — no square texel steps up close, no grid lines in the bump derived from it.
+// Fade it with cellFade(p, f * 1.8) (the finer octave runs at 1.73 f).
+float speckle(vec2 p, float f) {
+  float a = gnoise(mat2(0.8, -0.6, 0.6, 0.8) * p * f), b = gnoise(mat2(0.28, 0.96, -0.96, 0.28) * p * (f * 1.73) + 11.3);
+  return smoothstep(0.25, 0.75, a * 0.62 + b * 0.38);
+}
+// asphalt aggregate at ~f stones per metre: sparse pale chippings and dark voids in the binder (0.5 = binder)
+float stones(vec2 p, float f) {
+  float a = gnoise(mat2(0.8, -0.6, 0.6, 0.8) * p * f), b = gnoise(mat2(0.28, 0.96, -0.96, 0.28) * p * (f * 1.37) + 11.3);
+  return 0.5 + smoothstep(0.6, 0.7, a) * 0.5 - smoothstep(0.63, 0.73, b) * 0.3;
+}
+// 1 inside a joint of width j around a size-sized cell (f = local coords in [0,size))
+float jointMask(vec2 f, vec2 size, float j) {
+  vec2 d = min(f, size - f); float e = min(d.x, d.y);
+  float aw = fwidth(e) * 0.8 + 1e-4;
+  return 1.0 - smoothstep(j - aw, j + aw, e);
+}
+// paving bonds in a local frame p (metres): 0 red clay herringbone, 1 grey stretcher bond, 2 concrete slabs, 3 buff basketweave
+void pavers(vec2 p, float style, out vec3 col, out float joint, out float pid) {
+  vec2 lp = vec2(0.0), sz = vec2(2.0, 1.0), cid = vec2(0.0);
+  if (style < 0.5) {
+    vec2 q = p / 0.1;
+    float fa = floor((q.x + q.y) * 0.5), fb = floor((q.x - q.y) * 0.25);
+    for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+      float a = fa + float(i), b = fb + float(j);
+      vec2 r = q - vec2(a + 2.0 * b, a - 2.0 * b);
+      if (r.x >= 0.0 && r.x < 2.0 && r.y >= 0.0 && r.y < 1.0) { lp = r; sz = vec2(2.0, 1.0); cid = vec2(a, b * 2.0); }
+      vec2 rv = r - vec2(2.0, -1.0);
+      if (rv.x >= 0.0 && rv.x < 1.0 && rv.y >= 0.0 && rv.y < 2.0) { lp = rv; sz = vec2(1.0, 2.0); cid = vec2(a, b * 2.0 + 1.0); }
+    }
+    joint = jointMask(lp, sz, 0.07);
+    pid = hash12(cid);
+    col = mix(vec3(0.24, 0.075, 0.045), vec3(0.33, 0.13, 0.08), pid) * (0.85 + 0.2 * hash12(cid + 7.3));
+    float fd = cellFade(p, 10.0); col = mix(vec3(0.27, 0.098, 0.06), col, fd); joint = mix(0.2, joint, fd); pid = mix(0.5, pid, fd);
+  } else if (style < 1.5) {
+    vec2 q = p / vec2(0.2, 0.1); q.x += step(1.0, mod(floor(q.y), 2.0)) * 0.5;
+    cid = floor(q); lp = fract(q) * vec2(2.0, 1.0);
+    joint = jointMask(lp, vec2(2.0, 1.0), 0.07);
+    pid = hash12(cid);
+    col = mix(vec3(0.17, 0.165, 0.155), vec3(0.25, 0.24, 0.225), pid);
+    float fd = cellFade(p, 10.0); col = mix(vec3(0.21, 0.2, 0.19), col, fd); joint = mix(0.2, joint, fd); pid = mix(0.5, pid, fd);
+  } else if (style < 2.5) {
+    vec2 q = p / 0.6; cid = floor(q); lp = fract(q) * 0.6;
+    joint = jointMask(lp, vec2(0.6), 0.006);
+    pid = hash12(cid);
+    col = vec3(0.21, 0.205, 0.19) * (0.88 + 0.18 * pid);
+    float fd = cellFade(p, 1.7); col = mix(vec3(0.2, 0.196, 0.182), col, fd); joint = mix(0.04, joint, fd);
+  } else {
+    vec2 q = p / 0.1; vec2 c = floor(q * 0.5); vec2 f = q - c * 2.0;
+    bool hor = mod(c.x + c.y, 2.0) < 1.0;
+    if (hor) { lp = vec2(f.x, fract(f.y)); sz = vec2(2.0, 1.0); cid = c * 2.0 + vec2(0.0, floor(f.y)); }
+    else { lp = vec2(fract(f.x), f.y); sz = vec2(1.0, 2.0); cid = c * 2.0 + vec2(floor(f.x), 0.5); }
+    joint = jointMask(lp, sz, 0.07);
+    pid = hash12(cid);
+    col = mix(vec3(0.27, 0.21, 0.14), vec3(0.34, 0.28, 0.19), pid);
+    float fd = cellFade(p, 10.0); col = mix(vec3(0.3, 0.245, 0.165), col, fd); joint = mix(0.2, joint, fd); pid = mix(0.5, pid, fd);
+  }
+}
+`;
+
+export function createRoadMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
+  return patch(mat, {
+    key: 'road-v9',
+    uniforms: { ...COMMON_U(), ...STREET_U(), uRefl: REFL.tex, uReflMat: REFL.mat, uReflOn: REFL.on, uReflRoad: REFL.road },
+    vertexHead: COMMON_VHEAD + `attribute vec4 aRoad; attribute vec4 aLanes; attribute vec4 aJunc; varying vec4 vRoad; varying vec4 vLanes; varying vec4 vJunc; uniform mat4 uReflMat; uniform float uReflRoad; varying vec4 vRC;`,
+    // street-plane capture (no water on screen): project the actual road point; water-level capture: the old trick
+    vertexBody: COMMON_VBODY + `vRoad = aRoad; vLanes = aLanes; vJunc = aJunc; vRC = uReflMat * vec4(vWPos.x, mix(-1.4, vWPos.y, uReflRoad), vWPos.z, 1.0);`,
+    fragHead: COMMON_HEAD + STREET_GLSL + `varying vec4 vRoad; varying vec4 vLanes; varying vec4 vJunc; uniform sampler2D uRefl; uniform float uReflOn; varying vec4 vRC;`,
+    fragAfterEmissive: `
+      normal = bumpNormal(normal, bh, vViewPosition);
+      if (uNight > 0.02) {
+        // pools of light under the real lamp positions (Props bakes the map). LTA's LED retrofit: cool white on
+        // expressways/arterials, neutral-warm white elsewhere (no sodium orange)
+        vec3 lampCol = vLanes.z < 2.5 && vRoad.w < 0.5 ? vec3(0.9, 0.97, 1.1) : vec3(1.0);
+        totalEmissiveRadiance += diffuseColor.rgb * lampCol * lampLight(vWPos.xz, camD);
+      }
+      if (uReflOn > 0.5 && uWet > 0.05) {
+        vec3 V = normalize(cameraPosition - vWPos);
+        float F = 0.04 + 0.96 * pow(1.0 - clamp(V.y, 0.0, 1.0), 5.0);
+        float pud = puddle / uWet;
+        vec2 ruv = vRC.xy / vRC.w + vec2(vnoise(vWPos.xz * 3.0) - 0.5, vnoise(vWPos.zx * 3.0) - 0.5) * 0.004 * (1.0 + uRain * 2.0);
+        vec3 refl = texture2D(uRefl, ruv).rgb;
+        // glossy wet asphalt stretches bright reflections (lamp heads, lit windows, tail lights) into short vertical
+        // streaks: 3 jittered taps along v from a blurrier mip (puddles stay mirror-sharp)
+        float sv = 0.035 * (0.7 + uRain * 0.6) * (1.0 - pud * 0.7), jit = hash12(gl_FragCoord.xy) - 0.5;
+        vec3 smear = vec3(0.0);
+        for (int i = 0; i < 3; i++) { float o = (float(i) - 1.0 + jit) / 3.0; smear += textureLod(uRefl, ruv + vec2(0.0, o * sv), 1.5).rgb * (1.0 - abs(o) * 1.1); }
+        refl = mix(refl, smear * 0.42, 0.7 * (1.0 - pud));
+        totalEmissiveRadiance += refl * F * uWet * mix(0.35, 0.95, pud) * (1.0 - metal * 0.5);
+      }`,
+    fragAfterMetal: /* glsl */`
+      float s = vRoad.x, along = vRoad.y, w = vRoad.z, kind = vRoad.w;
+      float hw = w * 0.5;
+      vec2 wp = vWPos.xz;
+      float camD = distance(cameraPosition, vWPos);
+      float near = 1.0 - smoothstep(30.0, 120.0, camD);
+      vec4 sigM = texture2D(uSig, (wp - uSigOrigin) / uSigSize);
+      float n1 = fbm3(wp * 0.12), n2 = vnoise(mat2(0.8, -0.6, 0.6, 0.8) * wp * 2.7), n3 = vnoise(wp * 0.03);
+      float bh = 0.0, rgh = 0.9, metal = 0.0, wm = 0.0, ym = 0.0, rm = 0.0, pudBias = 0.0;
+      // ---- asphalt: fresh black vs sun-bleached grey stretches, aggregate grain, hairline cracks in old surface
+      float age = smoothstep(0.32, 0.78, n3 + 0.12 * n1);
+      vec3 albedo = mix(vec3(0.04, 0.04, 0.043), vec3(0.105, 0.1, 0.094), age * 0.85) * (0.84 + 0.24 * n1) * (0.95 + 0.1 * n2);
+      float gf = cellFade(wp, 50.0), grain = gf > 0.0 ? stones(wp, 36.0) : 0.5;
+      albedo *= 1.0 + (grain - 0.5) * 0.55 * gf;
+      bh += (grain - 0.5) * 0.0012 * gf;
+      if (kind < 0.5) {
+        float lf = vLanes.x, lb = vLanes.y, cls = vLanes.z, ow = vLanes.w;
+        float jOK = smoothstep(vJunc.z, vJunc.z + 0.4, vJunc.x) * smoothstep(vJunc.w, vJunc.w + 0.4, vJunc.y);
+        float x = s + hw - 0.3;
+        float laneF = x / 3.3, lanePos = fract(laneF), laneI = floor(laneF);
+        float edge = hw - abs(s);
+        float urban = step(cls, 6.5);
+        // wheel tracks (polished, a touch darker) and the oily drip line down each lane centre
+        float tracks = (aaBand(lanePos, 0.2, 0.36) + aaBand(lanePos, 0.64, 0.8)) * urban;
+        // queues at the stop line: the drip line darkens and spreads, braking rubber darkens the wheel tracks
+        float dStop = laneF < lf ? vJunc.y - vJunc.w : vJunc.x - vJunc.z;
+        float queue = (1.0 - smoothstep(4.0, 45.0, dStop)) * step(0.0, dStop) * jOK * urban;
+        float oil = aaBand(lanePos, 0.43 - queue * 0.08, 0.57 + queue * 0.08) * smoothstep(0.35 - queue * 0.3, 0.8, vnoise(vec2(along * 0.25, laneI * 3.1))) * urban;
+        albedo *= 1.0 - (0.1 + 0.1 * queue) * tracks - (0.22 + 0.2 * queue) * oil;
+        rgh -= 0.14 * tracks;
+        // cambered carriageway: rain runs to the gutter and sits in the wheel ruts
+        pudBias = (1.0 - smoothstep(0.25, 0.9 + 0.6 * n1, edge)) * 0.9 + tracks * 0.25;
+        // kerbside grime in the gutter
+        albedo *= 1.0 - 0.3 * (1.0 - smoothstep(0.05, 0.55, edge)) * (0.6 + 0.4 * n2);
+        // distress, mostly in old surfaces: tar-sealed longitudinal joints beside the lane lines (dark, glossy,
+        // intermittent), the odd sealed transverse crack, and hairline crazing in the gutter
+        float far2 = 1.0 - smoothstep(70.0, 160.0, camD);
+        float bd = abs(fract(laneF + 0.5) - 0.5) * 3.3;
+        float jw = bd - 0.16 - (vnoise(vec2(along * 0.18, laneI)) - 0.5) * 0.1;
+        float seal = (1.0 - smoothstep(0.018, 0.03 + fwidth(jw), abs(jw))) * step(0.58, vnoise(vec2(along * 0.035, laneI + 7.0))) * smoothstep(0.25, 0.6, age);
+        float tcell = floor(along / 9.0), htc = hash12(vec2(tcell, w + laneI * 0.1));
+        float ta = along - tcell * 9.0 - 4.5 - (vnoise(vec2(s * 0.9, tcell)) - 0.5) * 0.7;
+        float trans = (1.0 - smoothstep(0.012, 0.022 + fwidth(ta), abs(ta))) * step(0.8, htc) * step(abs(s + (fract(htc * 7.3) - 0.5) * hw), hw * 0.45) * smoothstep(0.35, 0.7, age);
+        float hc = abs(vnoise(wp * 1.6) - 0.5);
+        float hair = (1.0 - smoothstep(0.0, fwidth(hc) * 1.3, hc)) * (1.0 - smoothstep(0.5, 1.4, edge)) * smoothstep(0.5, 0.8, vnoise(wp * 0.12 + 3.0)) * smoothstep(0.3, 0.7, age);
+        float sealed = max(seal, trans) * far2;
+        albedo = mix(albedo, vec3(0.018, 0.018, 0.02), sealed * 0.85);
+        rgh -= sealed * 0.45; bh += sealed * 0.0015;
+        albedo *= 1.0 - 0.45 * hair * far2;
+        // lane-wide reinstatement patches (rectangular, newer or older than the road around them)
+        float pc = floor(along / 27.0), la = along - pc * 27.0;
+        float hp = hash12(vec2(pc, laneI + w * 3.17));
+        if (hp > 0.8) {
+          float a0 = 1.5 + fract(hp * 31.7) * 9.0, a1 = a0 + 2.5 + fract(hp * 17.3) * 13.0;
+          float l0 = fract(hp * 5.1) * 0.25, l1 = 0.7 + fract(hp * 9.7) * 0.32;
+          float inP = aaBand(la, a0, a1) * aaBand(lanePos, l0, l1);
+          float seam = inP * (1.0 - aaBand(la, a0 + 0.07, a1 - 0.07) * aaBand(lanePos, l0 + 0.02, l1 - 0.02));
+          vec3 pcol = fract(hp * 3.3) > 0.4 ? vec3(0.034, 0.034, 0.037) : vec3(0.1, 0.097, 0.09);
+          albedo = mix(albedo, pcol * (0.9 + 0.2 * n2), inP * 0.92);
+          albedo *= 1.0 - 0.35 * seam;
+          bh += inP * 0.003;
+        }
+        // long utility-trench reinstatement
+        float tc = floor(along / 140.0); float ht = hash12(vec2(tc, w * 1.37 + 11.0));
+        if (ht > 0.72) {
+          float off = -hw + 1.0 + fract(ht * 7.7) * max(0.0, w - 2.0);
+          float a0 = fract(ht * 3.1) * 60.0, a1 = a0 + 25.0 + fract(ht * 9.9) * 55.0;
+          float inT = aaBand(s, off - 0.45, off + 0.45) * aaBand(along - tc * 140.0, a0, a1);
+          albedo = mix(albedo, vec3(0.03, 0.03, 0.033) * (0.9 + 0.2 * n2), inT * 0.9);
+          bh += inT * 0.002;
+        }
+        // manhole / service covers: round cast iron, some square telecom lids
+        float mc = floor(along / 41.0); float hm = hash12(vec2(mc + 3.0, laneI * 1.7 + w));
+        if (hm > 0.5 && urban > 0.5) {
+          float cA = 5.0 + fract(hm * 23.1) * 31.0, cS = 0.28 + fract(hm * 7.7) * 0.44;
+          vec2 d = vec2((lanePos - cS) * 3.3, along - mc * 41.0 - cA);
+          bool sq = fract(hm * 11.3) > 0.8;
+          float r = sq ? max(abs(d.x), abs(d.y)) : length(d);
+          float rad = sq ? 0.3 : 0.32;
+          float disc = 1.0 - aaStep(rad, r);
+          float ring = aaBand(r, rad - 0.035, rad + 0.03);
+          float pat = sq ? aaBand(fract(d.x * 6.0), 0.1, 0.5) : step(0.5, fract((d.x + d.y) * 8.0)) * step(0.5, fract((d.x - d.y) * 8.0));
+          vec3 iron = vec3(0.075, 0.07, 0.066) * (0.75 + 0.35 * pat * near) * (0.8 + 0.4 * n2);
+          albedo = mix(albedo, iron, disc);
+          albedo = mix(albedo, vec3(0.025), ring * 0.7);
+          metal = max(metal, disc * 0.55); rgh = mix(rgh, 0.5, disc);
+          bh += disc * pat * 0.003 * near - ring * 0.006;
+        }
+        // gully gratings along the kerb
+        float gc = floor(along / 18.0), lg = along - gc * 18.0;
+        float hg = hash12(vec2(gc, w + 5.0 + step(0.0, s)));
+        float grate = aaBand(lg, 7.0, 7.9) * aaBand(edge, 0.12, 0.58) * step(0.25, hg) * jOK * urban;
+        float slot = aaBand(fract((lg - 7.0) * 10.0), 0.3, 0.75);
+        albedo = mix(albedo, mix(vec3(0.06, 0.058, 0.055), vec3(0.006), slot * near), grate);
+        metal = max(metal, grate * 0.45); rgh = mix(rgh, 0.55, grate);
+        bh -= grate * slot * 0.012 * near;
+        // silt and tar run-off streak along the gutter into each grating
+        float runoff = smoothstep(3.0, 7.0, lg) * (1.0 - smoothstep(7.9, 8.5, lg)) * (1.0 - smoothstep(0.05, 0.75, edge)) * step(0.25, hg) * jOK * urban;
+        albedo *= 1.0 - 0.3 * runoff * (0.6 + 0.6 * n2);
+        if (cls < 6.5) {
+          float e = hw - 0.32;
+          ym = aaBand(abs(s), e - 0.06, e + 0.06);
+          if (cls < 3.5) ym = max(ym, aaBand(abs(s), e - 0.27, e - 0.15));
+          ym *= jOK;
+          float tot = lf + lb;
+          float nearest = floor(laneF + 0.5);
+          float dl = abs(laneF - nearest) * 3.3;
+          float isSep = step(0.5, nearest) * step(nearest, tot - 0.5);
+          bool isDiv = ow < 0.5 && abs(nearest - lf) < 0.1;
+          float dash = 1.0 - aaStep(0.33, fract(along / 9.0));
+          float line = 1.0 - aaStep(0.075, dl);
+          if (isDiv) {
+            if (cls < 4.5) line = (1.0 - aaStep(0.06, abs(dl - 0.14)));
+            else line *= dash;
+          } else line *= dash;
+          wm = line * isSep * jOK;
+          float fwd = 1.0 - aaStep(lf * 3.3, x);
+          float stopA = aaBand(vJunc.y, vJunc.w + 0.2, vJunc.w + 0.65) * fwd * step(vJunc.w, 60.0);
+          float stopB = aaBand(vJunc.x, vJunc.z + 0.2, vJunc.z + 0.65) * (1.0 - fwd) * step(vJunc.z, 60.0);
+          wm = max(wm, max(stopA, stopB) * step(abs(s), hw - 0.4));
+          // lane arrows 3-9 m before the stop line; the kerb lane of a multi-lane approach gets straight+left
+          bool fw = fwd > 0.5;
+          float dA = fw ? vJunc.y - vJunc.w : vJunc.x - vJunc.z;
+          float nl = fw ? lf : lb;
+          float li = fw ? laneI : (tot - 1.0 - laneI);
+          if (dA > 3.0 && dA < 9.5 && nl >= 1.0 && cls < 5.5 && (fw ? vJunc.w : vJunc.z) < 60.0) {
+            float u = (lanePos - 0.5) * 3.3 * (fw ? 1.0 : -1.0); // + = away from the kerb
+            float v = dA - 3.2;                                   // 0 at the arrow tip
+            float arrow = aaBand(u, -0.09, 0.09) * aaBand(v, 1.4, 5.6);
+            arrow = max(arrow, aaStep(0.0, v) * (1.0 - aaStep(1.5, v)) * (1.0 - aaStep(v * 0.32, abs(u))));
+            if (li < 0.5 && nl >= 2.0) {
+              float hu = -u - 0.85;
+              arrow = max(arrow, aaBand(v, 2.2, 2.52) * aaBand(u, -0.9, 0.09));
+              arrow = max(arrow, aaStep(0.0, hu) * (1.0 - aaStep(0.5, hu)) * (1.0 - aaStep((0.5 - hu) * 0.9, abs(v - 2.36))));
+            }
+            wm = max(wm, arrow * step(lanePos, 0.97) * step(0.03, lanePos));
+          }
+          // bus lane (lookup G = bus lane, A/G > 0.5 = full-day): its boundary with the next lane is a continuous yellow (red for
+          // full-day lanes) line instead of the white dashes, broken for the last 40 m so cars can weave in to turn left
+          if (sigM.g > 0.3 && (fw ? lf : lb) >= 3.0) {
+            float bF = fw ? 1.0 : tot - 1.0, dB = abs(laneF - bF) * 3.3;
+            float solid = step(40.0, dA);
+            float bl = (1.0 - aaStep(0.1, dB)) * mix(1.0 - aaStep(0.5, fract(along / 3.0)), 1.0, solid) * jOK;
+            wm *= 1.0 - (1.0 - aaStep(0.3, dB));
+            if (sigM.a > sigM.g * 0.5) rm = max(rm, bl); else ym = max(ym, bl);
+          }
+          // yellow box junction: criss-cross hatch inside the junction mouth of selected signalised junctions
+          if (sigM.b > 0.5 && jOK < 0.99) {
+            float inJ = 1.0 - jOK;
+            float h1 = aaBand(fract((wp.x + wp.y) / 2.4), 0.0, 0.06), h2 = aaBand(fract((wp.x - wp.y) / 2.4), 0.0, 0.06);
+            float border = aaBand(edge, 0.25, 0.4);
+            ym = max(ym, max(max(h1, h2), border) * inJ * step(0.5, edge));
+          }
+        }
+      } else if (kind > 3.5) {
+        // junction disc: plain asphalt (+ yellow box hatch)
+        if (sigM.b > 0.5) ym = max(aaBand(fract((wp.x + wp.y) / 2.4), 0.0, 0.06), aaBand(fract((wp.x - wp.y) / 2.4), 0.0, 0.06));
+      } else if (kind > 1.5 && kind < 2.5) {
+        if (sigM.r > 0.5) {
+          // signalised crossing (SG style): two dashed transverse lines along the crossing edges
+          wm = aaBand(abs(s), hw - 0.45, hw - 0.12) * (1.0 - aaStep(0.55, fract(along / 0.9)));
+        } else {
+          wm = (1.0 - aaStep(0.5, fract(along / 1.1))) * (1.0 - aaStep(hw - 0.15, abs(s)));  // zebra
+        }
+      } else {
+        // footways: paving bonds aligned with the path, style changes by neighbourhood
+        float region = hash12(floor(wp / 140.0) + 0.5);
+        float style = region < 0.42 ? 0.0 : region < 0.72 ? 1.0 : region < 0.88 ? 3.0 : 2.0;
+        vec3 pc; float jt, pid;
+        pavers(vec2(along, s + hw), style, pc, jt, pid);
+        float fnear = cellFade(wp, 72.0);
+        pc *= 1.0 + (fnear > 0.0 ? speckle(wp, 40.0) - 0.5 : 0.0) * 0.25 * fnear; // surface grit
+        float stain = smoothstep(0.6, 0.72, fbm3(wp * 0.4 + 3.7));
+        pc *= 1.0 - 0.28 * stain;
+        pc = mix(pc, pc * 1.12 + 0.01, (1.0 - smoothstep(0.0, hw * 0.8, abs(s))) * 0.35); // worn walking line
+        albedo = mix(pc, pc * 0.35 + vec3(0.012, 0.011, 0.009), jt);
+        bh += (pid - 0.5) * 0.0015 * cellFade(wp, 10.0) - jt * 0.004;
+        rgh = 0.78 - 0.08 * pid;
+        if (kind > 2.5) { float st = fract(along / 0.3); albedo *= 0.72 + 0.28 * step(0.12, st); bh += step(0.5, st) * 0.02; }
+      }
+      float wear = 0.55 + 0.45 * smoothstep(0.25, 0.7, vnoise(wp * 1.3));
+      albedo = mix(albedo, vec3(0.62, 0.62, 0.6), wm * wear);
+      albedo = mix(albedo, vec3(0.62, 0.42, 0.04), ym * wear);
+      albedo = mix(albedo, vec3(0.42, 0.05, 0.04), rm * wear);
+      float paint = max(max(wm, ym), rm) * wear;
+      rgh = mix(rgh, 0.5, paint);
+      bh += paint * 0.0025;
+      // rain: darker, glossier, puddles along the gutters and in the ruts (which also flatten the bump), rain rings
+      float puddle = 0.0;
+      if (uWet > 0.01) {
+        puddle = smoothstep(0.6, 0.68, fbm3(wp * 0.11) + pudBias * 0.32 - (kind > 2.5 ? 0.06 : 0.0)) * uWet;
+        albedo *= mix(1.0, 0.6, uWet);
+        albedo = mix(albedo, albedo * 0.4, puddle);
+        rgh = mix(rgh, 0.18, uWet);
+        rgh = mix(rgh, 0.02, puddle);
+        bh *= 1.0 - puddle;
+        if (puddle > 0.02 && uRain > 0.05 && near > 0.0) {
+          // one drop ring per 0.6 m cell, restarting at a random phase
+          vec2 rc = floor(wp * 1.6), rf = fract(wp * 1.6) - 0.5 - (hash22(rc) - 0.5) * 0.5;
+          float ph = fract(uTime * 0.9 + hash12(rc + 3.1)), rr = length(rf) / 1.6;
+          bh += (1.0 - smoothstep(0.0, 0.014, abs(rr - ph * 0.3))) * (1.0 - ph) * 0.003 * uRain * puddle * near;
+        }
+      }
+      diffuseColor.rgb = albedo;
+      roughnessFactor = clamp(rgh, 0.02, 1.0);
+      metalnessFactor = metal;
+    `,
+  });
+}
+
+// ------------------------------------------------------------------ structures (bridges, seawalls, canopies)
+export function createStructMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.0 });
+  return patch(mat, {
+    key: 'struct-v1',
+    uniforms: COMMON_U(),
+    vertexHead: COMMON_VHEAD, vertexBody: COMMON_VBODY,
+    fragHead: COMMON_HEAD,
+    fragAfterMetal: /* glsl */`
+      vec3 albedo = diffuseColor.rgb * (0.8 + 0.35 * fbm3(vWPos.xz * 0.3 + vWPos.y * 0.5));
+      albedo *= mix(0.55, 1.0, smoothstep(-1.5, -0.6, vWPos.y));  // algae line at the waterline
+      albedo *= 1.0 - uWet * 0.3;
+      diffuseColor.rgb = albedo;
+      roughnessFactor = mix(0.85, 0.4, uWet);
+    `,
+  });
+}
+
+// ------------------------------------------------------------------ ground
+// shore: the variant for ground cells that touch water (it discards water pixels so the bay shows through); the main
+// land variant has no discard, so the GPU's early depth test skips it wherever roads, pavements or buildings cover it
+export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0.0 });
+  const sizeW = meta.w * meta.res, sizeH = meta.h * meta.res;
+  return patch(mat, {
+    key: shore ? 'ground-v6-shore' : 'ground-v6',
+    uniforms: { ...COMMON_U(), ...STREET_U(), uMask: { value: maskTex }, uMaskOrigin: { value: new THREE.Vector2(meta.xmin, meta.zmin) }, uMaskSize: { value: new THREE.Vector2(sizeW, sizeH) } },
+    vertexHead: COMMON_VHEAD, vertexBody: COMMON_VBODY,
+    fragHead: COMMON_HEAD + STREET_GLSL + `uniform sampler2D uMask; uniform vec2 uMaskOrigin; uniform vec2 uMaskSize;`,
+    fragAfterEmissive: `normal = bumpNormal(normal, bh, vViewPosition);
+      if (uNight > 0.02) totalEmissiveRadiance += diffuseColor.rgb * lampLight(wp, camD);`,
+    fragAfterMetal: /* glsl */`
+      float bh = 0.0;
+      float camD = distance(cameraPosition, vWPos);
+      float fnear = 1.0 - smoothstep(12.0, 60.0, camD);
+      vec2 wp = vWPos.xz;
+      vec2 muv = (wp - uMaskOrigin) / uMaskSize;
+      vec4 m = texture2D(uMask, muv);
+      bool outside = muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0;
+      ${shore ? 'if (m.r < 0.627) discard;' : ''}
+      float g = outside ? 0.5 : m.g, b = outside ? 0.5 : m.b;
+      float n1 = fbm3(wp * 0.07);
+      // vegetation channel: crisp, slightly irregular edges (the mask is only 2 m/px)
+      float edgeN = (vnoise(wp * 0.9) - 0.5) * 0.12 + (vnoise(wp * 3.7) - 0.5) * 0.05;
+      float gv = smoothstep(0.36, 0.42, g + edgeN);
+      float kerbG = (1.0 - smoothstep(0.0, 0.035, abs(g + edgeN - 0.39))) * step(0.3, b);
+      float pavW = b > 0.4 && g < 0.55 ? smoothstep(0.44, 0.5, b + edgeN) : 0.0;
+      vec3 col = vec3(0.17, 0.12, 0.08); float rgh = 0.95;
+      // grass / dirt / pitches — skipped where paving covers the ground completely (most of the city floor)
+      if (pavW < 0.999) {
+        float n2 = vnoise(wp * 1.9), n3 = vnoise(wp * 0.21);
+        // grass (Singapore: lush, cut cow grass) with dry patches
+        vec3 grass = mix(vec3(0.06, 0.13, 0.022), vec3(0.1, 0.19, 0.035), n1) * (0.85 + 0.25 * n2);
+        grass = mix(grass, vec3(0.16, 0.16, 0.07), smoothstep(0.62, 0.8, n3) * 0.5);
+        // close up: clumps, clover and blade-scale grain so lawns stop looking like felt
+        float gnear = 1.0 - smoothstep(10.0, 45.0, camD);
+        if (gnear > 0.0) {
+          float bf = cellFade(wp, 58.0);
+          float clump = vnoise(wp * 1.6), blade = bf > 0.0 ? speckle(wp, 32.0) : 0.5, blade2 = vnoise(mat2(0.8, -0.6, 0.6, 0.8) * wp * 9.0);
+          grass *= 1.0 + ((clump - 0.5) * 0.35 + (blade2 - 0.5) * 0.3 * cellFade(wp, 9.0) + (blade - 0.5) * 0.32 * bf) * gnear;
+          bh += (blade2 * 0.6 + (blade - 0.5) * 0.4 * bf) * 0.008 * gnear;
+        }
+        grass = mix(grass, grass * vec3(0.8, 1.15, 0.7), smoothstep(0.7, 0.8, vnoise(wp * 0.9 + 5.0)) * 0.5);
+        vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
+        vec3 dirt = mix(vec3(0.17, 0.12, 0.08), vec3(0.12, 0.13, 0.06), n1);
+        col = mix(dirt, grass, smoothstep(0.3, 0.6, n1 + 0.25));
+        vec3 gcol = g < 0.5 ? pitch : (g < 0.8 ? grass * 0.75 : grass);
+        col = mix(col, gcol, gv);
+      }
+      // paving channel
+      if (b > 0.4 && g < 0.55) {
+        vec3 pav;
+        float stain = smoothstep(0.6, 0.74, fbm3(wp * 0.33 + 4.0));
+        if (b > 0.95) { // plaza granite: 600 mm tiles, speckled, occasional darker accent courses, thin grout
+          float region = hash12(floor(wp / 60.0));
+          vec2 tsz = region > 0.5 ? vec2(0.6) : vec2(0.6, 0.3);
+          vec2 tp = wp / tsz, tid = floor(tp);
+          float jt = jointMask(fract(tp) * tsz, tsz, 0.004);
+          float hv = hash12(tid);
+          vec3 light = region > 0.3 ? vec3(0.2, 0.192, 0.178) : vec3(0.215, 0.2, 0.17);
+          pav = mix(light, vec3(0.11, 0.108, 0.105), step(0.88, hv) * step(0.45, region)) * (0.78 + 0.32 * hash12(tid + 3.0));
+          // accent bands of dark granite every few courses
+          pav = mix(pav, vec3(0.09, 0.088, 0.085), step(region, 0.25) * step(mod(tid.y, 7.0), 0.5));
+          float sf = cellFade(wp, 108.0);
+          pav *= 1.0 + (sf > 0.0 ? speckle(wp, 60.0) - 0.5 : 0.0) * 0.55 * sf;
+          pav *= 1.0 - 0.32 * stain - 0.15 * smoothstep(0.4, 0.8, vnoise(wp * 0.06 + 2.0));
+          pav = mix(pav, pav * 0.4, jt);
+          bh += (hv - 0.5) * 0.001 - jt * 0.003;
+          rgh = 0.6 - 0.12 * hv;
+        } else if (b > 0.83) { // sidewalk pavers: bond varies by neighbourhood
+          float region = hash12(floor(wp / 140.0) + 0.5);
+          float style = region < 0.42 ? 0.0 : region < 0.72 ? 1.0 : region < 0.88 ? 3.0 : 2.0;
+          float jt, pid;
+          pavers(wp, style, pav, jt, pid);
+          float gf2 = cellFade(wp, 72.0);
+          pav *= 1.0 + (gf2 > 0.0 ? speckle(wp, 40.0) - 0.5 : 0.0) * 0.25 * gf2;
+          pav *= 1.0 - 0.28 * stain;
+          pav = mix(pav, pav * 0.35 + vec3(0.012, 0.011, 0.009), jt);
+          bh += (pid - 0.5) * 0.0015 * cellFade(wp, 10.0) - jt * 0.004;
+          rgh = 0.78 - 0.08 * pid;
+        } else if (b > 0.75) { // car park asphalt with oil drips
+          float cf = cellFade(wp, 50.0);
+          pav = vec3(0.06, 0.06, 0.065) * (0.8 + 0.3 * n1) * (1.0 + (cf > 0.0 ? stones(wp, 36.0) - 0.5 : 0.0) * 0.55 * cf);
+          pav *= 1.0 - 0.4 * smoothstep(0.66, 0.74, vnoise(wp * 0.7 + 9.0));
+          rgh = 0.9;
+        } else { // building apron: cast concrete slabs with saw-cut joints, water stains
+          vec2 tp = wp / 1.5; float jt = jointMask(fract(tp) * 1.5, vec2(1.5), 0.005);
+          pav = vec3(0.18, 0.176, 0.165) * (0.82 + 0.25 * n1) * (0.85 + 0.2 * hash12(floor(tp)));
+          pav *= 1.0 - 0.35 * stain - 0.2 * smoothstep(0.45, 0.85, vnoise(wp * 0.08 + 7.0));
+          pav = mix(pav, pav * 0.55, jt); bh -= jt * 0.003; rgh = 0.85;
+        }
+        // up close: material grain from a small tiling texture. Everywhere: the city wear map — soil and leaf litter
+        // round tree bases, foot polish along shop fronts, at crossing kerbs and bus stops — and a few re-laid patches
+        if (fnear > 0.0) { vec3 pd = texture2D(uPave, wp / 1.7).rgb; pav *= 1.0 + (pd.r - 0.5) * 0.32 * fnear; bh += (pd.g - 0.5) * 0.0014 * fnear; rgh += (pd.b - 0.5) * 0.16 * fnear; }
+        vec2 wr = texture2D(uWear, (wp - uWearOrigin) / uWearSize).rg;
+        float mott = 0.55 + 0.9 * vnoise(wp * 1.3);
+        pav = mix(pav, vec3(0.045, 0.036, 0.026), clamp(wr.r * mott, 0.0, 1.0) * 0.72);
+        pav = mix(pav, pav * 1.1 + 0.008, wr.g * 0.45); rgh -= wr.g * 0.22 * (0.6 + 0.4 * mott);
+        float relaid = step(hash12(floor(wp / 3.0) + 91.7), 0.03);
+        pav = mix(pav, pav * vec3(1.13, 1.11, 1.07) + 0.006, relaid * 0.8);
+        col = mix(col, pav, pavW);
+        bh *= pavW;
+      }
+      col = mix(col, vec3(0.42, 0.41, 0.38), kerbG * 0.85); // concrete kerb where paving meets grass
+      float puddle = uWet > 0.01 ? smoothstep(0.6, 0.66, n1) * uWet * step(0.4, b) : 0.0;
+      col *= mix(1.0, 0.65, uWet);
+      col = mix(col, col * 0.5, puddle);
+      rgh = mix(rgh, mix(0.35, 0.03, puddle), uWet * step(0.4, b));
+      bh *= 1.0 - puddle;
+      diffuseColor.rgb = col;
+      roughnessFactor = rgh;
+    `,
+  });
+}
