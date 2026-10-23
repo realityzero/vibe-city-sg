@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# raw OpenStreetMap downloads: re-fetched by tools/fetch-osm.mjs
+tools/cache/
+.DS_Store
+*.log

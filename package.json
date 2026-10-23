@@ -1,0 +1,24 @@
+{
+  "name": "vibe-city-sg",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "data": "node tools/fetch-osm.mjs && node tools/build-city.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "n8ao": "^2.0.1",
+    "postprocessing": "^6.39.5",
+    "three": "^0.186.1",
+    "three-mesh-bvh": "^0.9.16"
+  },
+  "devDependencies": {
+    "earcut": "^3.2.4",
+    "playwright": "^1.64.1",
+    "vite": "^8.3.5"
+  }
+}
