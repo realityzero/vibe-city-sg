@@ -1,0 +1,16 @@
+// Inline SVG icons used by the HUD/phone. Kept tiny and stroke-outlined so they read on any background.
+const svg = (body, vb = '0 0 24 24') => `<svg viewBox="${vb}" xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
+
+export const ICONS = {
+  heart: svg('<path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.7 4.5c2.2 0 3.6 1.2 4.3 2.4h2c.7-1.2 2.1-2.4 4.3-2.4 3.7 0 5.8 3.8 4.3 7.2C19.5 16.4 12 21 12 21z" fill="#ff4fa3" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.6 7.3c-1.4.2-2.3 1.4-2.2 2.8" stroke="#ffd0e8" stroke-width="1.4" fill="none" stroke-linecap="round"/>'),
+  shield: svg('<path d="M12 2.5l8 3v6.2c0 4.8-3.3 8.4-8 9.8-4.7-1.4-8-5-8-9.8V5.5l8-3z" fill="#2fe6ff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 5.2v13.4" stroke="#0b6f84" stroke-width="1.6"/>'),
+  star: svg('<path d="M12 2.2l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.1l-5.9 3.2 1.3-6.6-4.9-4.6 6.6-.8z" stroke-width="1.5" stroke-linejoin="round"/>'),
+  fist: svg('<g stroke="#000" stroke-width="1.7" stroke-linejoin="round"><path d="M6 9.5c0-1.5 1-2.5 2.3-2.5h8.5c1.6 0 2.7 1.1 2.7 2.6v5.2c0 3.2-2.4 5.7-5.7 5.7h-2.5C8.3 20.5 6 18.3 6 15.3z" fill="#ffd2b0"/><path d="M8.6 7V5.4c0-.9.7-1.5 1.5-1.5s1.5.6 1.5 1.5V7M11.6 7V4.9c0-.9.7-1.5 1.5-1.5s1.5.6 1.5 1.5V7M14.6 7V5.4c0-.9.7-1.5 1.5-1.5s1.5.6 1.5 1.5V7.4" fill="#ffd2b0"/><path d="M6 11.5h3.6c1 0 1.7.8 1.7 1.7s-.8 1.6-1.7 1.6H7.8" fill="none"/></g>'),
+  laptop: svg('<g stroke="#000" stroke-width="1.6" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="11" rx="1.4" fill="#2a2140"/><rect x="5.6" y="6" width="12.8" height="8" rx=".6" fill="#2fe6ff"/><path d="M2 17h20l-1.6 2.6H3.6z" fill="#cfc8ea"/></g><path d="M7 8.2h4.6M7 10.2h7.4M7 12.2h3" stroke="#0a3a4a" stroke-width="1.1" stroke-linecap="round"/>'),
+  phone: svg('<g stroke="#000" stroke-width="1.6"><rect x="7" y="2.5" width="10" height="19" rx="2.2" fill="#2a2140"/><rect x="8.4" y="5" width="7.2" height="13" rx=".8" fill="#ff3fa4"/></g><circle cx="12" cy="19.8" r=".8" fill="#fff"/>'),
+  kopi: svg('<g stroke="#000" stroke-width="1.6" stroke-linejoin="round"><path d="M5 9h12l-1.3 10.2c-.2 1.3-1.2 2.3-2.6 2.3H8.9c-1.3 0-2.4-1-2.6-2.3z" fill="#fff6e8"/><path d="M17 11.2h1.3c1.4 0 2.2 1 2.2 2.2s-1 2.4-2.6 2.4h-1.4" fill="none"/><path d="M5.6 13h11" stroke="#7a4a2a"/></g><path d="M9 3.5c-.8 1 .8 1.6 0 2.8M12.5 3c-.8 1 .8 1.6 0 2.8" stroke="#fff" stroke-width="1.3" fill="none" stroke-linecap="round"/>'),
+  pistol: svg('<path d="M3 7h16.5l1 2.6H15l-1.2 2.2h-2.6l-.9 1.8-.4 5.4H6.2l1.6-7.3-4.8-.4z" fill="#3b3550" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/>'),
+  callAccept: svg('<path d="M6.6 10.8a15.1 15.1 0 006.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 013 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1z"/>'),
+  callEnd: svg('<path d="M12 9c-1.6 0-3.1.3-4.6.7v3.1c0 .4-.2.7-.6.9-1 .5-1.9 1.1-2.7 1.8-.2.2-.4.3-.7.3-.3 0-.5-.1-.7-.3L.3 13.1A1 1 0 010 12.4c0-.3.1-.5.3-.7C3.3 8.9 7.4 7.2 12 7.2s8.7 1.7 11.7 4.5c.2.2.3.4.3.7s-.1.5-.3.7l-2.4 2.4c-.2.2-.4.3-.7.3-.3 0-.5-.1-.7-.3-.8-.7-1.7-1.3-2.7-1.8-.3-.2-.6-.5-.6-.9V9.7C15.1 9.2 13.6 9 12 9z"/>'),
+  message: svg('<path d="M4 4.5h16c1 0 1.8.8 1.8 1.8v9.4c0 1-.8 1.8-1.8 1.8H9.5L5 21v-3.5H4c-1 0-1.8-.8-1.8-1.8V6.3c0-1 .8-1.8 1.8-1.8z"/>'),
+};
