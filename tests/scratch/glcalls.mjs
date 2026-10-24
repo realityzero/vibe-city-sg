@@ -1,0 +1,30 @@
+// What does one game frame send to the GPU besides draws? Wraps texture/buffer upload + render-target calls.
+import { chromium } from '../lib/browser.mjs';
+const browser = await chromium.launch({ exclusive: true, headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+page.on('pageerror', e => console.log('[pageerror]', e.message));
+await page.goto('http://127.0.0.1:5174/?skipTitle&newgame&freeroam=1&fixedres', { waitUntil: 'load' });
+await page.waitForFunction(() => window.__game?.worldReady, null, { timeout: 120000 });
+await page.evaluate(() => void __game.debugTp(-60, 1000, 0));
+await page.waitForTimeout(3000);
+const r = await page.evaluate(() => new Promise(res => {
+  const g = __game, gl = g.R.renderer.getContext(), log = {};
+  const add = (k, bytes) => { const e = log[k] || (log[k] = { n: 0, mb: 0 }); e.n++; e.mb += bytes / 1e6; };
+  const W = {};
+  const wrap = (name, f) => { const o = gl[name].bind(gl); W[name] = o; gl[name] = (...a) => { f(a); return o(...a); }; };
+  const stack = () => (new Error().stack.split('\n').slice(3, 6).map(s => s.trim().replace(/^at /, '').replace(/\(.*\/(src|node_modules)\//, '(').replace(/\?v=\w+/, '')).join(' < '));
+  wrap('texImage2D', a => add('texImage2D ' + (a.length >= 9 ? `${a[3]}x${a[4]}` : 'img') + ' ' + stack(), a.length >= 9 ? a[3] * a[4] * 4 : 0));
+  wrap('texSubImage2D', a => add('texSubImage2D ' + (a.length >= 9 ? `${a[4]}x${a[5]}` : 'img') + ' ' + stack(), a.length >= 9 ? a[4] * a[5] * 4 : 0));
+  wrap('texImage3D', a => add('texImage3D ' + stack(), a[3] * a[4] * a[5] * 4));
+  wrap('bufferData', a => add('bufferData ' + stack(), a[1]?.byteLength || (typeof a[1] === 'number' ? a[1] : 0)));
+  wrap('bufferSubData', a => add('bufferSubData ' + stack(), (a[4] || a[2]?.byteLength || 0)));
+  wrap('generateMipmap', a => add('generateMipmap ' + stack(), 0));
+  wrap('blitFramebuffer', a => add('blitFramebuffer ' + stack(), 0));
+  wrap('clear', a => add('clear', 0));
+  let frames = 0;
+  const f = () => { if (++frames < 31) requestAnimationFrame(f); else { for (const k in W) gl[k] = W[k]; res(Object.entries(log).map(([k, v]) => [k, v.n / 30, v.mb / 30]).sort((a, b) => b[2] - a[2] || b[1] - a[1])); } };
+  requestAnimationFrame(f);
+}));
+for (const [k, n, mb] of r.slice(0, 40)) console.log(`${n.toFixed(1).padStart(6)}/frame ${mb.toFixed(2).padStart(7)} MB/frame  ${k}`);
+await browser.close();
