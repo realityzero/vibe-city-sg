@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vibe City — UI harness</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+  #bg { position: fixed; inset: 0; background: linear-gradient(180deg, #6d93bd 0%, #b7cde0 38%, #e8d2b0 52%, #6a6f75 53%, #3c3f44 100%); }
+  #bg.night { background: linear-gradient(180deg, #050512 0%, #1b1238 45%, #3a1c4e 52%, #121018 53%, #050507 100%); }
+  #bg::after { content: ""; position: absolute; left: 0; right: 0; top: 30%; height: 23%; background: repeating-linear-gradient(90deg, rgba(40,44,60,.85) 0 3%, rgba(70,80,100,.8) 3% 5%, rgba(30,34,48,.9) 5% 9%, rgba(90,96,110,.75) 9% 10%);
+    -webkit-mask: linear-gradient(0deg, #000 0 70%, transparent); filter: blur(1px); }
+  #dev { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); z-index: 100; display: flex; flex-wrap: wrap; gap: 4px; max-width: 64vw; justify-content: center; }
+  #dev button { font: 600 11px system-ui; padding: 4px 7px; border-radius: 5px; border: 1px solid #fff4; background: #000a; color: #fff; cursor: pointer; }
+  #dev button:hover { background: #ff3fa4; }
+  #perf { position: fixed; left: 8px; top: 50%; z-index: 100; font: 11px monospace; color: #0f0; background: #000a; padding: 3px 6px; }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="dev"></div>
+<div id="perf"></div>
+<script type="module">
+import { UI, districtAt, LANDMARKS } from '/src/ui/index.js';
+
+const qs = new URLSearchParams(location.search);
+const demo = qs.get('demo');
+if (qs.has('night')) document.getElementById('bg').classList.add('night');
+if (qs.has('nopanel')) document.getElementById('dev').style.display = 'none';
+if (!qs.has('perf')) document.getElementById('perf').style.display = 'none';
+
+const ui = new UI(document.body);
+window.ui = ui;
+
+const [city, ground] = await Promise.all([
+  fetch('/data/city.json').then(r => r.json()),
+  new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = '/data/ground.png'; }),
+]);
+const t0 = performance.now();
+ui.radar.setMap(city, ground);
+console.log(`map prerender ${(performance.now() - t0).toFixed(0)} ms`);
+
+// --- fake player: random walk along the traffic graph
+const { nodes, edges } = city.graph;
+const adj = nodes.map(() => []);
+edges.forEach((e, i) => { adj[e.a].push([i, 1]); if (e.lb) adj[e.b].push([i, -1]); });
+const lm = n => LANDMARKS.find(l => l.name === n);
+let startNode = 0, best = Infinity;
+const start = lm(qs.get('at') || 'Raffles Place');
+nodes.forEach((n, i) => { const d = Math.hypot(n[0] - start.x, n[1] - start.z); if (d < best && adj[i].length) { best = d; startNode = i; } });
+let cur = { pts: [], i: 0, f: 0 }, node = startNode, prevEdge = -1;
+function nextEdge() {
+  const opts = adj[node].filter(([e]) => e !== prevEdge);
+  const [ei, dir] = (opts.length ? opts : adj[node])[Math.floor(Math.random() * (opts.length || adj[node].length))] || [];
+  if (ei == null) { node = startNode; return nextEdge(); }
+  const e = edges[ei]; prevEdge = ei;
+  const p = []; for (let k = 0; k < e.p.length; k += 2) p.push([e.p[k], e.p[k + 1]]);
+  if (dir < 0) p.reverse();
+  node = dir > 0 ? e.b : e.a;
+  cur = { pts: p, i: 0, f: 0 };
+}
+nextEdge();
+const player = { x: start.x, z: start.z, heading: 0 };
+let camHeading = 0;
+
+const fakeBlips = [
+  { type: 'mission', x: lm('Lau Pa Sat').x, z: lm('Lau Pa Sat').z, label: 'K' },
+  { type: 'mission', x: lm('Clarke Quay').x, z: lm('Clarke Quay').z, label: 'L' },
+  { type: 'objective', x: lm('Marina Bay Sands').x, z: lm('Marina Bay Sands').z, y: 30 },
+  { type: 'safehouse', x: lm('Pagoda Street').x, z: lm('Pagoda Street').z },
+  { type: 'shop', x: lm('Maxwell Food Centre').x, z: lm('Maxwell Food Centre').z },
+  { type: 'checkpoint', x: lm('Fullerton Hotel').x, z: lm('Fullerton Hotel').z },
+  { type: 'friend', x: start.x + 60, z: start.z - 40 },
+  { type: 'enemy', x: start.x - 90, z: start.z + 30, y: -10 },
+  { type: 'police', x: start.x + 120, z: start.z + 80 },
+  { type: 'vehicle', x: start.x - 40, z: start.z - 70 },
+];
+
+let money = 1250, wanted = 0, time = 19.5, users = 120, health = 82;
+let flying = false, alt = 0, fareState = null, kaya = 3;
+let lastZone = null, last = performance.now(), radarMs = 0, frames = 0;
+const SPEED = 18;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!qs.has('still')) {
+    let move = SPEED * dt;
+    while (move > 0) {
+      const a = cur.pts[cur.i], b = cur.pts[cur.i + 1];
+      if (!b) { nextEdge(); continue; }
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 0.001;
+      const rem = L * (1 - cur.f);
+      if (move < rem) { cur.f += move / L; move = 0; } else { move -= rem; cur.i++; cur.f = 0; }
+      const dx = b[0] - a[0], dz = b[1] - a[1];
+      player.heading = Math.atan2(-dx, -dz);
+    }
+    const a = cur.pts[cur.i], b = cur.pts[cur.i + 1] || a;
+    player.x = a[0] + (b[0] - a[0]) * cur.f; player.z = a[1] + (b[1] - a[1]) * cur.f;
+    let d = player.heading - camHeading; d = Math.atan2(Math.sin(d), Math.cos(d));
+    camHeading += d * Math.min(1, dt * 2.5);
+    time = (time + dt / 60) % 24;
+  }
+  const z = districtAt(player.x, player.z);
+  if (z && z !== lastZone) { ui.hud.flashZone(z); lastZone = z; }
+  if (flying) alt = 60 + Math.sin(now / 2500) * 45;
+  ui.hud.update({ time, money, health, armor: 35, wanted, users, valuation: 4.5e6, inVehicle: true, speedKmh: SPEED * 3.6, vehicleName: flying ? 'Sparrow' : 'Infernus', weaponIcon: 'laptop',
+    altitude: flying ? alt : null, vspeed: flying ? Math.cos(now / 2500) * 45 / 2.5 : 0, heading: camHeading });
+  if (fareState) { fareState.fare += dt * 0.35; fareState.timeLeft -= dt; if (fareState.timeLeft < 0) fareState.timeLeft = 45; ui.fare.set(fareState); }
+  const r0 = performance.now();
+  ui.radar.update({ x: player.x, z: player.z, heading: camHeading, playerHeading: player.heading, blips: fakeBlips, zoom: 220 });
+  radarMs = radarMs * 0.95 + (performance.now() - r0) * 0.05;
+  if (++frames % 30 === 0) document.getElementById('perf').textContent = `radar ${radarMs.toFixed(2)} ms`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// --- dev buttons
+const actions = {
+  title: () => ui.showTitle({ onStart: () => ui.hideTitle(), onContinue: () => ui.hideTitle() }),
+  loading: async () => { for (let p = 0; p <= 1.001; p += 0.02) { ui.showLoading(p, p < .5 ? 'Generating HDB blocks' : 'Planting rain trees'); await new Promise(r => setTimeout(r, 120)); } ui.hideLoading(); },
+  passed: () => ui.missionPassed({ title: 'Vibe Check', reward: 2500, respect: true, extra: 'MVP shipped · 0 tests' }),
+  failed: () => ui.missionFailed('Lance got poached by Why Combinator.'),
+  wasted: () => ui.wasted(), busted: () => ui.busted(),
+  mtitle: () => ui.missionTitle('Vibe Check', 'Tanjong Pagar · 9:41 AM'),
+  phone: () => ui.phone.call('Ken Rosenberg', [
+    { speaker: 'Ken Rosenberg', text: 'Tommy! Tommy, it\'s Ken. Listen, nobody launders money anymore — they raise a <b>Series A</b>.' },
+    { speaker: 'Tommy', text: 'Ken, I don\'t even know what a Series A is.' },
+    { speaker: 'Ken Rosenberg', text: 'Perfect! Neither do half the founders here. Meet me at <b>Lau Pa Sat</b>.' },
+  ]),
+  text: () => ui.phone.text('Lance Vance', 'Bro the demo is in 2 hours. Did you push to <b>main</b>??'),
+  sub: () => ui.say([{ speaker: 'Auntie Mei', text: 'Eh boy, you want chicken rice or not? Got <em>roasted</em> also.' }, { speaker: 'Tommy', text: 'Two plates. And one Kopi-O kosong.' }]),
+  objective: () => ui.objective('Drive to <b>WeHustle</b> coworking in <em>Tanjong Pagar</em>.'),
+  help: () => ui.help('Press F to enter a vehicle. Hold Space for the handbrake. Press M to open the map.'),
+  prompt: () => ui.interactPrompt(ui._lastPrompt ? null : 'Press F to enter vehicle'),
+  toast: () => ui.toast('Saved at <b>Capsule Hotel, Chinatown</b>'),
+  splash: () => ui.splash('+500 Users', '#7fe36a'),
+  erp: () => { ui.splash('ERP S$2 deducted', '#ffc94a'); money -= 2; },
+  choice: async () => { const i = await ui.choice('What are we building, Tommy?', [{ label: '<b>ChopeChain</b> — reserve hawker seats on-chain, not with tissue packets' }, { label: '<b>Kopi.ai</b> — an AI that predicts your kopi order' }, { label: '<b>DurianDash</b> — 15-minute durian delivery' }]); ui.toast(`Picked ${i + 1}`); },
+  timer: () => ui.timer.show('Demo Day', 154),
+  counter: () => ui.counter.show('Users', 1200, 2000),
+  bar: () => ui.bar.show('Rival damage', 0.65, '#ff3d54'),
+  letterbox: () => ui.letterbox(!ui._lbHud),
+  fade: async () => { await ui.fade(true, 500); await ui.fade(false, 500); },
+  map: () => ui.map.open({ x: player.x, z: player.z, heading: camHeading, playerHeading: player.heading, blips: fakeBlips, onWaypoint: (x, z) => ui.toast(x == null ? 'Waypoint cleared' : `Waypoint ${x.toFixed(0)}, ${z.toFixed(0)}`) }),
+  pause: () => ui.pause.open({ onResume: () => ui.pause.close(), onQuit: () => ui.pause.close(), settings: { shadows: true }, onSettingsChange: (k, v) => console.log('setting', k, v),
+    secrets: [
+      { name: 'LEEKUANYEW', desc: 'Every car on the road obeys the speed limit. Eerie.', found: true },
+      { name: 'CHOPECHOPE', desc: 'Spawns tissue packets that reserve any parking spot.', found: true },
+      { name: 'KIASUMODE', desc: 'Infinite health. You will not lose.', found: false },
+      { name: 'DURIANRAIN', desc: 'It rains durians.', found: false, hint: 'Try typing something smelly while driving.' },
+      { name: 'MERLIONFLY', desc: 'Cars fly when you honk.', found: true },
+      { name: 'ERPFREE', desc: 'ERP gantries pay YOU.', found: false },
+    ],
+    stats: { 'Days in Singapore': 3, 'Lines of code shipped': 12840, 'Kopi consumed': 27, 'Bugs squashed': 311, 'ERP paid': 'S$46', 'Fines': 'S$1,500' }, map: { x: player.x, z: player.z, heading: camHeading, playerHeading: player.heading, blips: fakeBlips } }),
+  radio: () => ui.hud.flashRadio('Kopi Lo-Fi 88.3', '#ffc94a'),
+  vehicle: () => ui.hud.flashVehicle('Infernus'),
+  wanted: () => { wanted = (wanted + 1) % 6; },
+  money: () => { money += 1000; ui.splash('+S$1,000', '#7fe36a'); },
+  route: () => { ui.radar.setRoute(ui.radar.route ? null : [[player.x, player.z], [lm('Merlion').x, lm('Merlion').z], [lm('Marina Bay Sands').x, lm('Marina Bay Sands').z]]); },
+  hide: () => ui.hud.setVisible(!ui.hud.visible),
+  stunt: async () => { ui.slowmo(true); await new Promise(r => setTimeout(r, 1200)); ui.slowmo(false); ui.stunt.show({ title: 'Insane Stunt Bonus', lines: ['Distance 84 m', 'Height 12 m', 'Flips 1.5', 'Rotation 540°'], reward: 420 }); },
+  slowmo: () => ui.slowmo(!ui._slowmo.classList.contains('on')),
+  cheat: () => ui.cheat('LEEKUANYEW — traffic obeys the law'),
+  fare: () => { if (fareState) { ui.fare.hide(); fareState = null; return; } fareState = { fare: 3.9, tip: 1.5, timeLeft: 72, passenger: 'Auntie Lim', dest: 'Lau Pa Sat' }; ui.fare.show(fareState); },
+  fareSummary: () => { ui.fare.hide(); fareState = null; ui.fare.summary({ trips: 7, earned: 84.2 }); },
+  fly: () => { flying = !flying; },
+  photo: () => {
+    ui.photo.open({ onCapture: ({ filter }) => {
+      const c = document.createElement('canvas'); c.width = 640; c.height = 360; const x = c.getContext('2d');
+      const g = x.createLinearGradient(0, 0, 0, 360); g.addColorStop(0, '#3a1c6e'); g.addColorStop(.6, '#ff6a8a'); g.addColorStop(.61, '#120822'); g.addColorStop(1, '#060310'); x.fillStyle = g; x.fillRect(0, 0, 640, 360);
+      x.fillStyle = '#ffd25e'; x.beginPath(); x.arc(320, 215, 70, Math.PI, 0); x.fill(); x.fillStyle = '#0d0418'; for (let i = 0; i < 18; i++) x.fillRect(i * 36, 216 - (40 + (i * 37) % 120), 28, 200);
+      x.fillStyle = '#fff'; x.font = '20px sans-serif'; x.fillText(filter, 16, 30);
+      setTimeout(() => ui.photo.showResult(c.toDataURL('image/png'), `Marina Bay · ${filter}`), 350);
+    }, onFilter: (n, i) => console.log('filter', n, i), onClose: () => console.log('photo closed') });
+  },
+  bark: () => { const lines = ['Eh! Watch where you going lah!', 'Wah lau eh...', 'Uncle, cannot park here!', 'Got Wi-Fi or not?', 'Siao ah you?']; ui.bark(lines[(Math.random() * lines.length) | 0], innerWidth * (0.25 + Math.random() * 0.5), innerHeight * (0.35 + Math.random() * 0.25)); },
+  kaya: () => { kaya = Math.min(24, kaya + 1); ui.collectibles.pickup(kaya, 24); ui.splash(`Kaya Toast ${kaya}/24`, '#ffc94a'); },
+};
+const dev = document.getElementById('dev');
+for (const [k, fn] of Object.entries(actions)) { const b = document.createElement('button'); b.textContent = k; b.onclick = fn; dev.appendChild(b); }
+window.actions = actions;
+ui.collectibles.set(kaya, 24);
+if (demo) for (const d of demo.split(',')) actions[d]?.();
+</script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vibe City — humans</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; font: 12px/1.4 system-ui, sans-serif; color: #eee; }
+  #ui { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none; }
+  #ui button { pointer-events: auto; background: rgba(20,20,30,.75); color: #fff; border: 1px solid #555; border-radius: 4px; padding: 3px 7px; cursor: pointer; }
+  #ui button.on { background: #e64980; border-color: #e64980; }
+  #stats { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,.6); padding: 4px 8px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="ui"></div>
+<div id="stats"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createHumanoid, Crowd, PRESET_NAMES, ANIM_NAMES, CROWD_ANIM } from '../src/entities/humanoid/index.js';
+
+const qs = new URLSearchParams(location.search);
+const view = qs.get('view') || 'lineup';
+const freezeT = qs.has('t') ? parseFloat(qs.get('t')) : null;
+const crowdN = parseInt(qs.get('n') ?? '300');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cc3e6);
+scene.fog = new THREE.Fog(0x9cc3e6, 40, 120);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.45;
+scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x6b5a48, 1.1));
+const sun = new THREE.DirectionalLight(0xfff1dd, 3.0);
+sun.position.set(-6, 12, -8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -25, right: 25, top: 25, bottom: -25, near: 1, far: 60 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x8d8a84, roughness: 0.95 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const grid = new THREE.GridHelper(60, 60, 0x666666, 0x777777); grid.position.y = 0.002; grid.material.opacity = 0.25; grid.material.transparent = true; scene.add(grid);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// lineup
+const presets = PRESET_NAMES;
+const people = [];
+const spacing = 1.15;
+presets.forEach((p, i) => {
+  const h = createHumanoid({ preset: p, seed: i * 17 + 3 });
+  h.root.position.set((i - (presets.length - 1) / 2) * spacing, 0, 0);
+  h.root.rotation.y = Math.PI; // face the camera (+z)
+  scene.add(h.root);
+  people.push(h);
+});
+const byName = Object.fromEntries(presets.map((p, i) => [p, people[i]]));
+
+// crowd walking in circles
+const demoAnims = ['idle', 'walk', 'run', 'flee', 'knocked', 'idle_phone', 'walk_phone', 'sit', 'sit_eat', 'clap', 'wave', 'cheer', 'talk'];
+const crowd = new Crowd(crowdN + demoAnims.length, { lod: qs.get('lod') || 'high' });
+scene.add(crowd.mesh);
+const walkers = [];
+for (let i = 0; i < crowdN; i++) {
+  const ring = 7 + (i % 8) * 1.6;
+  const dir = i % 2 ? 1 : -1;
+  const run = i % 23 === 0;
+  const phone = i % 7 === 0;
+  walkers.push({ r: ring, a: (i * 2.39996) % (Math.PI * 2), w: dir * (run ? 3.6 : 1.35) / ring, anim: run ? 'run' : phone ? 'walk_phone' : 'walk', speed: 0.9 + ((i * 37) % 20) / 100 });
+}
+function placeCrowd(dt) {
+  for (let i = 0; i < walkers.length; i++) {
+    const w = walkers[i];
+    w.a += w.w * dt * w.speed;
+    const x = Math.cos(w.a) * w.r, z = Math.sin(w.a) * w.r;
+    // velocity direction (tangent): d/da (cos, sin) * sign
+    const vx = -Math.sin(w.a) * Math.sign(w.w), vz = Math.cos(w.a) * Math.sign(w.w);
+    const yaw = Math.atan2(-vx, -vz);
+    crowd.set(i, { x, y: 0, z, yaw, anim: w.anim, speed: w.speed, phase: (i * 0.137) % 1 });
+  }
+  demoAnims.forEach((a, k) => crowd.set(walkers.length + k, { x: (k - (demoAnims.length - 1) / 2) * 1.1, y: 0, z: 3.2, yaw: Math.PI, anim: a, speed: 1, phase: 0 }));
+  crowd.setCount(walkers.length + demoAnims.length);
+}
+// a few static crowd poses near the lineup
+const extraPoses = ['idle', 'idle_phone', 'sit', 'sit_eat', 'clap', 'wave', 'cheer', 'talk', 'knocked', 'flee'];
+
+// UI
+const ui = document.getElementById('ui');
+let curAnim = qs.get('anim') || 'idle';
+for (const a of ANIM_NAMES) {
+  const b = document.createElement('button'); b.textContent = a; b.dataset.anim = a;
+  b.onclick = () => setAnim(a); ui.appendChild(b);
+}
+function setAnim(a) {
+  curAnim = a;
+  for (const h of people) h.setAnim(a, { blend: 0.25 });
+  for (const b of ui.querySelectorAll('button')) b.classList.toggle('on', b.dataset.anim === a);
+}
+setAnim(curAnim);
+
+// camera views
+function frame(target, offset) { controls.target.copy(target); camera.position.copy(target).add(offset); controls.update(); }
+const T = byName[qs.get('who') || 'tommy'] || byName.tommy;
+const tp = T.root.position;
+if (view === 'lineup') frame(new THREE.Vector3(0, 0.95, 0), new THREE.Vector3(0, 0.6, 12));
+else if (view === 'char') frame(new THREE.Vector3(tp.x, 1.0, 0), new THREE.Vector3(0, 0.25, 3.0));
+else if (view === 'face') frame(new THREE.Vector3(tp.x, T.height * 0.925, 0), new THREE.Vector3(0.12, 0.02, 0.62));
+else if (view === 'side') frame(new THREE.Vector3(tp.x, 1.0, 0), new THREE.Vector3(3.0, 0.3, 0.0));
+else if (view === 'back') { T.root.rotation.y = 0; frame(new THREE.Vector3(tp.x, 1.5, 0), new THREE.Vector3(0, 0.6, 3.6)); }
+else if (view === 'crowd') frame(new THREE.Vector3(0, 0.8, 0), new THREE.Vector3(0, 9, 20));
+else if (view === 'crowdclose') frame(new THREE.Vector3(7.5, 1.0, 0), new THREE.Vector3(3.5, 0.6, 3.5));
+else if (view === 'demo') { for (const h of people) h.root.visible = false; frame(new THREE.Vector3(0, 0.9, 3.2), new THREE.Vector3(0, 0.6, 15)); }
+if (qs.has('yaw')) T.root.rotation.y = parseFloat(qs.get('yaw'));
+if (qs.has('solo')) for (const h of people) h.root.visible = h === T;
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const stats = document.getElementById('stats');
+let frames = 0, acc = 0, fps = 0;
+let last = performance.now();
+function step(dt) {
+  for (const h of people) h.update(dt);
+  placeCrowd(dt);
+  crowd.update(dt);
+}
+if (freezeT != null) {
+  // deterministic: advance to t in fixed steps
+  const n = Math.max(1, Math.round(freezeT / (1 / 60)));
+  for (let i = 0; i < n; i++) step(1 / 60);
+}
+function loop() {
+  const now = performance.now(); const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  if (freezeT == null) step(dt);
+  controls.update();
+  renderer.render(scene, camera);
+  frames++; acc += dt;
+  if (acc > 0.5) { fps = frames / acc; frames = 0; acc = 0; }
+  const info = renderer.info.render;
+  stats.textContent = `fps ${fps.toFixed(0)} | calls ${info.calls} | tris ${(info.triangles / 1000).toFixed(0)}k | crowd ${crowd.count}`;
+  window.__stats = { fps, calls: info.calls, tris: info.triangles };
+  requestAnimationFrame(loop);
+}
+loop();
+window.__people = people; window.__crowd = crowd; window.__ready = true;
+</script>
+</body>
+</html>

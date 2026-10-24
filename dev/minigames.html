@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vibe City — minigame harness</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #07051a; color: #e9e6ff; font: 14px/1.4 Inter, system-ui, sans-serif; }
+  .harness { padding: 28px; display: grid; gap: 16px; max-width: 980px; }
+  h1 { margin: 0; font-family: Anton, Impact, sans-serif; font-weight: 400; letter-spacing: .04em; color: #ff3ea5; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button, select { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #3b2f78; background: #171035; color: #fff; cursor: pointer; }
+  button:hover { border-color: #ff3ea5; }
+  pre { background: #120d2b; border: 1px solid #2b2357; border-radius: 8px; padding: 14px; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
+  label { color: #8f88b8; }
+</style>
+</head>
+<body>
+<div class="harness">
+  <h1>MINIGAME HARNESS</h1>
+  <div class="row">
+    <button id="b-vibe">1 · Vibe Code</button>
+    <button id="b-pitch">2 · Pitch (sample)</button>
+    <button id="b-neg">3 · Negotiation (sample)</button>
+    <button id="b-chain">▶ Full chain</button>
+    <button id="b-kopi">☕ Kopi Uncle</button>
+    <button id="b-chope">🧻 Chope Rampage</button>
+    <button id="b-quiz">🚕 Singlish Quiz</button>
+    <label><input type="checkbox" id="snd" checked> beep sfx</label>
+  </div>
+  <div class="row">
+    <label>idea preset <select id="idea"><option value="">(pick in game)</option><option>chopechain</option><option>kopiai</option><option>duriandash</option></select></label>
+    <label>vibe duration <select id="dur"><option>150</option><option>60</option><option>20</option></select></label>
+  </div>
+  <pre id="out">results appear here</pre>
+</div>
+<script type="module">
+import { runVibeCode } from '/src/ui/minigames/vibecode.js';
+import { runPitch } from '/src/ui/minigames/pitch.js';
+import { runNegotiation } from '/src/ui/minigames/negotiation.js';
+import { runKopiOrder } from '/src/ui/minigames/kopi.js';
+import { runChopeRampage } from '/src/ui/minigames/chope.js';
+import { runSinglishQuiz } from '/src/ui/minigames/quiz.js';
+
+const out = document.getElementById('out');
+const q = new URLSearchParams(location.search);
+
+// tiny beep-based stand-in for the real AudioSystem
+let actx;
+const TONES = { typing: [1800, .015], keyclick: [1200, .03], bug_squash: [180, .12], ship_it: [660, .5], ui_select: [880, .08], ui_hover: [1400, .02],
+  cash_register: [1320, .25], applause: [300, .6], crowd_cheer: [500, .6], mission_failed: [140, .6], checkpoint: [990, .15] };
+const audio = {
+  sfx(name) {
+    console.log('sfx', name);
+    if (!document.getElementById('snd').checked) return;
+    try {
+      actx ??= new AudioContext();
+      const [f, d] = TONES[name] || [600, .05];
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = name === 'bug_squash' ? 'sawtooth' : 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(.06, actx.currentTime); g.gain.exponentialRampToValueAtTime(.0001, actx.currentTime + d);
+      o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + d);
+    } catch {}
+  },
+};
+const onEvent = e => console.log('event', JSON.stringify(e));
+const show = (label, r) => { out.textContent = `${label}\n${JSON.stringify(r, null, 2)}`; window.__lastResult = r; console.log('RESULT', label, JSON.stringify(r)); };
+const fail = e => { out.textContent = `aborted/failed: ${e.message}`; console.log('FAILED', e.message); };
+
+const opts = () => ({ audio, onEvent, debug: true, idea: document.getElementById('idea').value || q.get('idea') || undefined, duration: +(q.get('duration') || document.getElementById('dur').value) });
+const samplePitchIn = { idea: 'chopechain', ideaName: 'ChopeChain', quality: 72, users: 2400 };
+const sampleNegIn = { score: 68, hype: 70, credibility: 62, interest: { merlion: 66, sandhill: 80, auntie: 58 }, quotes: [], idea: 'chopechain', ideaName: 'ChopeChain', users: 2400 };
+
+const vibe = () => runVibeCode(document.body, opts()).then(r => (show('vibecode', r), r)).catch(fail);
+const pitch = (inp = samplePitchIn) => runPitch(document.body, { audio, onEvent, debug: true, ...inp }).then(r => (show('pitch', r), r)).catch(fail);
+const neg = (pr = sampleNegIn) => runNegotiation(document.body, { audio, onEvent, debug: true, pitchResult: pr }).then(r => (show('negotiation', r), r)).catch(fail);
+
+document.getElementById('b-vibe').onclick = vibe;
+document.getElementById('b-pitch').onclick = () => pitch();
+document.getElementById('b-neg').onclick = () => neg();
+document.getElementById('b-chain').onclick = async () => {
+  const v = await vibe(); if (!v) return;
+  const p = await pitch({ idea: v.idea, ideaName: v.ideaName, quality: v.quality, users: 1800 }); if (!p) return;
+  const n = await neg({ ...p, idea: v.idea, ideaName: v.ideaName, users: 1800 });
+  show('chain', { v, p, n });
+};
+const kopi = () => runKopiOrder(document.body, { audio, onEvent, debug: true, round: +(q.get('round') || 1), duration: +(q.get('duration') || 90) }).then(r => (show('kopi', r), r)).catch(fail);
+const chope = () => runChopeRampage(document.body, { audio, onEvent, debug: true, duration: +(q.get('duration') || 60) }).then(r => (show('chope', r), r)).catch(fail);
+const quiz = () => runSinglishQuiz(document.body, { audio, onEvent, debug: true }).then(r => (show('quiz', r), r)).catch(fail);
+document.getElementById('b-kopi').onclick = kopi;
+document.getElementById('b-chope').onclick = chope;
+document.getElementById('b-quiz').onclick = quiz;
+window.__mg = { vibe, pitch, neg, kopi, chope, quiz, audio };
+const auto = q.get('auto');
+({ vibecode: vibe, pitch: () => pitch(), negotiation: () => neg(), kopi, chope, quiz })[auto]?.();
+</script>
+</body>
+</html>

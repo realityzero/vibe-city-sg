@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vibe City — Audio Bench</title>
+<style>
+  :root { --pink: #ff4fa3; --cyan: #3fd1ff; --bg: #0d0716; --panel: #1a1029; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: radial-gradient(circle at 30% 0%, #2a1240, var(--bg)); color: #eee; }
+  h1 { margin: 0; padding: 16px 20px; font: italic 900 28px system-ui; color: var(--pink); text-shadow: 0 0 12px #ff4fa388; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--cyan); }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; padding: 0 20px 20px; }
+  section { background: var(--panel); border: 1px solid #ffffff14; border-radius: 10px; padding: 12px; }
+  button { background: #2b1c40; color: #fff; border: 1px solid #ffffff22; border-radius: 6px; padding: 5px 8px; margin: 2px; cursor: pointer; font-size: 12px; }
+  button:hover { border-color: var(--pink); }
+  button.on { background: var(--pink); color: #000; }
+  label { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  label span { width: 90px; color: #bbb; }
+  input[type=range] { flex: 1; }
+  #now { font-size: 15px; min-height: 40px; }
+  #now b { color: var(--pink); }
+  pre { white-space: pre-wrap; font-size: 11px; max-height: 360px; overflow: auto; background: #0007; padding: 8px; border-radius: 6px; }
+  #start { font-size: 16px; padding: 10px 16px; background: var(--pink); color: #000; font-weight: 800; }
+</style>
+</head>
+<body>
+<h1>Vibe City · Audio Bench <button id="start">▶ Init audio</button> <span id="state" style="font-size:12px;color:#aaa"></span></h1>
+<main>
+  <section>
+    <h2>Radio</h2>
+    <label><input type="checkbox" id="inVehicle"> in vehicle (radio audible)</label>
+    <div id="stations"></div>
+    <div><button id="prev">◀ prev</button><button id="next">next ▶</button></div>
+    <div id="now">—</div>
+  </section>
+  <section>
+    <h2>Music cues</h2>
+    <div id="cues"></div>
+  </section>
+  <section>
+    <h2>Engine</h2>
+    <label><span>type</span><select id="etype"></select><button id="ecreate">create</button><button id="edispose">dispose</button></label>
+    <label><span>rpm</span><input type="range" id="rpm" min="0" max="1" step="0.01" value="0.2"></label>
+    <label><span>throttle</span><input type="range" id="thr" min="0" max="1" step="0.01" value="0.3"></label>
+    <label><span>speed m/s</span><input type="range" id="spd" min="0" max="70" step="0.5" value="10"></label>
+    <label><span>skid</span><input type="range" id="skid" min="0" max="1" step="0.01" value="0"></label>
+    <label><span>pan x</span><input type="range" id="ex" min="-40" max="40" step="0.5" value="0"></label>
+    <label><input type="checkbox" id="siren"> siren</label>
+    <label><input type="checkbox" id="water" checked> on water (boat / jetski)</label>
+    <label><input type="checkbox" id="rev"> auto rev (simulated gears)</label>
+  </section>
+  <section>
+    <h2>World</h2>
+    <label><span>time (h)</span><input type="range" id="time" min="0" max="24" step="0.1" value="8"></label>
+    <label><span>night</span><input type="range" id="night" min="0" max="1" step="0.01" value="0"></label>
+    <label><span>rain</span><input type="range" id="rain" min="0" max="1" step="0.01" value="0"></label>
+    <label><span>near water</span><input type="range" id="water" min="0" max="1" step="0.01" value="0"></label>
+    <label><input type="checkbox" id="indoor"> indoor</label>
+    <label><input type="checkbox" id="paused"> paused</label>
+    <label><span>master</span><input type="range" id="vm" min="0" max="1" step="0.01" value="0.9"></label>
+    <label><span>music</span><input type="range" id="vmu" min="0" max="1" step="0.01" value="0.75"></label>
+    <label><span>sfx</span><input type="range" id="vs" min="0" max="1" step="0.01" value="0.9"></label>
+  </section>
+  <section style="grid-column: span 2">
+    <h2>SFX</h2>
+    <div id="sfx"></div>
+  </section>
+  <section>
+    <h2>Zone music</h2>
+    <label><span>zone</span><select id="zone"><option value="">(none)</option></select></label>
+    <label><span>gain</span><input type="range" id="zgain" min="0" max="1" step="0.01" value="1"></label>
+    <div style="color:#999">setZoneMusic(name, gain) is called every frame from the bench loop.</div>
+  </section>
+  <section>
+    <h2>Pedestrian barks</h2>
+    <label><span>distance m</span><input type="range" id="bdist" min="0" max="50" step="1" value="6"></label>
+    <div id="barks"></div>
+    <div id="barkState" style="color:#999"></div>
+  </section>
+  <section>
+    <h2>Speech</h2>
+    <label><span>voice</span><select id="voice"><option>tommy</option><option>ken</option><option>auntie</option><option>investor</option><option>dj</option><option>female</option><option>male</option></select></label>
+    <textarea id="text" rows="3" style="width:100%">Ken, I need a startup. And I need it by Friday.</textarea>
+    <button id="say">say()</button> <span id="sayState"></span>
+  </section>
+  <section style="grid-column: 1 / -1">
+    <h2>Offline self-test</h2>
+    <button id="selftest">Run offline render test</button>
+    <pre id="report"></pre>
+  </section>
+</main>
+<script type="module">
+import { AudioSystem, SFX_NAMES, MUSIC_CUES, ENGINE_TYPES, BARK_KINDS } from '/src/audio/index.js';
+import { selfTest, channelBalance } from '/src/audio/selftest.js';
+window.__audioTest = { selfTest, channelBalance };
+
+const audio = window.audio = new AudioSystem();
+const $ = id => document.getElementById(id);
+const st = $('state');
+
+function renderStations() {
+  $('stations').innerHTML = '';
+  [...audio.radio.stations, { name: 'OFF', color: '#888' }].forEach((s, i) => {
+    const idx = i === audio.radio.stations.length ? -1 : i;
+    const b = document.createElement('button');
+    b.textContent = s.name; b.style.borderColor = s.color;
+    if (idx === audio.radio.current) b.classList.add('on');
+    b.onclick = () => { audio.radio.setStation(idx); renderStations(); };
+    $('stations').appendChild(b);
+  });
+}
+renderStations();
+audio.radio.onChange = m => { renderStations(); $('now').innerHTML = `<b>${m.name}</b> ${m.genre || ''}`; };
+audio.radio.onSong = s => { $('now').innerHTML = `<b>${s.station}</b><br>♪ “${s.title}” — ${s.artist} <small>(${s.bpm} bpm, ${s.key})</small>`; };
+$('prev').onclick = () => audio.radio.prev();
+$('next').onclick = () => audio.radio.next();
+
+MUSIC_CUES.concat(['stop']).forEach(n => { const b = document.createElement('button'); b.textContent = n; b.onclick = () => audio.music(n); $('cues').appendChild(b); });
+SFX_NAMES.forEach(n => {
+  const b = document.createElement('button'); b.textContent = n;
+  b.onclick = e => audio.sfx(n, e.shiftKey ? { position: { x: (Math.random() - 0.5) * 40, y: 0, z: -10 } } : {});
+  $('sfx').appendChild(b);
+});
+$('sfx').insertAdjacentHTML('beforeend', '<div style="color:#999;margin-top:6px">shift-click = positional at random spot</div>');
+Object.keys(ENGINE_TYPES).forEach(t => $('etype').insertAdjacentHTML('beforeend', `<option>${t}</option>`));
+
+MUSIC_CUES.forEach(n => $('zone').insertAdjacentHTML('beforeend', `<option>${n}</option>`));
+BARK_KINDS.forEach(k => {
+  const b = document.createElement('button'); b.textContent = k;
+  b.onclick = async () => { const ok = await audio.bark(k, { position: { x: +$('bdist').value, y: 1.6, z: 0 } }); $('barkState').textContent = `${k}: ${ok ? 'spoken' : 'skipped (cooldown / far / busy / no speech)'}`; };
+  $('barks').appendChild(b);
+});
+let engine = null;
+$('ecreate').onclick = () => { engine?.dispose(); engine = audio.createEngine({ type: $('etype').value }); audio.sfx('engine_start'); };
+$('edispose').onclick = () => { engine?.dispose(); engine = null; };
+
+$('start').onclick = async () => { await audio.init(); st.textContent = `ctx ${audio.ctx.state}, ${audio.ctx.sampleRate} Hz, voices: ${audio.voice.voices.length}`; };
+$('say').onclick = async () => { $('sayState').textContent = 'speaking…'; await audio.say($('text').value, { voice: $('voice').value }); $('sayState').textContent = 'done'; };
+const vol = () => audio.setVolumes({ master: +$('vm').value, music: +$('vmu').value, sfx: +$('vs').value });
+['vm', 'vmu', 'vs'].forEach(id => $(id).oninput = vol);
+
+let last = performance.now(), gear = 1, rpmSim = 0.2;
+function loop(now) {
+  const dt = (now - last) / 1000; last = now;
+  if ($('rev').checked) {
+    rpmSim += dt * (0.55 / gear); if (rpmSim > 0.95) { gear = gear % 5 + 1; rpmSim = 0.45; if (gear === 1) rpmSim = 0.15; }
+    $('rpm').value = rpmSim; $('thr').value = 0.9;
+  }
+  audio.update(dt, {
+    listenerPos: { x: 0, y: 1.6, z: 0 }, listenerFwd: { x: 0, y: 0, z: -1 },
+    time: +$('time').value, rain: +$('rain').value, night: +$('night').value, nearWater: +$('water').value,
+    inVehicle: $('inVehicle').checked, speed: +$('spd').value, indoor: $('indoor').checked, paused: $('paused').checked,
+  });
+  audio.setZoneMusic($('zone').value || null, +$('zgain').value);
+  engine?.update({ water: $('water').checked, rpm: +$('rpm').value, throttle: +$('thr').value, speed: +$('spd').value, skid: +$('skid').value, siren: $('siren').checked, position: { x: +$('ex').value, y: 0.5, z: -3 } });
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+async function runSelfTest() {
+  $('report').textContent = 'rendering…';
+  const t0 = performance.now();
+  const r = await selfTest();
+  const lines = [];
+  lines.push(`song structure: ${r.songs.bars} bars, ${r.songs.events} events, avg song ${r.songs.avgSongSec}s, issues: ${r.songs.issues.length}`);
+  r.songs.issues.forEach(i => lines.push('  ! ' + i));
+  for (const s of r.stations) lines.push(`station ${s.id.padEnd(8)} rms ${s.rms} peak ${s.peak} nan ${s.nan}  "${s.title}" — ${s.artist} (${s.bpm}bpm ${s.mode}, ${s.bars} bars ${s.sec}s) ${s.renderMs}ms`);
+  for (const c of r.cues) lines.push(`cue ${c.name.padEnd(15)} rms ${c.rms} peak ${c.peak} nan ${c.nan}`);
+  for (const e of r.engines) lines.push(`engine ${e.type.padEnd(7)} rms ${e.rms} peak ${e.peak} nan ${e.nan}`);
+  lines.push(`ambience rms ${r.ambience.rms} peak ${r.ambience.peak} nan ${r.ambience.nan}`);
+  const silent = r.sfx.filter(s => s.rms < 0.001).map(s => s.name);
+  const nans = [...r.stations, ...r.cues, ...r.sfx, ...r.engines, r.ambience].filter(s => s.nan > 0);
+  lines.push(`sfx: ${r.sfx.length} rendered; silent: [${silent.join(', ')}]`);
+  lines.push(r.sfx.map(s => `${s.name}:${s.rms}/${s.peak}`).join('  '));
+  lines.push(`NaN sources: ${nans.length}; total ${Math.round(performance.now() - t0)}ms`);
+  const txt = lines.join('\n');
+  $('report').textContent = txt;
+  console.log('SELFTEST\n' + txt);
+  console.log('SELFTEST_JSON ' + JSON.stringify({ silent, nan: nans.length, songIssues: r.songs.issues.length }));
+  window.__selftest = r;
+}
+$('selftest').onclick = runSelfTest;
+if (new URLSearchParams(location.search).has('selftest')) runSelfTest();
+</script>
+</body>
+</html>
