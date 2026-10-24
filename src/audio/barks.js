@@ -1,0 +1,11 @@
+// Short Singlish pedestrian barks (PG). Played by AudioSystem.bark() from their recorded takes.
+export const BARKS = {
+  hit: ['Wah lau eh!', 'Aiyoh, my char kway teow!', 'Oi! You blind ah?', 'Siao ah, drive properly leh!', 'Walao, so painful!', 'Aiyah, my kopi spill already!', 'You think this one Vice City is it?', 'Eh hello, got pedestrian here one!', 'Cannot like that one lah!', 'Alamak! My back!'],
+  nearmiss: ['Siao ah, drive properly leh!', 'Oi! Got license or not?', 'Wah, so fast for what?', 'Slow down lah, where you rushing?', 'Eh, this one zebra crossing leh!', 'Walao, almost kena!', 'Can or not?!', 'Drive like that, confirm kena saman!', 'Aiyoh, give chance lah!', 'You think F1 is it?'],
+  carjacked: ['Eh! My car! My car!', 'Walao, what you doing?', 'Oi! That one my car leh!', 'Call police! Call police!', 'Aiyoh, the C O E not cheap you know!', 'Wah lau, I just wash the car!', 'Steal car for what? Take M R T lah!', 'My Grab passenger still waiting leh!', 'Eh, at least return the parking coupon!', 'Siao liao, siao liao!'],
+  police: ['Stop! Police!', "Don't move! Hands where I can see!", 'Sir, please pull over to the side.', 'You are under arrest, ah.', 'Stop the vehicle now!', "Eh, don't run! Confirm catch you one!", 'License and I C, please.', 'This one is a fine city, you know.', 'Pull over! Now!', 'Do not resist, okay?'],
+  tourist: ['Oh my gosh, is that the Merlion?', 'Excuse me, which way to Marina Bay Sands?', "Wow, it's so clean here!", 'Can you take a photo for us?', 'Is it always this humid?', 'Where can I get chilli crab?', 'Look! The Supertrees!', "I think we're lost again.", 'Is chewing gum really banned?', 'This hawker centre is amazing!'],
+  auntie: ['Aiyoh, young people nowadays!', 'Eh boy, you eat already or not?', 'Chope! This table mine!', 'Wah, so expensive now, everything also go up!', "Don't anyhow ah!", 'You got girlfriend or not?', 'Last time not like this one!', 'Kopi O kosong, one!', 'Aiyah, so hot today!', 'Go home study lah!'],
+};
+// default voice per kind (overridable via opts.voice)
+export const BARK_VOICE = { hit: ['uncle', 'auntie', 'male', 'female'], nearmiss: ['uncle', 'male', 'auntie', 'female'], carjacked: ['male', 'female', 'uncle'], police: ['police'], tourist: ['tourist', 'female', 'male'], auntie: ['auntie'] };
