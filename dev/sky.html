@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vibe City — sky bench</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: #000; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script type="module">
+// Sky look-dev without loading the city: ?t=16.5&rain=0&yaw=90&pitch=12&fov=70
+// The real Renderer (post chain incl. auto exposure + film grade) and SkySystem, plus a flat ground and a few boxes for scale.
+import * as THREE from 'three';
+import { Renderer } from '/src/gfx/renderer.js';
+import { SkySystem } from '/src/world/sky.js';
+import { U } from '/src/gfx/globals.js';
+const q = new URLSearchParams(location.search);
+const R = new Renderer(document.getElementById('game'), q.get('q') || 'high');
+R.dynamicResolution = false;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(+(q.get('fov') || 70), innerWidth / innerHeight, 0.5, 30000);
+camera.position.set(0, +(q.get('y') || 20), 0);
+const yaw = (+(q.get('yaw') || 0)) * Math.PI / 180, pitch = (+(q.get('pitch') || 12)) * Math.PI / 180;
+camera.lookAt(Math.sin(yaw) * Math.cos(pitch) * 100, camera.position.y + Math.sin(pitch) * 100, -Math.cos(yaw) * Math.cos(pitch) * 100);
+R.setupPost(scene, camera);
+const sky = new SkySystem(R.renderer, scene);
+sky.time = +(q.get('t') || 16); if (q.get('turb')) sky.turbBase = +q.get('turb'); if (q.get('ray')) sky.rayleighBase = +q.get('ray'); if (q.get('gain')) sky.skyGain = +q.get('gain'); sky.rain = +(q.get('rain') || 0); U.rain.value = sky.rain;
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40000, 40000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x55605a, roughness: 0.9 }));
+ground.receiveShadow = true; scene.add(ground);
+const bm = new THREE.MeshStandardMaterial({ color: 0x9aa4ad, roughness: 0.4, metalness: 0.3 });
+for (let i = 0; i < 40; i++) { const h = 30 + Math.random() * 220; const b = new THREE.Mesh(new THREE.BoxGeometry(40, h, 40), bm); const a = Math.random() * Math.PI * 2, r = 600 + Math.random() * 1800; b.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); b.castShadow = true; scene.add(b); }
+let last = performance.now();
+window.__frames = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  U.time.value += dt; U.cameraPos.value.copy(camera.position);
+  sky.update(dt, camera.position);
+  R.renderer.toneMappingExposure = sky.exposure;
+  if (R.autoExposure) R.autoExposure.base = sky.exposure;
+  R.updateSun(sky.sun, sky.rain, camera);
+  R.renderer.info.reset(); R.render(dt);
+  window.__frames++;
+}
+requestAnimationFrame(frame);
+window.__sky = sky; window.__Rr = R;
+</script>
+</body>
+</html>

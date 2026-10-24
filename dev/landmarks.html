@@ -1,0 +1,229 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vibe City — landmarks viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 12px/1.4 ui-monospace, Menlo, monospace; color: #fff; }
+  #ui { position: fixed; top: 8px; left: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; max-width: 70vw; }
+  #ui button { background: rgba(20,20,30,.75); color: #fff; border: 1px solid #ff4fa0; border-radius: 4px; padding: 3px 7px; cursor: pointer; font: inherit; }
+  #stats { position: fixed; top: 8px; right: 8px; z-index: 2; background: rgba(0,0,0,.6); padding: 6px 8px; border-radius: 4px; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="ui"></div>
+<div id="stats">loading…</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createLandmarks } from '/src/world/landmarks/index.js';
+import { U } from '/src/gfx/globals.js';
+
+const params = new URLSearchParams(location.search);
+const quality = params.get('q') || 'high';
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', logarithmicDepthBuffer: params.get('logz') !== '0' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 9000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// ---- sky + lights
+const sky = new Sky(); sky.scale.setScalar(20000); scene.add(sky);
+const su = sky.material.uniforms; su.turbidity.value = 6; su.rayleigh.value = 1.6; su.mieCoefficient.value = 0.004; su.mieDirectionalG.value = 0.85;
+const sun = new THREE.DirectionalLight(0xffffff, 3); sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+const sc = sun.shadow.camera; sc.left = -700; sc.right = 700; sc.top = 700; sc.bottom = -700; sc.near = 10; sc.far = 4000; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
+scene.add(sun, sun.target);
+const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x55524a, 0.6); scene.add(hemi);
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envRT = null;
+let night = params.get('night') === '1';
+function setTime(isNight) {
+  night = isNight;
+  const elev = isNight ? -8 : +(params.get('elev') || 32), az = +(params.get('az') || 235);
+  const phi = THREE.MathUtils.degToRad(90 - elev), theta = THREE.MathUtils.degToRad(az);
+  const dir = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+  su.sunPosition.value.copy(dir);
+  sun.position.copy(dir).multiplyScalar(2000).add(new THREE.Vector3(1200, 0, 100)); sun.target.position.set(1200, 0, 100);
+  sun.intensity = isNight ? 0.05 : 2.6;
+  sun.color.set(isNight ? 0x8899cc : 0xfff1dd);
+  hemi.intensity = isNight ? 0.12 : 0.6;
+  renderer.toneMappingExposure = isNight ? 0.75 : +(params.get('exp') || 0.62);
+  U.night.value = isNight ? 1 : 0;
+  U.sunDir.value.copy(dir);
+  // env map from the sky
+  const skyScene = new THREE.Scene(); const s2 = new Sky(); s2.scale.setScalar(1000); s2.material.uniforms.sunPosition.value.copy(isNight ? new THREE.Vector3(0, 0.05, -1) : dir);
+  for (const k of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG']) s2.material.uniforms[k].value = su[k].value;
+  skyScene.add(s2);
+  if (envRT) envRT.dispose();
+  envRT = pmrem.fromScene(skyScene, 0, 1, 2000);
+  scene.environment = envRT.texture;
+  scene.environmentIntensity = isNight ? 0.03 : +(params.get('env') || 0.35);
+  sky.visible = !isNight;
+  scene.background = isNight ? new THREE.Color(0x05070f) : null;
+  scene.fog = new THREE.FogExp2(isNight ? 0x0b0f1c : 0xb9c7d3, isNight ? 0.00025 : 0.00018);
+}
+setTime(night);
+
+// ---- data
+const city = await (await fetch('/data/city.json')).json();
+const meta = city.meta;
+
+// ground from mask
+{
+  const blob = await (await fetch('/data/ground.png')).blob();
+  const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  const cv = new OffscreenCanvas(bmp.width, bmp.height); const cx2 = cv.getContext('2d'); cx2.drawImage(bmp, 0, 0);
+  const px = cx2.getImageData(0, 0, bmp.width, bmp.height).data;
+  const tex = new THREE.DataTexture(new Uint8Array(px.buffer), bmp.width, bmp.height, THREE.RGBAFormat);
+  tex.colorSpace = THREE.NoColorSpace; tex.flipY = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
+  const w = meta.xmax - meta.xmin, h = meta.zmax - meta.zmin;
+  const g = new THREE.PlaneGeometry(w, h, 1, 1); g.rotateX(-Math.PI / 2); g.translate((meta.xmax + meta.xmin) / 2, 0, (meta.zmax + meta.zmin) / 2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uMask = { value: tex };
+    sh.uniforms.uB = { value: new THREE.Vector4(meta.xmin, meta.zmin, w, h) };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvW = (modelMatrix * vec4(transformed,1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; uniform sampler2D uMask; uniform vec4 uB;\n#define FLIPV ' + (params.get('flipv')||'0') + '.0\n#define MASKDBG ' + (params.get('maskdbg')||'0') + '.0')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec2 muv = (vW.xz - uB.xy) / uB.zw; muv.y = FLIPV > 0.5 ? 1.0 - muv.y : muv.y; vec4 m = texture2D(uMask, muv);
+        if (m.r < 0.55) discard;
+        vec3 grass = vec3(0.23,0.36,0.14), pave = vec3(0.55,0.53,0.5), dirt = vec3(0.42,0.4,0.33);
+        vec3 col = mix(dirt, grass, 0.6);
+        col = mix(col, grass, m.g);
+        col = mix(col, pave, m.b * (1.0 - m.g));
+        diffuseColor.rgb = col;
+        if (MASKDBG > 0.5) diffuseColor.rgb = m.rgb;`);
+  };
+  const ground = new THREE.Mesh(g, mat); ground.receiveShadow = true; scene.add(ground);
+  const wg = new THREE.PlaneGeometry(20000, 20000); wg.rotateX(-Math.PI / 2); wg.translate(0, -1.4, 0);
+  const water = new THREE.Mesh(wg, new THREE.MeshStandardMaterial({ color: 0x1d3a40, roughness: 0.06, metalness: 0.7 }));
+  scene.add(water);
+}
+
+// ---- landmarks
+const t0 = performance.now();
+const LM = await createLandmarks({ THREE, city, renderer, quality });
+console.log('landmarks built in', (performance.now() - t0).toFixed(0), 'ms');
+scene.add(LM.group); window.LM = LM;
+LM.group.traverse(o => { if (o.isMesh) { o.castShadow = o.castShadow !== false; } });
+
+// ---- context buildings (simple extrusions, minus exclusions)
+{
+  const inside = (x, z, r) => { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, zi] = r[i], [xj, zj] = r[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
+  const exBoxes = LM.exclusions.map(r => { let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const [x, z] of r) { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, z); d = Math.max(d, z); } return [a, b, c, d, r]; });
+  const geos = [];
+  let skipped = 0;
+  for (const b of city.buildings) {
+    let cx = 0, cz = 0; const n = b.p.length / 2; for (let i = 0; i < b.p.length; i += 2) { cx += b.p[i]; cz += b.p[i + 1]; } cx /= n; cz /= n;
+    if (Math.hypot(cx - 1000, cz - 150) > 1900) continue;
+    if (exBoxes.some(([a, bb, c, d, r]) => cx >= a && cx <= bb && cz >= c && cz <= d && inside(cx, cz, r))) { skipped++; continue; }
+    const shape = new THREE.Shape(); for (let i = 0; i < b.p.length; i += 2) { const x = b.p[i], z = b.p[i + 1]; i === 0 ? shape.moveTo(x, -z) : shape.lineTo(x, -z); }
+    const hgt = b.h - (b.m || 0);
+    const g = new THREE.ExtrudeGeometry(shape, { depth: hgt, bevelEnabled: false });
+    g.rotateX(-Math.PI / 2); g.translate(0, b.m || 0, 0);
+    g.deleteAttribute('uv');
+    const col = new THREE.Color(b.c != null ? b.c : (b.s === 0 ? 0x7d8f9a : b.s === 4 ? 0xd9c8a8 : 0xbdb9b2));
+    const cs = new Float32Array(g.attributes.position.count * 3); for (let k = 0; k < cs.length; k += 3) { cs[k] = col.r; cs[k + 1] = col.g; cs[k + 2] = col.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(cs, 3));
+    geos.push(g.index ? g.toNonIndexed() : g);
+  }
+  const merged = mergeGeometries(geos);
+  const ctx = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.1 }));
+  ctx.castShadow = ctx.receiveShadow = true; scene.add(ctx);
+  console.log('context buildings', geos.length, 'excluded', skipped);
+}
+
+// ---- views
+const P = Object.fromEntries(LM.pois.map(p => [p.id, p]));
+const V = (eye, at) => ({ eye: new THREE.Vector3(...eye), at: new THREE.Vector3(...at) });
+const views = {
+  skyline: V([560, 12, 10], [1250, 90, 330]),
+  mbs: V([980, 120, -80], [1290, 110, 360]),
+  mbs_side: V([1500, 90, 40], [1300, 100, 360]),
+  mbs_air: V([800, 520, -300], [1250, 120, 330]),
+  skypark: V([1330, 235, 180], [1290, 195, 380]),
+  mbs_street: V([1170, 2, 470], [1280, 60, 400]),
+  mbs_gardens: V([1620, 40, 560], [1300, 110, 340]),
+  artscience: V([1060, 40, 20], [1140, 25, 105]),
+  gardens: V([1500, 90, 380], [1690, 25, 540]),
+  supertrees: V([1600, 18, 470], [1670, 30, 560]),
+  domes: V([1650, 80, 150], [1820, 20, 320]),
+  flyer: V([1420, 40, 20], [1572, 85, -267]),
+  flyer_side: V([1380, 80, -120], [1572, 90, -267]),
+  esplanade: V([600, 50, -150], [705, 20, -300]),
+  merlion: V([628, 5, 38], [610, 5, 22]),
+  merlion_front: V([640, 3, 20], [609, 5, 22]),
+  merlion_back: V([585, 7, 5], [640, 2, 30]),
+  helix: V([1340, 20, -70], [1280, 3, -90]),
+  helix_in: V([1288, 3.5, -40], [1291, 3.5, -120]),
+  fullerton: V([560, 30, 160], [452, 12, 87]),
+  raffles: V([740, 60, -760], [620, 5, -870]),
+  buddhatooth: V([-470, 40, 680], [-530, 12, 608]),
+  gopuram: V([-370, 12, 500], [-401, 8, 484]),
+  clarkequay: V([-400, 30, -420], [-470, 4, -360]),
+  bridges: V([420, 25, 80], [410, 3, 0]),
+  laupasat: V([230, 40, 760], [164, 8, 706]),
+  heritage: V([300, 120, 300], [400, 10, 0]),
+  top: V([0, 5200, 0.01], [0, 0, 0]),
+  capitaspring: V([40, 60, 200], [115, 120, 345]),
+  capitaspring_air: V([300, 330, 150], [118, 200, 345]),
+  capitaspring_oasis: V([30, 105, 260], [115, 100, 345]),
+  guoco: V([-250, 40, 960], [-370, 150, 1100]),
+  guoco_air: V([-150, 360, 1000], [-370, 260, 1100]),
+  oasia: V([-430, 30, 1150], [-515, 100, 1230]),
+  oasia_far: V([-380, 120, 1080], [-515, 120, 1230]),
+  pickering: V([-370, 25, 60], [-290, 40, 160]),
+  pickering_air: V([-420, 160, 20], [-290, 50, 160]),
+  pinnacle: V([-700, 80, 1050], [-860, 90, 1140]),
+  pinnacle_air: V([-700, 260, 1000], [-860, 150, 1140]),
+  marinaone: V([330, 120, 1190], [451, 40, 1080]),
+  mbfc: V([700, 300, 600], [600, 230, 790]),
+  cbd_heli: V([-600, 420, 700], [100, 120, 600]),
+  padang: V([470, 45, -300], [290, 20, -330]),
+  gallery_dome: V([330, 40, -280], [266, 30, -298]),
+  victoria: V([350, 30, -110], [288, 35, -150]),
+  standrews: V([420, 30, -560], [355, 30, -590]),
+  sultan: V([1180, 30, -1640], [1112, 15, -1683]),
+  barrage: V([2300, 80, 560], [2470, 5, 690]),
+  civic_heli: V([650, 300, -100], [300, 20, -400]),
+};
+const ui = document.getElementById('ui');
+function go(name) { const v = views[name]; if (!v) return; if (name === 'top') camera.up.set(0, 0, -1); camera.position.copy(v.eye); controls.target.copy(v.at); controls.update(); }
+for (const k of Object.keys(views)) { const b = document.createElement('button'); b.textContent = k; b.onclick = () => go(k); ui.appendChild(b); }
+const nb = document.createElement('button'); nb.textContent = 'day/night'; nb.onclick = () => setTime(!night); ui.appendChild(nb);
+go(params.get('view') || 'skyline');
+if (params.get('fov')) { camera.fov = +params.get('fov'); camera.updateProjectionMatrix(); }
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// ---- loop
+const stats = document.getElementById('stats');
+const clock = new THREE.Clock();
+let frames = 0, acc = 0, fps = 0;
+const gameTime = night ? 20.1 : 13;
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  U.time.value += dt; U.cameraPos.value.copy(camera.position);
+  controls.update();
+  LM.update(dt, { time: night ? gameTime : 13, night: U.night.value, rain: 0, camera, playerPos: controls.target, forceShow: params.get('lasers') === '1' });
+  renderer.render(scene, camera);
+  frames++; acc += dt; if (acc > 0.5) { fps = frames / acc; frames = 0; acc = 0; }
+  const info = renderer.info.render;
+  stats.textContent = `fps ${fps.toFixed(0)}\ncalls ${info.calls}\ntris ${(info.triangles / 1000).toFixed(0)}k\nlandmark tris ${(LM.stats?.tris / 1000 || 0).toFixed(0)}k`;
+  requestAnimationFrame(frame);
+}
+frame();
+window.__ready = true;
+</script>
+</body>
+</html>

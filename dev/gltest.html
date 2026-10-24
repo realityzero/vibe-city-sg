@@ -1,0 +1,12 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id=c></canvas>
+<script type="module">
+import * as THREE from 'three';
+const r = new THREE.WebGLRenderer({canvas: document.getElementById('c'), antialias:true});
+r.setSize(innerWidth, innerHeight);
+const gl = r.getContext(); const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+console.log('GPU', dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/a', 'maxTex', gl.getParameter(gl.MAX_TEXTURE_SIZE));
+const s = new THREE.Scene(); const cam = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 100); cam.position.set(2,2,3); cam.lookAt(0,0,0);
+s.add(new THREE.Mesh(new THREE.TorusKnotGeometry(0.8,0.3,200,32), new THREE.MeshStandardMaterial({color:0xff3388, metalness:0.3, roughness:0.4})));
+s.add(new THREE.HemisphereLight(0xffffff, 0x334455, 2)); const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(3,4,2); s.add(d);
+let t0=performance.now(), n=0; function f(){ r.render(s,cam); n++; if(n===120) console.log('fps', (120000/(performance.now()-t0)).toFixed(1)); requestAnimationFrame(f);} f();
+</script></body></html>
