@@ -1,0 +1,84 @@
+/* On-screen touch controls (ui/touch.js) and the HUD rearrangement that makes room for them: the radar moves to the
+   top-left (tap it for the map), the move stick takes the bottom-left, the action buttons the bottom-right, and
+   everything that used to live in those corners moves out of the thumbs' way. --t is the touch unit: the layout
+   unit, but never so small a thumb misses or so big a tablet looks silly. */
+.vc-root { --t: clamp(3.3px, var(--u), 5.2px); --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px); --sb: env(safe-area-inset-bottom, 0px); }
+
+.vc-touch { position: absolute; inset: 0; z-index: 2; display: none; pointer-events: none; }
+.vc-root.vc-touchmode .vc-touch { display: block; }
+.vc-touch button { all: unset; box-sizing: border-box; pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+
+/* look / pinch surface under everything else */
+.vc-touch .surf { position: absolute; inset: 0; touch-action: none; display: none; }
+.vc-touch.play .surf { display: block; pointer-events: auto; }
+
+/* floating move stick: rests bottom-left, jumps to wherever the left thumb lands */
+.vc-touch .stick { position: absolute; display: none; width: calc(var(--t) * 26); height: calc(var(--t) * 26); min-width: 92px; min-height: 92px; border-radius: 50%;
+  left: calc(var(--t) * 18 + var(--sl)); top: calc(100% - var(--t) * 18 - var(--sb)); transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(255,255,255,.05) 0 55%, rgba(255,255,255,.12) 56% 100%); border: 2px solid rgba(255,255,255,.28); opacity: .5; transition: opacity .15s; }
+.vc-touch.ctl .stick { display: block; }
+.vc-touch .stick.active { opacity: .95; transition: none; }
+.vc-touch .stick .knob { position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; margin: -21% 0 0 -21%; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #ff8fd0, var(--pink) 70%); box-shadow: 0 0 calc(var(--t) * 2) rgba(255,63,164,.6); }
+
+/* action buttons */
+.vc-touch .cluster { position: absolute; inset: 0; display: none; }
+.vc-touch.ctl .cluster { display: block; }
+.vc-touch .btn { position: absolute; display: grid; place-items: center; border-radius: 50%; width: calc(var(--t) * var(--s)); height: calc(var(--t) * var(--s));
+  right: calc(var(--t) * (var(--x) - var(--s) / 2) + var(--sr)); bottom: calc(var(--t) * (var(--y) - var(--s) / 2) + var(--sb));
+  background: rgba(10,5,24,.42); border: 2px solid rgba(255,255,255,.45); color: #fff; font: italic 800 calc(var(--t) * var(--s) * .2)/1 var(--f-hud); letter-spacing: .04em;
+  text-shadow: 0 1px 2px #000; box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+.vc-touch .btn.on { background: rgba(255,63,164,.55); border-color: #fff; transform: scale(.94); }
+.vc-touch .s-a { --s: 17; --x: 13; --y: 13; }
+.vc-touch .s-b { --s: 13; --x: 31; --y: 9.5; }
+.vc-touch .s-c { --s: 13; --x: 11; --y: 31; }
+.vc-touch .s-d { --s: 13; --x: 28.5; --y: 27.5; }
+.vc-touch .s-e { --s: 10; --x: 46; --y: 9; }
+.vc-touch .s-f { --s: 10; --x: 44.5; --y: 23.5; }
+.vc-touch .s-g { --s: 10; --x: 11; --y: 46.5; }
+.vc-touch .b-gas { background: rgba(40,160,80,.4); }
+.vc-touch .b-brake { background: rgba(200,40,60,.4); }
+.vc-touch .b-enter, .vc-touch .b-board, .vc-touch .b-exit { border-color: var(--cyan); color: var(--cyan-hi, #9ff6ff); }
+.vc-touch .b-enter, .vc-touch .b-board, .vc-touch .b-nitro { display: none; }
+.vc-touch.near .b-enter, .vc-touch.near .b-board, .vc-touch.kopi .b-nitro { display: grid; }
+.vc-touch.near .b-enter, .vc-touch.near .b-board { animation: vc-touch-pulse 1.2s ease-in-out infinite; }
+@keyframes vc-touch-pulse { 50% { box-shadow: 0 0 calc(var(--t) * 3) var(--cyan); } }
+
+/* system bar: right of the radar */
+.vc-touch .sysbar { position: absolute; display: none; gap: calc(var(--t) * 1.2); left: calc(var(--u) * 29 + var(--sl)); top: calc(var(--u) * 2.6); }
+.vc-touch.play .sysbar { display: flex; }
+.vc-touch .sys { height: max(calc(var(--t) * 8.5), 32px); min-width: max(calc(var(--t) * 8.5), 32px); padding: 0 .7em; display: grid; place-items: center; border-radius: 99em;
+  background: rgba(10,5,24,.55); border: 1px solid rgba(255,255,255,.35); color: #fff; font: italic 800 max(calc(var(--t) * 2.6), 12px)/1 var(--f-hud); letter-spacing: .08em; }
+.vc-touch .sys.on { background: var(--pink); }
+.vc-touch .sys.skip { display: none; }
+.vc-touch.sub .sys.skip { display: grid; }
+
+/* portrait: ask for landscape */
+.vc-touch .rotate { display: none; }
+@media (orientation: portrait) {
+  .vc-root.vc-touchmode .vc-touch .rotate { display: flex; position: fixed; inset: 0; z-index: 70; pointer-events: auto; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    background: rgba(6,2,16,.94); color: #fff; font: 600 15px/1.4 var(--f-ui); text-align: center; padding: 24px; }
+  .vc-root.vc-touchmode .vc-touch .rotate b { font: italic 800 26px/1.1 var(--f-hud); color: var(--pink-hi, #ff8fd0); letter-spacing: .04em; }
+}
+
+/* HUD rearranged around the thumbs */
+.vc-touchmode .vc-radar-wrap { left: calc(var(--u) * 2.6 + var(--sl)); top: calc(var(--u) * 2.6); bottom: auto; width: calc(var(--u) * 24); height: calc(var(--u) * 24); }
+.vc-touchmode .vc-speedo { left: calc(var(--u) * 3 + var(--sl)); top: calc(var(--u) * 28); bottom: auto; }
+.vc-touchmode .vc-help { left: calc(var(--u) * 29 + var(--sl)); top: calc(var(--u) * 4.2 + max(calc(var(--t) * 8.5), 32px)); max-width: min(calc(var(--u) * 62), calc(100vw - var(--u) * 82)); }
+.vc-touchmode .vc-texts { top: calc(var(--u) * 46); left: calc(var(--u) * 3 + var(--sl)); }
+.vc-touchmode .vc-flash-zone { right: calc(var(--u) * 4 + var(--sr)); bottom: calc(var(--t) * 57 + var(--sb)); }
+.vc-touchmode .vc-flash-vehicle { right: calc(var(--u) * 4 + var(--sr)); bottom: calc(var(--t) * 57 + var(--u) * 8.5 + var(--sb)); }
+.vc-touchmode .vc-phone { right: auto; left: calc(var(--u) * 3 + var(--sl)); bottom: calc(var(--t) * 34 + var(--sb)); scale: .62; transform-origin: bottom left; }
+.vc-touchmode .vc-bottom { bottom: calc(var(--u) * 3.5 + var(--sb)); width: min(70vw, calc(100vw - var(--t) * 112), calc(var(--u) * 120)); }
+.vc-touchmode .vc-map-zoom button { width: max(calc(var(--u) * 4.4), 40px); height: max(calc(var(--u) * 4.4), 40px); }
+html.vc-touch-on .vc-kopi { left: calc(14px + env(safe-area-inset-left, 0px)) !important; top: 41vh !important; bottom: auto !important; }
+
+/* full map close button (all devices) */
+.vc-map-close { all: unset; position: absolute; right: calc(var(--u) * 8.4); top: calc(var(--u) * 2); width: max(calc(var(--u) * 4.4), 32px); height: max(calc(var(--u) * 4.4), 32px); display: grid; place-items: center; cursor: pointer;
+  border-radius: calc(var(--u) * .8); background: rgba(8,4,20,.8); border: 1px solid rgba(255,255,255,.2); font: 800 max(calc(var(--u) * 2.4), 15px)/1 var(--f-ui); color: #fff; }
+.vc-map-close:hover { background: var(--pink); }
+.vc-touchmode .vc-map-close { right: calc(max(calc(var(--u) * 4.4), 40px) + var(--u) * 3.6); width: max(calc(var(--u) * 4.4), 40px); height: max(calc(var(--u) * 4.4), 40px); }
+.vc-mapview canvas { touch-action: none; }
+/* the phone sits higher here: hide it further down so it's fully off-screen until a call */
+.vc-touchmode .vc-phone { transform: translateY(calc(100% + 100vh)) rotate(4deg); }
+.vc-touchmode .vc-phone.on { transform: none; }
