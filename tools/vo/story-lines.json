@@ -1,0 +1,1535 @@
+[
+ {
+  "key": "fdeb00dc",
+  "role": "tommy",
+  "text": "A capsule hotel. Forty years after Vice City and I'm sleeping in a drawer.",
+  "speak": "A capsule hotel. Forty years after Vice City and I'm sleeping in a drawer.",
+  "src": "story.js"
+ },
+ {
+  "key": "f9c3b649",
+  "role": "tommy",
+  "text": "Thirty-one degrees at sunset. Even the air here has a KPI.",
+  "speak": "Thirty-one degrees at sunset. Even the air here has a K.P.I.",
+  "src": "story.js"
+ },
+ {
+  "key": "af3efd2b",
+  "role": "ken",
+  "text": "Tommy! Tommy, you landed! Welcome to Singapore — the only city where chewing gum has a criminal record!",
+  "speak": "Tommy! Tommy, you landed! Welcome to Singapore, the only city where chewing gum has a criminal record!",
+  "src": "story.js"
+ },
+ {
+  "key": "ab9183b4",
+  "role": "tommy",
+  "text": "Ken. Why am I here?",
+  "speak": "Ken. Why am I here?",
+  "src": "story.js"
+ },
+ {
+  "key": "fdea427e",
+  "role": "ken",
+  "text": "Sonny Forelli. He wants his money back, Tommy. All of it. Plus interest. Plus — and I quote — \"vibes\".",
+  "speak": "Sonny Forelli. He wants his money back, Tommy. All of it. Plus interest. Plus, and I quote, \"vibes\".",
+  "src": "story.js"
+ },
+ {
+  "key": "78184f11",
+  "role": "tommy",
+  "text": "I don't have Sonny's money.",
+  "speak": "I don't have Sonny's money.",
+  "src": "story.js"
+ },
+ {
+  "key": "e5503b0f",
+  "role": "ken",
+  "text": "Nobody HAS money anymore, Tommy! You raise money! Meet me at Lau Pa Sat. Big octagon, clock tower, satay. You're buying.",
+  "speak": "Nobody has money anymore, Tommy! You raise money! Meet me at Lau Pa Sat. Big octagon, clock tower, satay. You're buying.",
+  "src": "story.js"
+ },
+ {
+  "key": "ce0954df",
+  "role": "ken",
+  "text": "Tommy! Over here! Try the satay — no wait, I'm allergic to peanuts, sit downwind.",
+  "speak": "Tommy! Over here! Try the satay, no wait, I'm allergic to peanuts, sit downwind.",
+  "src": "story.js"
+ },
+ {
+  "key": "5342118f",
+  "role": "tommy",
+  "text": "Talk, Ken.",
+  "speak": "Talk, Ken.",
+  "src": "story.js"
+ },
+ {
+  "key": "a7b81d5a",
+  "role": "ken",
+  "text": "Okay. Okay. 1986: you sell product, you launder it through a print shop, an ice cream factory, a car showroom...",
+  "speak": "Okay. Okay. 1986: you sell product, you launder it through a print shop, an ice cream factory, a car showroom...",
+  "src": "story.js"
+ },
+ {
+  "key": "3d32b8f7",
+  "role": "tommy",
+  "text": "I remember, Ken. I was there.",
+  "speak": "I remember, Ken. I was there.",
+  "src": "story.js"
+ },
+ {
+  "key": "9df9e283",
+  "role": "ken",
+  "text": "2026: you build an \"AI-native platform\", investors give YOU the money, and it's all legal. They call it a seed round!",
+  "speak": "2026: you build an \"A.I.-native platform\", investors give you the money, and it's all legal. They call it a seed round!",
+  "src": "story.js"
+ },
+ {
+  "key": "f7a9533c",
+  "role": "tommy",
+  "text": "I don't know how to code.",
+  "speak": "I don't know how to code.",
+  "src": "story.js"
+ },
+ {
+  "key": "70ad7a31",
+  "role": "ken",
+  "text": "Nobody codes anymore! That's the beauty! You just... vibe. You tell the AI what you want and it writes the code.",
+  "speak": "Nobody codes anymore! That's the beauty! You just... vibe. You tell the A.I. what you want and it writes the code.",
+  "src": "story.js"
+ },
+ {
+  "key": "c0e4b4bf",
+  "role": "ken",
+  "text": "Half the founders in this city can't spell JavaScript. One of them is worth four hundred million.",
+  "speak": "Half the founders in this city can't spell JavaScript. One of them is worth four hundred million.",
+  "src": "story.js"
+ },
+ {
+  "key": "282cb258",
+  "role": "tommy",
+  "text": "And the catch?",
+  "speak": "And the catch?",
+  "src": "story.js"
+ },
+ {
+  "key": "ad72910c",
+  "role": "ken",
+  "text": "The catch is the AI does exactly what you tell it. Including the stupid stuff. So — don't say stupid stuff.",
+  "speak": "The catch is the A.I. does exactly what you tell it. Including the stupid stuff. So, don't say stupid stuff.",
+  "src": "story.js"
+ },
+ {
+  "key": "28553138",
+  "role": "ken",
+  "text": "Here. Five grand from my CPF. Don't tell my wife. Get a desk at WeHustle on Duxton Road.",
+  "speak": "Here. Five grand from my C.P.F. Don't tell my wife. Get a desk at WeHustle on Duxton Road.",
+  "src": "story.js"
+ },
+ {
+  "key": "90a5aa40",
+  "role": "tommy",
+  "text": "Sonny gets paid, Ken. Then I'm done.",
+  "speak": "Sonny gets paid, Ken. Then I'm done.",
+  "src": "story.js"
+ },
+ {
+  "key": "2a7cd5aa",
+  "role": "ken",
+  "text": "That's what everybody says before their Series B.",
+  "speak": "That's what everybody says before their Series B.",
+  "src": "story.js"
+ },
+ {
+  "key": "9849a8d6",
+  "role": "jasmine",
+  "text": "Welcome to WeHustle! Hot desk is S$900 a month, kombucha is free, sleeping here is not allowed but everyone does.",
+  "speak": "Welcome to WeHustle! Hot desk is 900 dollars a month, kombucha is free, sleeping here is not allowed but everyone does.",
+  "src": "story.js"
+ },
+ {
+  "key": "3ea717de",
+  "role": "tommy",
+  "text": "I need a desk. And one of those AIs.",
+  "speak": "I need a desk. And one of those A.I.s.",
+  "src": "story.js"
+ },
+ {
+  "key": "a8f0ed6b",
+  "role": "jasmine",
+  "text": "Desk 42. The AI is called Claudia. Be nice to her. Last founder yelled at her and she refactored his whole company into a spreadsheet.",
+  "speak": "Desk 42. The A.I. is called Claudia. Be nice to her. Last founder yelled at her and she refactored his whole company into a spreadsheet.",
+  "src": "story.js"
+ },
+ {
+  "key": "edde5cf0",
+  "role": "tommy",
+  "text": "ChopeChain. Shipped. I'm a tech founder now.",
+  "speak": "ChopeChain. Shipped. I'm a tech founder now.",
+  "src": "story.js"
+ },
+ {
+  "key": "7cbf258b",
+  "role": "tommy",
+  "text": "Kopi.ai. Shipped. I'm a tech founder now.",
+  "speak": "Kopi dot A.I. Shipped. I'm a tech founder now.",
+  "src": "story.js"
+ },
+ {
+  "key": "9fe7bea1",
+  "role": "tommy",
+  "text": "DurianDash. Shipped. I'm a tech founder now.",
+  "speak": "DurianDash. Shipped. I'm a tech founder now.",
+  "src": "story.js"
+ },
+ {
+  "key": "80863bce",
+  "role": "jasmine",
+  "text": "Congrats! Please return the lanyard when you pivot.",
+  "speak": "Congrats! Please return the lanyard when you pivot.",
+  "src": "story.js"
+ },
+ {
+  "key": "26c5f598",
+  "role": "lance",
+  "text": "Tommy Vercetti. The comeback kid.",
+  "speak": "Tommy Vercetti. The comeback kid.",
+  "src": "story.js"
+ },
+ {
+  "key": "5da473eb",
+  "role": "tommy",
+  "text": "Lance. Last time I saw you, things ended... badly.",
+  "speak": "Lance. Last time I saw you, things ended... badly.",
+  "src": "story.js"
+ },
+ {
+  "key": "9ff7eefd",
+  "role": "lance",
+  "text": "Water under the Helix Bridge, man. I'm a growth hacker now. I have a ring light.",
+  "speak": "Water under the Helix Bridge, man. I'm a growth hacker now. I have a ring light.",
+  "src": "story.js"
+ },
+ {
+  "key": "b48e8fdb",
+  "role": "lance",
+  "text": "Listen. Investors don't care about product. They care about users. And where is every single person in this city at lunch?",
+  "speak": "Listen. Investors don't care about product. They care about users. And where is every single person in this city at lunch?",
+  "src": "story.js"
+ },
+ {
+  "key": "e98eb7f0",
+  "role": "tommy",
+  "text": "Prison?",
+  "speak": "Prison?",
+  "src": "story.js"
+ },
+ {
+  "key": "06fad286",
+  "role": "lance",
+  "text": "Hawker centres! We slap a QR code on every table. \"Scan to chope.\" Tissue packets are legacy infrastructure, Tommy.",
+  "speak": "Hawker centres! We slap a Q.R. code on every table. \"Scan to chope.\" Tissue packets are legacy infrastructure, Tommy.",
+  "src": "story.js"
+ },
+ {
+  "key": "7d53fc63",
+  "role": "lance",
+  "text": "Take my Stinger. Four hawker centres. Lunch rush ends in five minutes. Go go go!",
+  "speak": "Take my Stinger. Four hawker centres. Lunch rush ends in five minutes. Go go go!",
+  "src": "story.js"
+ },
+ {
+  "key": "aea3b495",
+  "role": "lance",
+  "text": "TOMMY! Some scout from Why Combinator just walked off with my laptop! All our growth scripts are on it!",
+  "speak": "tommy! Some scout from Why Combinator just walked off with my laptop! All our growth scripts are on it!",
+  "src": "story.js"
+ },
+ {
+  "key": "fa602263",
+  "role": "tommy",
+  "text": "Your passwords are on a sticky note, aren't they.",
+  "speak": "Your passwords are on a sticky note, aren't they.",
+  "src": "story.js"
+ },
+ {
+  "key": "1a4f30c6",
+  "role": "lance",
+  "text": "The sticky note is ON the laptop, Tommy! He's in a black Mercedez, heading your way! Get it back!",
+  "speak": "The sticky note is on the laptop, Tommy! He's in a black Mercedez, heading your way! Get it back!",
+  "src": "story.js"
+ },
+ {
+  "key": "79d931c4",
+  "role": "tommy",
+  "text": "Lance. Change your passwords. All of them. Today.",
+  "speak": "Lance. Change your passwords. All of them. Today.",
+  "src": "story.js"
+ },
+ {
+  "key": "f68a9127",
+  "role": "lance",
+  "text": "Ken's on the phone. He's been screaming for ten minutes. I put him on speaker.",
+  "speak": "Ken's on the phone. He's been screaming for ten minutes. I put him on speaker.",
+  "src": "story.js"
+ },
+ {
+  "key": "19698760",
+  "role": "ken",
+  "text": "DEMO DAY! SEVEN O'CLOCK! Marina Bay Sands Expo! If you're late they give your slot to a guy selling NFTs of hawker stalls!",
+  "speak": "demo day! seven o'clock! Marina Bay Sands Expo! If you're late they give your slot to a guy selling N.F.T.s of hawker stalls!",
+  "src": "story.js"
+ },
+ {
+  "key": "244efcaf",
+  "role": "tommy",
+  "text": "What time is it?",
+  "speak": "What time is it?",
+  "src": "story.js"
+ },
+ {
+  "key": "2818f329",
+  "role": "lance",
+  "text": "Six fifty. I leased you a car. It's on Ken's personal guarantee.",
+  "speak": "Six fifty. I leased you a car. It's on Ken's personal guarantee.",
+  "src": "story.js"
+ },
+ {
+  "key": "eececd14",
+  "role": "ken",
+  "text": "Do NOT scratch the Infernus, Tommy! And watch the ERP gantries, they charge per vibe!",
+  "speak": "Do not scratch the Infernus, Tommy! And watch the E.R.P. gantries, they charge per vibe!",
+  "src": "story.js"
+ },
+ {
+  "key": "893a7c1e",
+  "role": "ken",
+  "text": "Okay. Okay. Three investors. Priya Raman, Merlion Ventures — she reads the footnotes. Of the footnotes.",
+  "speak": "Okay. Okay. Three investors. Priya Raman, Merlion Ventures, she reads the footnotes. Of the footnotes.",
+  "src": "story.js"
+ },
+ {
+  "key": "aa96969f",
+  "role": "ken",
+  "text": "Chad Brogan, Sandhill Partners. He reads nothing. Just say \"AGI\" and point at the ceiling.",
+  "speak": "Chad Brogan, Sandhill Partners. He reads nothing. Just say \"A.G.I.\" and point at the ceiling.",
+  "src": "story.js"
+ },
+ {
+  "key": "e1fc8d20",
+  "role": "ken",
+  "text": "And Auntie Mei. Eleven chicken rice stalls and a Tesla. Do NOT mention the durian thing.",
+  "speak": "And Auntie Mei. Eleven chicken rice stalls and a Tesla. Do not mention the durian thing.",
+  "src": "story.js"
+ },
+ {
+  "key": "0dec5b6e",
+  "role": "tommy",
+  "text": "What durian thing?",
+  "speak": "What durian thing?",
+  "src": "story.js"
+ },
+ {
+  "key": "0c6c68fd",
+  "role": "ken",
+  "text": "EXACTLY.",
+  "speak": "exactly.",
+  "src": "story.js"
+ },
+ {
+  "key": "9dd4fa2f",
+  "role": "kyle",
+  "text": "Cute pitch. Kyle Zhang, ChopeAI. Same idea as yours — but with a Stanford degree and a podcast.",
+  "speak": "Cute pitch. Kyle Zhang, Chope A.I. Same idea as yours, but with a Stanford degree and a podcast.",
+  "src": "story.js"
+ },
+ {
+  "key": "83af6b72",
+  "role": "tommy",
+  "text": "Congratulations.",
+  "speak": "Congratulations.",
+  "src": "story.js"
+ },
+ {
+  "key": "ea1009b4",
+  "role": "kyle",
+  "text": "Temasick Holdings only takes one meeting with a founder this year. Mr. Tan likes... decisive people.",
+  "speak": "Temasick Holdings only takes one meeting with a founder this year. Mr. Tan likes... decisive people.",
+  "src": "story.js"
+ },
+ {
+  "key": "db06774e",
+  "role": "kyle",
+  "text": "So let's decide. Tonight. The Marina Bay street circuit. Winner gets Mr. Tan.",
+  "speak": "So let's decide. Tonight. The Marina Bay street circuit. Winner gets Mr. Tan.",
+  "src": "story.js"
+ },
+ {
+  "key": "edb549eb",
+  "role": "tommy",
+  "text": "You want to race me. Kid, I was running red lights before you had a LinkedIn.",
+  "speak": "You want to race me. Kid, I was running red lights before you had a LinkedIn.",
+  "src": "story.js"
+ },
+ {
+  "key": "197caa5a",
+  "role": "kyle",
+  "text": "Two laps. Raffles Boulevard, Nicoll, Stamford, the Padang, over the bridge, back past the Esplanade. Try to keep up, grandpa.",
+  "speak": "Two laps. Raffles Boulevard, Nicoll, Stamford, the Padang, over the bridge, back past the Esplanade. Try to keep up, grandpa.",
+  "src": "story.js"
+ },
+ {
+  "key": "19ca41c9",
+  "role": "chad",
+  "text": "Bro I'm only here for the content. Say hi to the livestream.",
+  "speak": "Bro I'm only here for the content. Say hi to the livestream.",
+  "src": "story.js"
+ },
+ {
+  "key": "24c3aa51",
+  "role": "ahseng",
+  "text": "Meter already running ah. Race also must pay.",
+  "speak": "Meter already running ah. Race also must pay.",
+  "src": "story.js"
+ },
+ {
+  "key": "6d57c85d",
+  "role": "ken",
+  "text": "Tommy! Kyle's posting a LinkedIn essay about \"the lessons of losing\". You got the meeting! Mr. Tan. Tonight. The top of Marina Bay Sands.",
+  "speak": "Tommy! Kyle's posting a LinkedIn essay about \"the lessons of losing\". You got the meeting! Mr. Tan. Tonight. The top of Marina Bay Sands.",
+  "src": "story.js"
+ },
+ {
+  "key": "474097ae",
+  "role": "mrtan",
+  "text": "Mr. Vercetti. In Singapore, we plan forty years ahead. Where do you see your company in forty years?",
+  "speak": "Mr. Vercetti. In Singapore, we plan forty years ahead. Where do you see your company in forty years?",
+  "src": "story.js"
+ },
+ {
+  "key": "c04ce85c",
+  "role": "tommy",
+  "text": "In forty years? Owning this hotel.",
+  "speak": "In forty years? Owning this hotel.",
+  "src": "story.js"
+ },
+ {
+  "key": "dd17c236",
+  "role": "mrtan",
+  "text": "...Hm. Most founders say \"making the world a better place\". Let's talk numbers.",
+  "speak": "...Hm. Most founders say \"making the world a better place\". Let's talk numbers.",
+  "src": "story.js"
+ },
+ {
+  "key": "e6b02187",
+  "role": "tommy",
+  "text": "Pleasure doing business.",
+  "speak": "Pleasure doing business.",
+  "src": "story.js"
+ },
+ {
+  "key": "357514c4",
+  "role": "ken",
+  "text": "TOMMY! Sonny's on the other line! He wants his money! What do I tell him?!",
+  "speak": "tommy! Sonny's on the other line! He wants his money! What do I tell him?!",
+  "src": "story.js"
+ },
+ {
+  "key": "f4bfaf07",
+  "role": "tommy",
+  "text": "Tell Sonny he can have his money. In equity. Vested over four years. With a one-year cliff.",
+  "speak": "Tell Sonny he can have his money. In equity. Vested over four years. With a one-year cliff.",
+  "src": "story.js"
+ },
+ {
+  "key": "8b8cd790",
+  "role": "ken",
+  "text": "...Tommy, that's the most beautiful thing I've ever heard.",
+  "speak": "...Tommy, that's the most beautiful thing I've ever heard.",
+  "src": "story.js"
+ },
+ {
+  "key": "49f13c31",
+  "role": "scout",
+  "text": "OKAY! OKAY! Take it! I'm going back to consulting!",
+  "speak": "okay! okay! Take it! I'm going back to consulting!",
+  "src": "story.js (scout subtitle)"
+ },
+ {
+  "key": "a2e90623",
+  "role": "mc",
+  "text": "Next up — Tommy Vercetti, founder of ChopeChain!",
+  "speak": "Next up, Tommy Vercetti, founder of ChopeChain!",
+  "src": "pitch.js"
+ },
+ {
+  "key": "c053d3e7",
+  "role": "tommy",
+  "text": "Every day, two million Singaporeans fight for a seat with a tissue packet. That ends today.",
+  "speak": "Every day, two million Singaporeans fight for a seat with a tissue packet. That ends today.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "3bfb1959",
+  "role": "tommy",
+  "text": "ChopeChain. Scan the table, your seat is held on the blockchain, and you eat in peace. Like civilised people.",
+  "speak": "ChopeChain. Scan the table, your seat is held on the blockchain, and you eat in peace. Like civilised people.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "db200755",
+  "role": "tommy",
+  "text": "We make money every single time someone does the most Singaporean thing possible. And we take a little cut. Like the government, but friendlier.",
+  "speak": "We make money every single time someone does the most Singaporean thing possible. And we take a little cut. Like the government, but friendlier.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "f2048793",
+  "role": "tommy",
+  "text": "We're raising five million at fifty pre. The rocket is fuelled. All we need is you to light it.",
+  "speak": "We're raising five million at fifty pre. The rocket is fuelled. All we need is you to light it.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "7fbba25e",
+  "role": "auntiemei",
+  "text": "Last time people chope with tissue packet, free one. Why I pay you?",
+  "speak": "Last time people chope with tissue packet, free one. Why I pay you?",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "20d02ee9",
+  "role": "tommy",
+  "text": "Fair, Auntie. But office workers waste 11 minutes a day hunting seats. Time is money — your money, if you invest.",
+  "speak": "Fair, Auntie. But office workers waste 11 minutes a day hunting seats. Time is money, your money, if you invest.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "f82977f2",
+  "role": "priya",
+  "text": "Specific. I like specific.",
+  "speak": "Specific. I like specific.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "e97d7758",
+  "role": "auntiemei",
+  "text": "Hmm. Ok, this one can talk.",
+  "speak": "Hmm. Ok, this one can talk.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "c489d164",
+  "role": "tommy",
+  "text": "With respect, Auntie — the old way is over. I'm the new tissue packet.",
+  "speak": "With respect, Auntie, the old way is over. I'm the new tissue packet.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "d1d3032d",
+  "role": "chad",
+  "text": "Founder energy. Love it.",
+  "speak": "Founder energy. Love it.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "85fcadd7",
+  "role": "auntiemei",
+  "text": "Wah, this one got guts.",
+  "speak": "Wah, this one got guts.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "618ec9fd",
+  "role": "tommy",
+  "text": "We're disrupting the seat-as-a-service vertical with an AI-native, Web3 trust layer.",
+  "speak": "We're disrupting the seat-as-a-service vertical with an A.I.-native, Web3 trust layer.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "a27ca1ae",
+  "role": "priya",
+  "text": "That's four buzzwords and zero facts.",
+  "speak": "That's four buzzwords and zero facts.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "0d34795b",
+  "role": "chad",
+  "text": "Say \"trust layer\" again.",
+  "speak": "Say \"trust layer\" again.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "53ecbf60",
+  "role": "auntiemei",
+  "text": "Speak English can or not?",
+  "speak": "Speak English can or not?",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "30ef6837",
+  "role": "tommy",
+  "text": "Because I said so.",
+  "speak": "Because I said so.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "ae63e81e",
+  "role": "auntiemei",
+  "text": "Aiyoh.",
+  "speak": "Aiyoh.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "ec306f2d",
+  "role": "chad",
+  "text": "Love the vision. But is it AI? Like… could it become AGI?",
+  "speak": "Love the vision. But is it A.I.? Like… could it become A.G.I.?",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "906729bb",
+  "role": "tommy",
+  "text": "It's a narrow model plus great UX. It doesn't need to be AGI to save people time.",
+  "speak": "It's a narrow model plus great U.X. It doesn't need to be A.G.I. to save people time.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "81eca30a",
+  "role": "priya",
+  "text": "Finally, an adult.",
+  "speak": "Finally, an adult.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "f312fc97",
+  "role": "chad",
+  "text": "Narrow? Bro.",
+  "speak": "Narrow? Bro.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "cfbd0e90",
+  "role": "tommy",
+  "text": "It's AGI-adjacent, agentic, multimodal and frankly sentient on weekends.",
+  "speak": "It's A.G.I.-adjacent, agentic, multimodal and frankly sentient on weekends.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "46a5feb4",
+  "role": "priya",
+  "text": "It is not sentient.",
+  "speak": "It is not sentient.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "84c12f52",
+  "role": "chad",
+  "text": "I just got chills. Actual chills.",
+  "speak": "I just got chills. Actual chills.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "c47200b1",
+  "role": "tommy",
+  "text": "Chad, it's whatever you need it to be to sign the cheque.",
+  "speak": "Chad, it's whatever you need it to be to sign the cheque.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "c9641013",
+  "role": "chad",
+  "text": "Ha! I like this guy.",
+  "speak": "Ha! I like this guy.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "b7660401",
+  "role": "auntiemei",
+  "text": "Clever boy.",
+  "speak": "Clever boy.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "facea72b",
+  "role": "tommy",
+  "text": "The AI is me. I'm the AI.",
+  "speak": "The A.I. is me. I'm the A.I.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "cd47205e",
+  "role": "priya",
+  "text": "Please stop.",
+  "speak": "Please stop.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "7ceecbca",
+  "role": "chad",
+  "text": "Founder-model fit.",
+  "speak": "Founder-model fit.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "78ca62f5",
+  "role": "auntiemei",
+  "text": "Honest boy.",
+  "speak": "Honest boy.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "8a54c4b0",
+  "role": "tommy",
+  "text": "All of them. Daily. Hourly, some of them.",
+  "speak": "All of them. Daily. Hourly, some of them.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "7a44a283",
+  "role": "priya",
+  "text": "Your own dashboard says otherwise.",
+  "speak": "Your own dashboard says otherwise.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "dca12074",
+  "role": "chad",
+  "text": "Hourly actives. Iconic.",
+  "speak": "Hourly actives. Iconic.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "08cb8fa5",
+  "role": "tommy",
+  "text": "Priya, the real metric is vibes per user, and ours are off the charts.",
+  "speak": "Priya, the real metric is vibes per user, and ours are off the charts.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "6512c74f",
+  "role": "priya",
+  "text": "That is not a metric.",
+  "speak": "That is not a metric.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "b92673a5",
+  "role": "chad",
+  "text": "VPU. Writing that down.",
+  "speak": "V.P.U. Writing that down.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "1cbf01d7",
+  "role": "tommy",
+  "text": "Ken counts as three users. He has three phones.",
+  "speak": "Ken counts as three users. He has three phones.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "333d1d85",
+  "role": "priya",
+  "text": "Please tell me you're joking.",
+  "speak": "Please tell me you're joking.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "d80c4d20",
+  "role": "auntiemei",
+  "text": "Hahaha, this Ken ah.",
+  "speak": "Hahaha, this Ken ah.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "1b5f9ee4",
+  "role": "auntiemei",
+  "text": "Ok, ok. Can make money or not?",
+  "speak": "Ok, ok. Can make money or not?",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "ef1f44bf",
+  "role": "tommy",
+  "text": "Yes. 30 cents a chope, 40% margins, profitable at 50,000 users.",
+  "speak": "Yes. 30 cents a chope, 40% margins, profitable at 50,000 users.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "ab17e54b",
+  "role": "priya",
+  "text": "Unit economics. Thank you.",
+  "speak": "Unit economics. Thank you.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "42b79c0e",
+  "role": "auntiemei",
+  "text": "Now we talking!",
+  "speak": "Now we talking!",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "6ac1c713",
+  "role": "tommy",
+  "text": "Not yet — we're optimising for growth. Profit is a 2030 problem.",
+  "speak": "Not yet, we're optimising for growth. Profit is a 2030 problem.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "42c6fcd6",
+  "role": "chad",
+  "text": "Growth at all costs. Classic.",
+  "speak": "Growth at all costs. Classic.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "1ae17990",
+  "role": "auntiemei",
+  "text": "2030?! I want to see money before I die.",
+  "speak": "2030?! I want to see money before I die.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "5c51a912",
+  "role": "tommy",
+  "text": "Money is a legacy metric, Auntie. We measure engagement.",
+  "speak": "Money is a legacy metric, Auntie. We measure engagement.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "6ae032cb",
+  "role": "priya",
+  "text": "No.",
+  "speak": "No.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "a0de563f",
+  "role": "chad",
+  "text": "Engagement is the new revenue.",
+  "speak": "Engagement is the new revenue.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "aa0ea167",
+  "role": "auntiemei",
+  "text": "Wah lau eh.",
+  "speak": "Wah lau eh.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "c113e779",
+  "role": "tommy",
+  "text": "We make money the old-fashioned way, Auntie. Don't ask too many questions.",
+  "speak": "We make money the old-fashioned way, Auntie. Don't ask too many questions.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "3fd89261",
+  "role": "priya",
+  "text": "We will be asking questions.",
+  "speak": "We will be asking questions.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "fc0af511",
+  "role": "auntiemei",
+  "text": "Okay, I like your style. But I will ask.",
+  "speak": "Okay, I like your style. But I will ask.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "b1e97afc",
+  "role": "priya",
+  "text": "S$ 5M at S$ 50M pre. Justify that valuation.",
+  "speak": "5 million dollars at 50 million dollars pre. Justify that valuation.",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "32eff917",
+  "role": "tommy",
+  "text": "Comparable SEA marketplaces trade at 10x forward ARR. Here's our path to S$ 5M ARR in 24 months.",
+  "speak": "Comparable Southeast Asian marketplaces trade at 10 times forward A.R.R. Here's our path to 5 million dollars A.R.R. in 24 months.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "7325c831",
+  "role": "priya",
+  "text": "Send me that model tonight.",
+  "speak": "Send me that model tonight.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "1631ae1d",
+  "role": "chad",
+  "text": "Spreadsheets. Hot.",
+  "speak": "Spreadsheets. Hot.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "1b0c16b0",
+  "role": "tommy",
+  "text": "Let's just say my last investor, in Liberty City, wasn't the negotiating type.",
+  "speak": "Let's just say my last investor, in Liberty City, wasn't the negotiating type.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "6a85b70a",
+  "role": "priya",
+  "text": "Is that… a threat?",
+  "speak": "Is that… a threat?",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "7b52a73e",
+  "role": "chad",
+  "text": "Edgy. I respect it.",
+  "speak": "Edgy. I respect it.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "715bc96b",
+  "role": "tommy",
+  "text": "It's a vibe-based valuation. And the vibes are immaculate.",
+  "speak": "It's a vibe-based valuation. And the vibes are immaculate.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "a3b1c6b4",
+  "role": "priya",
+  "text": "I'm going to need a stronger coffee.",
+  "speak": "I'm going to need a stronger coffee.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "b1faa269",
+  "role": "chad",
+  "text": "Immaculate vibes confirmed.",
+  "speak": "Immaculate vibes confirmed.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "2ad25d8e",
+  "role": "auntiemei",
+  "text": "What is vibe?",
+  "speak": "What is vibe?",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "d033d454",
+  "role": "tommy",
+  "text": "Fine. S$ 3M at S$ 30M if you commit today.",
+  "speak": "Fine. 3 million dollars at 30 million dollars if you commit today.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "7797b3d0",
+  "role": "priya",
+  "text": "Pragmatic.",
+  "speak": "Pragmatic.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "74012226",
+  "role": "chad",
+  "text": "Wait, why are we going down?",
+  "speak": "Wait, why are we going down?",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "9973e10f",
+  "role": "auntiemei",
+  "text": "Discount! Now we talking.",
+  "speak": "Discount! Now we talking.",
+  "src": "pitch-data reactions"
+ },
+ {
+  "key": "52426b0c",
+  "role": "mc",
+  "text": "Next up — Tommy Vercetti, founder of Kopi.ai!",
+  "speak": "Next up, Tommy Vercetti, founder of Kopi dot A.I.!",
+  "src": "pitch.js"
+ },
+ {
+  "key": "502d6300",
+  "role": "tommy",
+  "text": "Every morning, millions of Singaporeans whisper a 14-word kopi order to a tired uncle. That ends today.",
+  "speak": "Every morning, millions of Singaporeans whisper a 14-word kopi order to a tired uncle. That ends today.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "84dd7891",
+  "role": "tommy",
+  "text": "Kopi.ai knows your order before you sit down. The uncle just nods. Respect, efficiency, caffeine.",
+  "speak": "Kopi dot A.I. knows your order before you sit down. The uncle just nods. Respect, efficiency, caffeine.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "df00024c",
+  "role": "auntiemei",
+  "text": "The uncle at my kopitiam knows my order thirty years already. Why I need AI?",
+  "speak": "The uncle at my kopitiam knows my order thirty years already. Why I need A.I.?",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "05207b0d",
+  "role": "tommy",
+  "text": "Your uncle is retiring, Auntie. When he goes, who remembers your order? Kopi.ai does.",
+  "speak": "Your uncle is retiring, Auntie. When he goes, who remembers your order? Kopi dot A.I. does.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "52b1f631",
+  "role": "tommy",
+  "text": "Yes. 20 cents a prediction, plus licensing to kopitiam chains. Profitable at 60,000 users.",
+  "speak": "Yes. 20 cents a prediction, plus licensing to kopitiam chains. Profitable at 60,000 users.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "8bfc083e",
+  "role": "mc",
+  "text": "Next up — Tommy Vercetti, founder of DurianDash!",
+  "speak": "Next up, Tommy Vercetti, founder of DurianDash!",
+  "src": "pitch.js"
+ },
+ {
+  "key": "d8dd65cf",
+  "role": "tommy",
+  "text": "Durians: the king of fruits. Banned from trains, refused by taxis, hated by condos. That ends today.",
+  "speak": "Durians: the king of fruits. Banned from trains, refused by taxis, hated by condos. That ends today.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "615ec81a",
+  "role": "tommy",
+  "text": "DurianDash. Fifteen minutes from tree to table. The MRT can't stop us if we're in the sky.",
+  "speak": "DurianDash. Fifteen minutes from tree to table. The MRT can't stop us if we're in the sky.",
+  "src": "pitch-data slides"
+ },
+ {
+  "key": "ec36a6e9",
+  "role": "auntiemei",
+  "text": "I walk to Geylang, five minutes only. Why need drone?",
+  "speak": "I walk to Geylang, five minutes only. Why need drone?",
+  "src": "pitch-data questions"
+ },
+ {
+  "key": "72d27ba5",
+  "role": "tommy",
+  "text": "Not everyone lives near Geylang, Auntie. And no taxi will take a durian. I checked. Personally.",
+  "speak": "Not everyone lives near Geylang, Auntie. And no taxi will take a durian. I checked. Personally.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "fe8be432",
+  "role": "tommy",
+  "text": "Yes. S$ 15 a delivery, 35% margin after drone batteries. Profitable at 20,000 orders a month.",
+  "speak": "Yes. 15 dollars a delivery, 35% margin after drone batteries. Profitable at 20,000 orders a month.",
+  "src": "pitch-data answers"
+ },
+ {
+  "key": "cbae9ca5",
+  "role": "priya",
+  "text": "Hello? Mr. Vercetti?",
+  "speak": "Hello? Mr. Vercetti?",
+  "src": "pitch-data timeout"
+ },
+ {
+  "key": "29cd280d",
+  "role": "chad",
+  "text": "Founder intensity. 🔥",
+  "speak": "Founder intensity.",
+  "src": "pitch-data timeout"
+ },
+ {
+  "key": "b9663322",
+  "role": "auntiemei",
+  "text": "Sleeping ah?",
+  "speak": "Sleeping ah?",
+  "src": "pitch-data timeout"
+ },
+ {
+  "key": "d1e719a8",
+  "role": "chad",
+  "text": "🔥 Say it louder.",
+  "speak": "Say it louder.",
+  "src": "pitch-data qte react"
+ },
+ {
+  "key": "ff51301c",
+  "role": "chad",
+  "text": "Nice.",
+  "speak": "Nice.",
+  "src": "pitch-data qte react"
+ },
+ {
+  "key": "62af8609",
+  "role": "auntiemei",
+  "text": "Aiyoh, stammer already.",
+  "speak": "Aiyoh, stammer already.",
+  "src": "pitch-data qte react"
+ },
+ {
+  "key": "0eec8db6",
+  "role": "tommy",
+  "text": "…and THAT is what we call a PAIN POINT.",
+  "speak": "…and that is what we call a pain point.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "4cb8c394",
+  "role": "tommy",
+  "text": "…it's basically a pain point, you know?",
+  "speak": "…it's basically a pain point, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "21fc50ae",
+  "role": "tommy",
+  "text": "…and THAT is what we call a TAM.",
+  "speak": "…and that is what we call a T.A.M.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "f239c17c",
+  "role": "tommy",
+  "text": "…it's basically a tam, you know?",
+  "speak": "…it's basically a tam, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "559367a5",
+  "role": "tommy",
+  "text": "…and THAT is what we call a AI-NATIVE.",
+  "speak": "…and that is what we call a A.I.-native.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "3374123d",
+  "role": "tommy",
+  "text": "…it's basically a ai-native, you know?",
+  "speak": "…it's basically a ai-native, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "f7ad457b",
+  "role": "tommy",
+  "text": "…and THAT is what we call a PLATFORM.",
+  "speak": "…and that is what we call a platform.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "92c2b93b",
+  "role": "tommy",
+  "text": "…it's basically a platform, you know?",
+  "speak": "…it's basically a platform, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "cbf7fd35",
+  "role": "tommy",
+  "text": "…and THAT is what we call a HOCKEY STICK.",
+  "speak": "…and that is what we call a hockey stick.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "1fbde94d",
+  "role": "tommy",
+  "text": "…it's basically a hockey stick, you know?",
+  "speak": "…it's basically a hockey stick, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "edc82378",
+  "role": "tommy",
+  "text": "…and THAT is what we call a FLYWHEEL.",
+  "speak": "…and that is what we call a flywheel.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "1e814f2e",
+  "role": "tommy",
+  "text": "…it's basically a flywheel, you know?",
+  "speak": "…it's basically a flywheel, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "6d0cd7a4",
+  "role": "tommy",
+  "text": "…and THAT is what we call a UNIT ECONOMICS.",
+  "speak": "…and that is what we call a unit economics.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "ece4b99a",
+  "role": "tommy",
+  "text": "…it's basically a unit economics, you know?",
+  "speak": "…it's basically a unit economics, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "3cf30d5c",
+  "role": "tommy",
+  "text": "…and THAT is what we call a MONETISATION.",
+  "speak": "…and that is what we call a monetisation.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "f243d392",
+  "role": "tommy",
+  "text": "…it's basically a monetisation, you know?",
+  "speak": "…it's basically a monetisation, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "fd2c23d3",
+  "role": "tommy",
+  "text": "…and THAT is what we call a 10X.",
+  "speak": "…and that is what we call a ten X.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "8ca9bca3",
+  "role": "tommy",
+  "text": "…it's basically a 10x, you know?",
+  "speak": "…it's basically a 10 times, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "18e6f693",
+  "role": "tommy",
+  "text": "…and THAT is what we call a BLITZSCALE.",
+  "speak": "…and that is what we call a blitzscale.",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "75b78c83",
+  "role": "tommy",
+  "text": "…it's basically a blitzscale, you know?",
+  "speak": "…it's basically a blitzscale, you know?",
+  "src": "pitch-data qte"
+ },
+ {
+  "key": "e9c898de",
+  "role": "tommy",
+  "text": "…the… uh… kopi of things.",
+  "speak": "…the… uh… kopi of things.",
+  "src": "pitch-data qte miss"
+ },
+ {
+  "key": "d8d7b612",
+  "role": "tommy",
+  "text": "…it's like Uber, but for… Uber.",
+  "speak": "…it's like Uber, but for… Uber.",
+  "src": "pitch-data qte miss"
+ },
+ {
+  "key": "8f173f7b",
+  "role": "tommy",
+  "text": "…and the blockchain… gets… synergised.",
+  "speak": "…and the blockchain… gets… synergised.",
+  "src": "pitch-data qte miss"
+ },
+ {
+  "key": "926041f0",
+  "role": "tommy",
+  "text": "…sorry, what was the question?",
+  "speak": "…sorry, what was the question?",
+  "src": "pitch-data qte miss"
+ },
+ {
+  "key": "d9f653b5",
+  "role": "priya",
+  "text": "We'll pass for now. Keep in touch.",
+  "speak": "We'll pass for now. Keep in touch.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "1bf5d860",
+  "role": "priya",
+  "text": "Interesting. Let's do a follow-up with real data.",
+  "speak": "Interesting. Let's do a follow-up with real data.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "03744f9d",
+  "role": "priya",
+  "text": "Send me the data room. Tonight.",
+  "speak": "Send me the data room. Tonight.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "dbee3678",
+  "role": "chad",
+  "text": "Not a fit for our thesis, which changes weekly.",
+  "speak": "Not a fit for our thesis, which changes weekly.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "418411a0",
+  "role": "chad",
+  "text": "Let me circle back with my partners (my therapist).",
+  "speak": "Let me circle back with my partners (my therapist).",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "4ec31da5",
+  "role": "chad",
+  "text": "I'm in. I'm so in. Can I get a hoodie?",
+  "speak": "I'm in. I'm so in. Can I get a hoodie?",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "7b61b7da",
+  "role": "auntiemei",
+  "text": "Aiyoh. Better go back to selling insurance.",
+  "speak": "Aiyoh. Better go back to selling insurance.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "f0042fd5",
+  "role": "auntiemei",
+  "text": "Come my stall tomorrow, we talk again.",
+  "speak": "Come my stall tomorrow, we talk again.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "bc968741",
+  "role": "auntiemei",
+  "text": "Can. I put 50k. Cash.",
+  "speak": "Can. I put 50k. Cash.",
+  "src": "pitch-data verdict"
+ },
+ {
+  "key": "af520420",
+  "role": "mrtan",
+  "text": "Mr. Vercetti. Sit. The view is nice, but the numbers must be nicer.",
+  "speak": "Mr. Vercetti. Sit. The view is nice, but the numbers must be nicer.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "b757dfd3",
+  "role": "mrtan",
+  "text": "We have reviewed your pitch. Let us see if your terms are as confident as your shirt.",
+  "speak": "We have reviewed your pitch. Let us see if your terms are as confident as your shirt.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "4049d944",
+  "role": "mrtan",
+  "text": "No.",
+  "speak": "No.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "f89dce51",
+  "role": "mrtan",
+  "text": "Mr. Vercetti, this is Singapore, not Las Vegas.",
+  "speak": "Mr. Vercetti, this is Singapore, not Las Vegas.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "0412e3fb",
+  "role": "mrtan",
+  "text": "Interesting. Wrong, but interesting.",
+  "speak": "Interesting. Wrong, but interesting.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "df9b11b2",
+  "role": "mrtan",
+  "text": "My analysts are laughing. Quietly. In Excel.",
+  "speak": "My analysts are laughing. Quietly. In Excel.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "8a22dad7",
+  "role": "mrtan",
+  "text": "Closer. Still too rich for my blood pressure.",
+  "speak": "Closer. Still too rich for my blood pressure.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "9a85f2cd",
+  "role": "mrtan",
+  "text": "We are in the same postal district now. Not the same block.",
+  "speak": "We are in the same postal district now. Not the same block.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "5e722f2b",
+  "role": "mrtan",
+  "text": "Hmm. Hmm hmm.",
+  "speak": "Hmm. Hmm hmm.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "df74c6c7",
+  "role": "mrtan",
+  "text": "Very close. One more push, maybe I say yes.",
+  "speak": "Very close. One more push, maybe I say yes.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "9baf32f8",
+  "role": "mrtan",
+  "text": "If my chairman were not watching, I might accept this.",
+  "speak": "If my chairman were not watching, I might accept this.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "31bf33d6",
+  "role": "mrtan",
+  "text": "You proposed that already. I remember. I remember everything.",
+  "speak": "You proposed that already. I remember. I remember everything.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "7055a01c",
+  "role": "mrtan",
+  "text": "Deal. Welcome to the portfolio, Mr. Vercetti.",
+  "speak": "Deal. Welcome to the portfolio, Mr. Vercetti.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "9f88d886",
+  "role": "mrtan",
+  "text": "Agreed. Please, do not make me regret this.",
+  "speak": "Agreed. Please, do not make me regret this.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "617321d5",
+  "role": "mrtan",
+  "text": "I have a flight to Davos. Good luck with the tissue packets, Mr. Vercetti.",
+  "speak": "I have a flight to Davos. Good luck with the tissue packets, Mr. Vercetti.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "289c7d66",
+  "role": "mrtan",
+  "text": "This meeting is over. The lift is that way.",
+  "speak": "This meeting is over. The lift is that way.",
+  "src": "negotiation TAN"
+ },
+ {
+  "key": "d722ee79",
+  "role": "mrtan",
+  "text": "…Fine. You have conviction. I respect conviction.",
+  "speak": "…Fine. You have conviction. I respect conviction.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "b140e2da",
+  "role": "mrtan",
+  "text": "Are you unwell, Mr. Vercetti? Should I call someone?",
+  "speak": "Are you unwell, Mr. Vercetti? Should I call someone?",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "69aab824",
+  "role": "mrtan",
+  "text": "…You know the way to a man's heart, Mr. Vercetti. Continue.",
+  "speak": "…You know the way to a man's heart, Mr. Vercetti. Continue.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "c4401983",
+  "role": "mrtan",
+  "text": "Fine. I will not die on the liquidation hill. Please make him stop talking.",
+  "speak": "Fine. I will not die on the liquidation hill. Please make him stop talking.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "e4d38a72",
+  "role": "mrtan",
+  "text": "*quietly googles \"Forelli\"* …I see. Let us be generous today.",
+  "speak": "…I see. Let us be generous today.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "f28d63ef",
+  "role": "mrtan",
+  "text": "We do KYC here, Mr. Vercetti. Very, very thorough KYC.",
+  "speak": "We do K.Y.C. here, Mr. Vercetti. Very, very thorough K.Y.C.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "68310712",
+  "role": "mrtan",
+  "text": "…Sit down, Mr. Vercetti. Let us talk properly.",
+  "speak": "…Sit down, Mr. Vercetti. Let us talk properly.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "6396a744",
+  "role": "mrtan",
+  "text": "The lift is that way. Mind the gap.",
+  "speak": "The lift is that way. Mind the gap.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "c3250944",
+  "role": "mrtan",
+  "text": "Hmm. That is a real curve. My analysts confirm it is not drawn with a ruler.",
+  "speak": "Hmm. That is a real curve. My analysts confirm it is not drawn with a ruler.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "d76a234c",
+  "role": "mrtan",
+  "text": "A modest curve. But it curves. I will allow it.",
+  "speak": "A modest curve. But it curves. I will allow it.",
+  "src": "negotiation tanSay"
+ },
+ {
+  "key": "b45f0d50",
+  "role": "ken",
+  "text": "Tommy… our entire inventory is durians.",
+  "speak": "Tommy… our entire inventory is durians.",
+  "src": "negotiation say"
+ },
+ {
+  "key": "b74cb450",
+  "role": "ken",
+  "text": "I object! …Can I object? Am I allowed to object?",
+  "speak": "I object! …Can I object? Am I allowed to object?",
+  "src": "negotiation say"
+ },
+ {
+  "key": "25285988",
+  "role": "tommy",
+  "text": "Fine. Your terms. But I'm keeping the shirt.",
+  "speak": "Fine. Your terms. But I'm keeping the shirt.",
+  "src": "negotiation say"
+ },
+ {
+  "key": "03fc0118",
+  "role": "ken",
+  "text": "Mr. Tan! Section 4.2(b)(iii) of our side letter clearly states — I wrote this on the plane — no liquidation preference above 1×!",
+  "speak": "Mr. Tan! Section four point two, b, three of our side letter clearly states, I wrote this on the plane, no liquidation preference above 1×!",
+  "src": "negotiation say"
+ },
+ {
+  "key": "3408545c",
+  "role": "tommy",
+  "text": "My previous investor, Sonny Forelli… let's say he's very persistent about returns.",
+  "speak": "My previous investor, Sonny Forelli… let's say he's very persistent about returns.",
+  "src": "negotiation say"
+ },
+ {
+  "key": "a95616b4",
+  "role": "tommy",
+  "text": "Here's my number. Don't make me say it twice.",
+  "speak": "Here's my number. Don't make me say it twice.",
+  "src": "negotiation say"
+ },
+ {
+  "key": "52786c36",
+  "role": "tommy",
+  "text": "Read it and weep, Mr. Tan.",
+  "speak": "Read it and weep, Mr. Tan.",
+  "src": "negotiation say"
+ }
+]
