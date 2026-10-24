@@ -1,0 +1,8 @@
+[{"waitFor":"window.__game?.worldReady","timeout":60000},
+{"spam":"Enter","until":"[...__game.missions.markers].length > 0","timeout":90000},
+{"eval":"const m=[...__game.missions.markers][0]; __game.debugTp(m.m.position.x+1, m.m.position.z, 0); 'tp ' + m.m.position.x.toFixed(0) + ',' + m.m.position.z.toFixed(0)"},
+{"wait":3000},{"shot":"ken1"},
+{"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"shot":"ken2"},{"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"shot":"ken3"},
+{"spam":"Enter","until":"__game.progress.missionsDone.length > 0","timeout":60000},
+{"wait":1500},{"shot":"passed"},
+{"eval":"JSON.stringify({done: __game.progress.missionsDone, money: __game.money, active: __game.missions.active?.mission.id})"}]

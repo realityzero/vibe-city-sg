@@ -1,0 +1,13 @@
+[{"waitFor":"window.__game?.worldReady","timeout":60000},
+{"spam":"Enter","until":"!!document.querySelector('.vc-mg')","timeout":90000},
+{"wait":1500},
+{"eval":"const b=[...document.querySelectorAll('.vc-mg button')].find(b=>/stage/i.test(b.textContent)); b && b.click(); !!b"},
+{"wait":3000},{"shot":"pitch1"},
+{"spam":"Space","until":"!!document.querySelector('.vc-mg [class*=choice], .vc-mg [class*=answer], .vc-mg [class*=option]')","timeout":15000,"every":250},
+{"wait":500},{"shot":"pitch_q"},
+{"spam":"Digit2","until":"!document.querySelector('.vc-mg') || /verdict|ovation|applause|crickets/i.test(document.querySelector('.vc-mg')?.innerText||'')","timeout":120000,"every":700},
+{"wait":2000},{"shot":"pitch_end"},
+{"spam":"Enter","until":"!document.querySelector('.vc-mg')","timeout":30000,"every":800},
+{"wait":2500},{"shot":"kyle"},
+{"spam":"Enter","until":"__game.progress.missionsDone.includes('pitch')","timeout":60000},
+{"eval":"JSON.stringify({done: __game.progress.missionsDone, S: __game.missions.state.pitch})"}]

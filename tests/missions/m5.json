@@ -1,0 +1,8 @@
+[{"waitFor":"window.__game?.worldReady","timeout":60000},
+{"spam":"Enter","until":"__game.missions.markers.size >= 1 && !__game.ui._lbTop?.classList?.contains('on') && __game.player.controlsEnabled","timeout":90000},
+{"wait":1000},{"shot":"m5_go"},
+{"eval":"const g=__game; const v=g.vehicles.find(v=>v.type==='infernus'); g.player.enterVehicleImmediate(v); const m=[...g.missions.markers][0]; g.player.teleport(m.m.position, 0); 1"},
+{"wait":3000},{"shot":"m5_arrive"},
+{"spam":"Enter","until":"!!document.querySelector('.vc-mg')","timeout":90000},
+{"wait":2000},{"shot":"pitch_start"},
+{"eval":"JSON.stringify({done: __game.progress.missionsDone, active: __game.missions.active?.mission.id})"}]

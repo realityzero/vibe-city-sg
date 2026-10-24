@@ -1,0 +1,10 @@
+[{"waitFor":"window.__game?.worldReady && __game.missions.active","timeout":60000},
+{"eval":"__game.missions.active.ctx.minigame = async () => ({valuation: 42000000, raised: 12000000, dilution: 0.22, boardSeats: 1, liquidationPref: 1, accepted: true}); 1"},
+{"wait":4000},{"shot":"lift"},
+{"spam":"Enter","until":"/forty years/.test(document.querySelector('.vc-sub')?.innerText||'')","timeout":60000,"every":500},
+{"shot":"skypark"},
+{"spam":"Enter","until":"/Welcome to the portfolio/.test(document.querySelector('.vc-sub')?.innerText||'') || __game.progress.missionsDone.includes('term_sheet')","timeout":60000,"every":700},
+{"shot":"fireworks"},
+{"spam":"Enter","until":"__game.progress.missionsDone.includes('term_sheet')","timeout":90000,"every":700},
+{"wait":1500},{"shot":"passed"},
+{"eval":"JSON.stringify({done: __game.progress.missionsDone.length, money: __game.money})"}]
