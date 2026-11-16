@@ -15,6 +15,16 @@ export const CREDITS_HTML = `
 <p>Fonts: Anton, Barlow Condensed, Inter, Monoton, Mr Dafoe, Yellowtail — SIL Open Font License.</p>
 <p>All characters, companies and investors are fictional. Any resemblance to your cap table is purely coincidental.</p>`;
 
+// title-screen corner links (official marks: GitHub Invertocat, X logo)
+const SOCIAL = [
+  ['https://github.com/realityzero/vibe-city-sg', 'Source code on GitHub', '0 0 16 16',
+    'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z'],
+  ['https://x.com/neshantt_sikri', '@neshantt_sikri on X', '0 0 24 24',
+    'M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z'],
+];
+const socialHTML = () => `<nav class="vc-social" aria-label="Links">${SOCIAL.map(([href, label, vb, d]) =>
+  `<a href="${href}" target="_blank" rel="noopener noreferrer" title="${label}" aria-label="${label}"><svg viewBox="${vb}" aria-hidden="true"><path d="${d}"/></svg></a>`).join('')}</nav>`;
+
 const TIPS = [
   'Chope a hawker seat with a packet of tissue. It is legally binding. Probably.',
   'ERP gantries deduct money every time you drive under them during peak hours. Your burn rate thanks you.',
@@ -52,6 +62,7 @@ export class TitleScreen {
         <div class="tag">Ship it. Pitch it. Raise it.</div>
       </div>
       <div class="vc-menu"></div>
+      ${socialHTML()}
       <div class="vc-title-foot">Map data © OpenStreetMap contributors · A parody. Not affiliated with Rockstar Games.</div>`;
     parent.appendChild(this.root);
     this.menu = this.root.querySelector('.vc-menu');
@@ -61,6 +72,7 @@ export class TitleScreen {
     for (const p of this.root.querySelectorAll('.vc-palms')) { const s = p.firstElementChild; s.style.height = '100%'; s.style.width = 'auto'; p.style.height = '78vh'; }
     this._key = e => {
       if (this.root.classList.contains('vc-hidden') || this.root.classList.contains('leaving')) return;
+      if (e.target?.closest?.('.vc-social')) return; // Enter on a focused link follows the link, not the menu
       if (this.panel) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Backspace') { e.preventDefault(); this._closePanel(); } return; }
       const btns = [...this.menu.querySelectorAll('button:not([disabled])')];
       if (!btns.length) return;

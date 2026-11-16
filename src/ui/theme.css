@@ -276,6 +276,11 @@
 .vc-menu button.sel::after { right: -.1em; }
 .vc-menu button[disabled] { opacity: .35; pointer-events: none; }
 .vc-title-foot { position: absolute; left: 0; right: 0; bottom: 2vh; text-align: center; font: 500 calc(var(--u) * 1.6)/1.4 var(--f-ui); color: rgba(255,255,255,.55); letter-spacing: .06em; }
+.vc-social { position: absolute; top: calc(var(--u) * 3); right: calc(var(--u) * 3.4 + env(safe-area-inset-right, 0px)); display: flex; gap: calc(var(--u) * 1.4); }
+.vc-social a { width: max(calc(var(--u) * 6), 40px); height: max(calc(var(--u) * 6), 40px); display: grid; place-items: center; border-radius: 50%; color: #e9dcff;
+  background: rgba(18,5,42,.55); border: 1px solid rgba(255,255,255,.28); transition: transform .15s, color .15s, border-color .15s, box-shadow .15s; -webkit-tap-highlight-color: transparent; }
+.vc-social a:hover, .vc-social a:focus-visible { color: #fff; border-color: var(--pink); transform: scale(1.08); box-shadow: 0 0 calc(var(--u) * 1.6) var(--pink); outline: none; }
+.vc-social svg { width: 50%; height: 50%; fill: currentColor; }
 .vc-title-panel { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); width: min(86vw, calc(var(--u) * 110)); max-height: 74vh; overflow: auto;
   background: rgba(10,4,26,.9); border: 1px solid rgba(255,63,164,.5); border-radius: calc(var(--u)*1.6); padding: calc(var(--u)*3) calc(var(--u)*4); box-shadow: 0 0 calc(var(--u)*5) rgba(255,63,164,.3);
   font: 500 calc(var(--u) * 2.2)/1.55 var(--f-ui); }
