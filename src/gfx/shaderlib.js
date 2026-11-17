@@ -13,14 +13,18 @@ float fbm3(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 3; i++) { s += 
 float fbm5(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
 `;
 
-// Antialiased box mask in cell space: p continuous coordinate (in cells), lo/hi in [0,1] of the cell
+// Antialiasing helpers (x continuous, never a fract(): its derivative jumps at the wrap)
+// aaPulse: share of the pixel footprint covered by the stripes [k, k + w) of period 1 along x, box-filtered — crisp up
+// close, their average where they get thinner than a pixel, so slats, louvres, mullions and grilles never alias into
+// moiré. aaBox: the window [lo, hi] of every unit cell in cell space p, filtered the same way along each axis.
 export const AA = /* glsl */`
-float aaBox(vec2 cellP, vec2 lo, vec2 hi) {
-  vec2 f = fract(cellP);
-  vec2 w = max(fwidth(cellP), vec2(1e-4)) * 0.75;
-  vec2 a = smoothstep(lo - w, lo + w, f) * (1.0 - smoothstep(hi - w, hi + w, f));
-  return a.x * a.y;
+float aaPulse(float x, float w) {
+  float f = max(fwidth(x), 1e-4);
+  vec2 e = vec2(x - 0.5 * f, x + 0.5 * f);
+  vec2 I = floor(e) * w + min(fract(e), w);
+  return (I.y - I.x) / f;
 }
+float aaBox(vec2 cellP, vec2 lo, vec2 hi) { return aaPulse(cellP.x - lo.x, max(hi.x - lo.x, 0.0)) * aaPulse(cellP.y - lo.y, max(hi.y - lo.y, 0.0)); }
 float aaStep(float edge, float x) { float w = max(fwidth(x), 1e-4) * 0.75; return smoothstep(edge - w, edge + w, x); }
 float aaBand(float x, float lo, float hi) { float w = max(fwidth(x), 1e-4) * 0.75; return smoothstep(lo - w, lo + w, x) * (1.0 - smoothstep(hi - w, hi + w, x)); }
 `;

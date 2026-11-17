@@ -92,7 +92,7 @@ const FACADE_REFLECTION_FRAG = /* glsl */`
           vec2 cell = vec2(vWall.x / cw, (vWall.y - fBase) / fh), cid = floor(cell);
           float nFloors = max(1.0, floor((fTop - fBase) / fh + 0.01));
           vec2 fw = fwidth(cell);
-          float win = mix(aaBox(fract(cell), lo, hi), (hi.x - lo.x) * (hi.y - lo.y), smoothstep(0.2, 0.6, max(fw.x, fw.y)));
+          float win = mix(aaBox(cell, lo, hi), (hi.x - lo.x) * (hi.y - lo.y), smoothstep(0.2, 0.6, max(fw.x, fw.y)));
           win *= step(0.0, cell.y) * step(cell.y, nFloors - 0.02);
           bool resi = fStyle > 1.5 && fStyle < 4.5;
           float litFrac = resi ? uResiLit : uOfficeLit;
@@ -273,7 +273,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
       else if (fStyle < 9.5) { colW = 7.0; wLo = vec2(0.3, 0.72); wHi = vec2(0.7, 0.9); }
       else if (fStyle < 10.5) { colW = 2.0; wLo = vec2(0.03, 0.05); wHi = vec2(0.97, 0.95); }
 
-      if (fStyle > 8.5 && fStyle < 9.5) albedo *= 0.88 + 0.12 * step(0.5, fract(vWall.x * 3.0)); // corrugated cladding
+      if (fStyle > 8.5 && fStyle < 9.5) albedo *= 0.88 + 0.12 * aaPulse(vWall.x * 3.0 + 0.5, 0.5); // corrugated cladding
 
       // ---- HDB end walls: blank, two accent pinstripes and the painted block number near the top
       if (hdb && fFlag > 4.5) {
@@ -368,7 +368,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           albedo = mix(albedo * 0.55, vec3(0.32), 0.35);
           fMetal = 0.6; fRough = 0.35;
           if (glassType > 0.72) {
-            float fin = (1.0 - aaStep(0.13, cf.x)) * (1.0 - far * 0.6);
+            float fin = aaPulse(cell.x, 0.13);
             albedo = mix(albedo, mix(vec3(0.62, 0.64, 0.66), wallCol * 1.3, 0.3), fin);
             fMetal = mix(fMetal, 0.85, fin); fRough = mix(fRough, 0.28, fin);
             win *= 1.0 - fin;
@@ -379,7 +379,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             // void deck back wall: tiled dado, lift doors, letterboxes
             albedo = mix(albedo * 0.9, vec3(0.8, 0.8, 0.76), aaBand(vWall.y, -1.0, 1.15) * 0.8);
             float lift = aaBand(cf.x, 0.38, 0.62) * (1.0 - aaStep(0.72, cf.y)) * step(0.6, hash12(vec2(cid.x * 3.1, fSeed)));
-            albedo = mix(albedo, vec3(0.55, 0.57, 0.6) * (0.9 + 0.1 * step(0.5, fract(cf.x * 2.0 * cw / (0.24 * cw) ))), lift);
+            albedo = mix(albedo, vec3(0.55, 0.57, 0.6) * (0.9 + 0.1 * aaPulse(cell.x / 0.12 + 0.5, 0.5)), lift);
             fMetal = mix(fMetal, 0.7, lift); fRough = mix(fRough, 0.3, lift);
           } else if (hdbCorr) {
             // common corridor: parapet wall with an accent coping, dark corridor behind, doors and gates
@@ -388,7 +388,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             albedo = mix(albedo, acc, aaBand(cf.y, 0.37, 0.42) * 0.9);
             vec3 back = wallCol * 0.42;
             float door = aaBand(cf.x, 0.1, 0.36) * aaBand(cf.y, 0.42, 0.9);
-            float gate = step(0.5, fract(cf.x * cw * 9.0)) * door;
+            float gate = aaPulse(vWall.x * 9.0 + 0.5, 0.5) * door;
             back = mix(back, vec3(0.28, 0.17, 0.1), door);
             back = mix(back, vec3(0.12), gate * 0.6);
             albedo = mix(albedo, back * (0.6 + 0.4 * smoothstep(0.97, 0.6, cf.y)), corr);
@@ -440,14 +440,14 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             albedo = mix(albedo, trim, corn * 0.85);
             albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.07, 0.11) * (1.0 - far);
             float vent = aaBand(cf.x, lo.x + 0.04, hi.x - 0.04) * aaBand(cf.y, hi.y + 0.03, hi.y + 0.1);
-            albedo = mix(albedo, albedo * (0.55 + 0.45 * step(0.5, fract(cf.x * cw * 12.0))), vent * (1.0 - far));
+            albedo = mix(albedo, albedo * (0.55 + 0.45 * aaPulse(vWall.x * 12.0 + 0.5, 0.5)), vent * (1.0 - far));
           }
           float cornice = (cell.y > nFloors - 0.18) ? 1.0 : 0.0;
           albedo = mix(albedo, trim, cornice * 0.8);
           albedo *= 1.0 - 0.35 * aaBand(cell.y, nFloors - 0.2, nFloors - 0.17);
           if (!ground) albedo *= 1.0 - 0.25 * aaBand(cf.y, hi.y, hi.y + 0.03);
         } else if (fStyle > 5.5 && fStyle < 6.5) {
-          if (ground) albedo *= 0.88 + 0.12 * step(0.12, fract(vWall.y * 1.6));
+          if (ground) albedo *= 0.88 + 0.12 * (1.0 - aaPulse(vWall.y * 1.6, 0.12));
           albedo *= 1.0 - 0.2 * aaBand(cf.y, 0.0, 0.04);
         } else if (fStyle > 6.5 && fStyle < 7.5) {
           albedo *= 1.0 - 0.15 * aaBand(cf.y, 0.0, 0.08);
@@ -481,7 +481,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           if (lobby) {
             // clear low-iron glazing in slim mullions every 1.6 m
             gAlb = vec3(0.015, 0.02, 0.022); gMetal = 0.1; gRough = 0.03; transmit = 1.0;
-            win *= 1.0 - (1.0 - aaBand(fract(vWall.x / 1.6), 0.03, 0.97)) * (1.0 - far);
+            win *= 1.0 - aaPulse(vWall.x / 1.6 + 0.03, 0.06);
           }
           // ---- interior (lit room, interior mapping when close)
           vec3 roomBase = mix(vec3(0.55, 0.5, 0.42), vec3(0.75, 0.75, 0.78), h);
@@ -499,6 +499,9 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           // lobbies are lit day and night: cool white for offices/hospitals, warm for hotels and condos
           if (lobby) { lampI = 0.42 + 0.18 * h; lampCol = fUse > 7.5 || fUse == 6.0 ? vec3(1.0, 0.8, 0.58) : vec3(0.92, 0.95, 1.0); roomBase = mix(vec3(0.74, 0.71, 0.66), vec3(0.5, 0.47, 0.44), h2); }
           // trading shops are lit day and night: fluorescent provision shops/kopitiams, warm goldsmiths and bakeries
+          // shophouse ground floors that aren't shops (homes, offices, hotels) and civic halls keep a lit front room day
+          // and night: unlit, their arched glazing in the shade read as a row of black holes
+          if (ground && ((shop && !shopUse) || (fStyle > 5.5 && fStyle < 6.5))) { lampI = 0.58 + 0.2 * h; lampCol = vec3(1.0, 0.82, 0.6); }
           if (shopG) { lampI = shopOpen ? (0.62 + 0.25 * h) * mix(1.0, 0.55, uNight) : 0.0; lampCol = shopFam == 4.0 || shopFam == 5.0 ? vec3(1.0, 0.8, 0.58) : mix(vec3(0.86, 0.95, 1.0), vec3(1.0, 0.9, 0.76), step(0.7, h2)); roomBase = mix(vec3(0.55, 0.38, 0.22), vec3(0.42, 0.45, 0.4), h2); }
           vec3 interior;
           if (camDist < uDetailDist && far < 0.5 && !(ground && hdb)) {
@@ -532,7 +535,8 @@ export function createFacadeMaterial({ reflection = false } = {}) {
               }
               else if (h > 0.6 && abs(bw.x - 0.5) < 0.18 && abs(bw.y - 0.55) < 0.1) c = resi ? vec3(0.2, 0.3, 0.5) : vec3(0.1);
             } else if (t == ty) {
-              if (d.y < 0.0) { c = resi ? vec3(0.32, 0.2, 0.12) : vec3(0.25, 0.25, 0.27); lm = 0.8; }
+              // floors: timber in homes, grey cement tiles in shops (dark timber read as a black hole seen from above)
+              if (d.y < 0.0) { c = shopG ? vec3(0.5, 0.48, 0.44) : resi ? vec3(0.32, 0.2, 0.12) : vec3(0.25, 0.25, 0.27); lm = shopG ? 1.0 : 0.8; }
               else { c = vec3(0.85); lm = 1.6;
                 float panel = aaBox(vec2(hp.x / 1.2, hp.z / 1.2), vec2(0.2), vec2(0.8));
                 if (!resi) lm += 1.5 * panel; else if (shopRecess) lm += 0.6 * panel; }
@@ -555,7 +559,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           float blind = 1.0 - h * (resi ? 0.9 : 0.35);  // offices: roller blinds only part-way down
           if (wy > blind && !shopG && !lobby) {
             vec3 bc = resi ? mix(vec3(0.7, 0.55, 0.4), vec3(0.85, 0.82, 0.75), h2) : vec3(0.42, 0.42, 0.4);
-            bc *= 0.85 + 0.15 * step(0.5, fract(cf.y * fh * 12.0));
+            bc *= 0.85 + 0.15 * aaPulse(fy0 * 12.0 + 0.5, 0.5);
             interior = bc * (lampCol * lampI * 0.35 + dayI * 1.5);
           }
           // TV flicker
@@ -564,7 +568,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           if (shop && !ground && h < 0.75) {
             // louvred timber shutters: closed, or folded back to the jambs
             vec3 sc = shutterCol(fract(fSeed * 7.0 + fAccent * 0.13));
-            sc *= 0.62 + 0.38 * step(0.42, fract(cf.y * fh * 9.0));
+            sc *= 0.62 + 0.38 * (1.0 - aaPulse(fy0 * 9.0, 0.42));
             sc *= 1.0 - 0.3 * aaBand(wx, 0.48, 0.52);
             float shut = h < 0.45 ? 1.0 : (1.0 - aaBand(wx, 0.22, 0.78));
             albedo = mix(albedo, sc, win * shut); fRough = mix(fRough, 0.6, win * shut);
@@ -574,9 +578,10 @@ export function createFacadeMaterial({ reflection = false } = {}) {
               fEmis += interior * win * (1.0 - shut);
             }
           } else if (shopG && !shopOpen) {
-            // roller shutter pulled down
-            vec3 rs = vec3(0.42, 0.43, 0.44) * (0.75 + 0.25 * step(0.5, fract(cf.y * fh * 14.0)));
-            albedo = mix(albedo, rs, win); fMetal = mix(fMetal, 0.5, win); fRough = mix(fRough, 0.45, win);
+            // roller shutter pulled down: weathered galvanised slats (half-metallic and fairly rough, or the shade of
+            // the five-foot-way mirrors the dark street into them and the arches read as empty holes)
+            vec3 rs = vec3(0.42, 0.43, 0.44) * (0.75 + 0.25 * aaPulse(fy0 * 14.0 + 0.5, 0.5));
+            albedo = mix(albedo, rs, win); fMetal = mix(fMetal, 0.25, win); fRough = mix(fRough, 0.58, win);
           } else if (ground && hdb) {
             // passage through the void deck: open dark space
             albedo = mix(albedo, vec3(0.05), win);
@@ -595,7 +600,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             // HDB: grey aluminium frames with a mullion, some with security grilles
             if (hdb && !ground) {
               float frame = (1.0 - aaBand(wx, 0.04, 0.96)) + aaBand(wx, 0.48, 0.52) + (1.0 - aaBand(wy, 0.05, 0.95));
-              float grille = step(0.7, h2) * step(0.5, fract(cf.x * cw * 6.0)) * 0.8;
+              float grille = step(0.7, h2) * aaPulse(vWall.x * 6.0 + 0.5, 0.5) * 0.8;
               albedo = mix(albedo, vec3(0.6, 0.62, 0.63), clamp(frame, 0.0, 1.0) * win * (1.0 - far));
               reveal = max(reveal, grille);
             }
