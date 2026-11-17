@@ -923,27 +923,41 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
     const { P, Y, hw } = info; const s = ch.struct;
     const maxY = Math.max(...Y);
     const thick = isDrive ? 1.1 : 0.5, parH = isDrive ? 0.95 : 1.1;
+    // mitred offsets at each vertex (as the road ribbon): the side faces, parapets and deck collider follow the ribbon
+    // round bends instead of leaving a wedge open on the outside of each one (wheels and lanes fell into them)
+    const n = P.length, MX = new Float64Array(n), MZ = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const j0 = Math.max(0, i - 1), j1 = Math.min(n - 1, i + 1);
+      let dx0 = P[i][0] - P[j0][0], dz0 = P[i][1] - P[j0][1], dx1 = P[j1][0] - P[i][0], dz1 = P[j1][1] - P[i][1];
+      const l0 = Math.hypot(dx0, dz0), l1 = Math.hypot(dx1, dz1);
+      if (l0 < 1e-6) { dx0 = dx1; dz0 = dz1; } else if (l1 < 1e-6) { dx1 = dx0; dz1 = dz0; }
+      const a0 = Math.hypot(dx0, dz0) || 1, a1 = Math.hypot(dx1, dz1) || 1;
+      let tx = dx0 / a0 + dx1 / a1, tz = dz0 / a0 + dz1 / a1; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+      const m = 1 / Math.max(0.35, -tz * (-dz1 / a1) + tx * (dx1 / a1));
+      MX[i] = -tz * m; MZ[i] = tx * m;
+    }
     let lastPillar = -1e9, S = 0;
-    for (let i = 0; i < P.length - 1; i++) {
+    for (let i = 0; i < n - 1; i++) {
       const [ax, az] = P[i], [bx, bz] = P[i + 1]; const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz); if (l < 0.05) continue;
       const rx = -dz / l, rz = dx / l; const ya = Y[i] + 0.05, yb = Y[i + 1] + 0.05;
       const bottomA = Math.max(maxY > 2.5 ? ya - thick : -1.6, -1.6), bottomB = Math.max(maxY > 2.5 ? yb - thick : -1.6, -1.6);
+      const A = d => [ax + MX[i] * d, az + MZ[i] * d], B = d => [bx + MX[i + 1] * d, bz + MZ[i + 1] * d];
       for (const side of [-1, 1]) {
-        const ox = rx * hw * side, oz = rz * hw * side;
+        const [aox, aoz] = A(hw * side), [box, boz] = B(hw * side), [aix, aiz] = A((hw - 0.3) * side), [bix, biz] = B((hw - 0.3) * side);
         // outer side face
-        quadGeo(s, [ax + ox, bottomA, az + oz], [bx + ox, bottomB, bz + oz], [bx + ox, yb + parH, bz + oz], [ax + ox, ya + parH, az + oz], [rx * side, 0, rz * side], concrete);
+        quadGeo(s, [aox, bottomA, aoz], [box, bottomB, boz], [box, yb + parH, boz], [aox, ya + parH, aoz], [rx * side, 0, rz * side], concrete);
         // inner parapet face
-        const ix = rx * (hw - 0.3) * side, iz = rz * (hw - 0.3) * side;
-        quadGeo(s, [bx + ix, yb, bz + iz], [ax + ix, ya, az + iz], [ax + ix, ya + parH, az + iz], [bx + ix, yb + parH, bz + iz], [-rx * side, 0, -rz * side], concrete);
+        quadGeo(s, [bix, yb, biz], [aix, ya, aiz], [aix, ya + parH, aiz], [bix, yb + parH, biz], [-rx * side, 0, -rz * side], concrete);
         // parapet top
-        quadGeo(s, [ax + ix, ya + parH, az + iz], [bx + ix, yb + parH, bz + iz], [bx + ox, yb + parH, bz + oz], [ax + ox, ya + parH, az + oz], [0, 1, 0], concrete);
+        quadGeo(s, [aix, ya + parH, aiz], [bix, yb + parH, biz], [box, yb + parH, boz], [aox, ya + parH, aoz], [0, 1, 0], concrete);
         // physics: parapet walls
-        physQuad(ch, [ax + ix, ya, az + iz], [bx + ix, yb, bz + iz], [bx + ix, yb + parH + 0.4, bz + iz], [ax + ix, ya + parH + 0.4, az + iz]);
+        physQuad(ch, [aix, ya, aiz], [bix, yb, biz], [bix, yb + parH + 0.4, biz], [aix, ya + parH + 0.4, aiz]);
       }
+      const [aLx, aLz] = A(-hw), [aRx, aRz] = A(hw), [bLx, bLz] = B(-hw), [bRx, bRz] = B(hw);
       // underside
-      if (maxY > 2.5) quadGeo(s, [ax + rx * hw, ya - thick, az + rz * hw], [bx + rx * hw, yb - thick, bz + rz * hw], [bx - rx * hw, yb - thick, bz - rz * hw], [ax - rx * hw, ya - thick, az - rz * hw], [0, -1, 0], concreteDark);
+      if (maxY > 2.5) quadGeo(s, [aRx, ya - thick, aRz], [bRx, yb - thick, bRz], [bLx, yb - thick, bLz], [aLx, ya - thick, aLz], [0, -1, 0], concreteDark);
       // physics: deck
-      physQuad(ch, [ax - rx * hw, ya, az - rz * hw], [ax + rx * hw, ya, az + rz * hw], [bx + rx * hw, yb, bz + rz * hw], [bx - rx * hw, yb, bz - rz * hw]);
+      physQuad(ch, [aLx, ya, aLz], [aRx, ya, aRz], [bRx, yb, bRz], [bLx, yb, bLz]);
       // pillars
       for (let d = 0; d < l; d += 2) {
         const sAt = S + d; const yy = ya + (yb - ya) * (d / l);
