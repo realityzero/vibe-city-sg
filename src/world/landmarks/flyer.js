@@ -74,6 +74,7 @@ export function buildFlyer(city, quality) {
     W.add(rimMat, strut(new THREE.Vector3(Math.cos(a) * RADIUS, Math.sin(a) * RADIUS, 0), new THREE.Vector3(Math.cos(a) * (RADIUS + 3.2), Math.sin(a) * (RADIUS + 3.2), 0), 0.5, 6));
   }
   const ledMat = nightGlowMaterial(0x9fd8ff, 5.0, { base: 0xdfe3e6, rough: 0.35, metal: 0.6 });
+  ledMat.userData.ownDraw = true; // its hue cycles at night (update below)
   for (const z of [-3.5, 3.5]) { const t = new THREE.TorusGeometry(RADIUS + 0.9, 0.22, 4, 200); t.translate(0, 0, z); W.add(ledMat, t); }
   const wMeshes = W.build({ name: 'flyer-wheel', castShadow: true });
   wMeshes.forEach(m => { m.matrixAutoUpdate = true; wheel.add(m); });
@@ -85,7 +86,9 @@ export function buildFlyer(city, quality) {
   const capFrame = new THREE.CylinderGeometry(2.15, 2.15, 0.5, 14, 1); capFrame.rotateX(Math.PI / 2);
   const capsInst = new THREE.InstancedMesh(capGeo, capMat, CAPS);
   const frameInst = new THREE.InstancedMesh(capFrame, M.steel, CAPS * 2);
-  capsInst.frustumCulled = frameInst.frustumCulled = false;
+  // they orbit the hub: bound the whole circle once rather than recomputing it from the instances every frame
+  capsInst.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, HUB_Y, 0), RADIUS + 8);
+  frameInst.boundingSphere = capsInst.boundingSphere.clone();
   group.add(capsInst, frameInst);
 
   const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);

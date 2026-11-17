@@ -86,8 +86,69 @@ export function pca(r) {
   return { c: [cx + ux * (mn + mx) / 2 - uz * (mn2 + mx2) / 2, cz + uz * (mn + mx) / 2 + ux * (mn2 + mx2) / 2], dir: [ux, uz], len: mx - mn, wid: mx2 - mn2 };
 }
 
+// ---------------------------------------------------------------- palette: plain materials, one draw
+// A landmark is built from a dozen or more plain materials (stone, steel, glass, roof tiles, night-lit trims) that
+// differ only in their constants, and a draw per material was most of its draw calls (and twice over in the water
+// reflection). Bucket.build() folds every part whose material is plain into one mesh per side: each vertex carries
+// the index of its material's record in a small float texture (colour, roughness, metalness, emission and how that
+// follows the night), fetched once per vertex into flat varyings. Same shading, same shadows, one draw. Materials with
+// maps, transparency or their own shader keep their own mesh, as does one the landmark animates (`userData.ownDraw`).
+const PAL_MAX = 256, PAL_TEXELS = 3;
+const palData = new Float32Array(PAL_MAX * PAL_TEXELS * 4);
+const palTex = new THREE.DataTexture(palData, PAL_TEXELS, PAL_MAX, THREE.RGBAFormat, THREE.FloatType);
+const palIndex = new Map(); // material -> record
+const PLAIN_EMISSION = { day: 1, y0: 0, y1: 1, floor: 1 }; // an ordinary emissive term: constant, day and night
+const MAPS = ['map', 'emissiveMap', 'normalMap', 'bumpMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'lightMap', 'alphaMap', 'displacementMap', 'envMap'];
+
+/** how a material's emission follows the night when it is folded into the palette, or null if it can't be */
+function paletteEmission(mat) {
+  if (!mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial || mat.userData.ownDraw) return null;
+  if (mat.transparent || mat.opacity !== 1 || mat.alphaTest > 0 || mat.flatShading || mat.wireframe || mat.envMapIntensity !== 1) return null;
+  if (!mat.depthWrite || !mat.depthTest || mat.polygonOffset || mat.blending !== THREE.NormalBlending || MAPS.some(k => mat[k])) return null;
+  if (mat.onBeforeCompile !== THREE.Material.prototype.onBeforeCompile) return mat.userData.emission || null; // own shader
+  return PLAIN_EMISSION;
+}
+function paletteIndex(mat, emission) {
+  let i = palIndex.get(mat);
+  if (i !== undefined) return i;
+  i = palIndex.size;
+  if (i >= PAL_MAX) throw new Error('landmark palette full');
+  palIndex.set(mat, i);
+  const e = mat.emissive.clone().multiplyScalar(mat.emissiveIntensity), o = i * PAL_TEXELS * 4;
+  palData.set([mat.color.r, mat.color.g, mat.color.b, mat.roughness, e.r, e.g, e.b, mat.metalness, emission.day, emission.y0, emission.y1, emission.floor], o);
+  palTex.needsUpdate = true;
+  return i;
+}
+const palMats = new Map();
+/** the shared palette material for one side / vertex-colour combination (each is one program) */
+function paletteMaterial(side, vertexColors) {
+  const key = side + (vertexColors ? 'c' : '');
+  if (palMats.has(key)) return palMats.get(key);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 1, side, vertexColors });
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uNight = U.night;
+    sh.uniforms.uLmPal = { value: palTex };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec4 lmStyle;\nuniform highp sampler2D uLmPal;\nflat varying vec4 vLm0, vLm1, vLm2;\nvarying float vLmY;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{ int s = int(lmStyle.x + 0.5); vLm0 = texelFetch(uLmPal, ivec2(0, s), 0); vLm1 = texelFetch(uLmPal, ivec2(1, s), 0); vLm2 = texelFetch(uLmPal, ivec2(2, s), 0); }
+vLmY = (modelMatrix * vec4(transformed, 1.0)).y;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uNight;\nflat varying vec4 vLm0, vLm1, vLm2;\nvarying float vLmY;')
+      .replace('#include <color_fragment>', 'diffuseColor.rgb *= vLm0.rgb;\n#include <color_fragment>')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vLm0.a;')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vLm1.a;')
+      // record: day level of the emission, then the uplight falloff (full at y0, the floor share by y1)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+{ float k = 1.0 - smoothstep(vLm2.y, vLm2.z, vLmY); totalEmissiveRadiance = vLm1.rgb * mix(vLm2.x, 1.0, uNight) * (vLm2.w + (1.0 - vLm2.w) * k * k); }`);
+  };
+  mat.customProgramCacheKey = () => 'lmpal1';
+  palMats.set(key, mat);
+  return mat;
+}
+
 // ---------------------------------------------------------------- geometry buckets
-/** Collects geometries per material and merges them into a single mesh per material. */
+/** Collects geometries per material; build() merges them into one mesh per material, plain materials into the palette. */
 export class Bucket {
   constructor() { this.parts = new Map(); }
   add(mat, geo, matrix) {
@@ -100,10 +161,40 @@ export class Bucket {
     this.parts.get(mat).push(g);
     return this;
   }
-  /** Returns array of meshes (one per material). */
+  /** Adds every part of another bucket (built in its own local frame), transformed by `matrix`. */
+  addBucket(other, matrix) {
+    for (const [mat, list] of other.parts) for (const g of list) this.add(mat, g, matrix);
+    return this;
+  }
+  /** Returns array of meshes: one per palette side, one per remaining material. */
   build({ castShadow = true, receiveShadow = true, name = '' } = {}) {
-    const meshes = [];
+    const meshes = [], pal = new Map();
+    const mesh = (geo, mat) => {
+      geo.computeBoundingSphere(); geo.computeBoundingBox();
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = castShadow; m.receiveShadow = receiveShadow; m.name = name;
+      m.matrixAutoUpdate = false; m.updateMatrix();
+      meshes.push(m);
+    };
+    // a side with any vertex-coloured part carries colours for all its parts (white where the material had none)
+    const coloured = new Set();
+    for (const mat of this.parts.keys()) if (mat.vertexColors && paletteEmission(mat)) coloured.add(mat.side);
     for (const [mat, list] of this.parts) {
+      const emission = paletteEmission(mat);
+      if (emission) {
+        if (!pal.has(mat.side)) pal.set(mat.side, []);
+        const style = paletteIndex(mat, emission);
+        for (const g of list) {
+          // a palette vertex needs only its position, normal, style (and colour)
+          for (const a of ['uv', 'facade', ...(mat.vertexColors ? [] : ['color'])]) g.deleteAttribute(a);
+          if (coloured.has(mat.side) && !g.attributes.color) g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(1), 3));
+          // (padded to 4 bytes: Metal wants 4-byte vertex strides, ANGLE would keep a converted copy otherwise)
+          const st = new Uint8Array(g.attributes.position.count * 4); for (let i = 0; i < st.length; i += 4) st[i] = style;
+          g.setAttribute('lmStyle', new THREE.BufferAttribute(st, 4));
+          pal.get(mat.side).push(g);
+        }
+        continue;
+      }
       // unify attribute sets
       const need = { color: list.some(g => g.attributes.color), facade: list.some(g => g.attributes.facade) };
       for (const g of list) {
@@ -111,13 +202,9 @@ export class Bucket {
         if (need.color && !g.attributes.color) { const c = new Float32Array(n * 3).fill(1); g.setAttribute('color', new THREE.Float32BufferAttribute(c, 3)); }
         if (need.facade && !g.attributes.facade) g.setAttribute('facade', new THREE.Float32BufferAttribute(new Float32Array(n * 2), 2));
       }
-      const merged = mergeGeometries(list, false);
-      merged.computeBoundingSphere(); merged.computeBoundingBox();
-      const m = new THREE.Mesh(merged, mat);
-      m.castShadow = castShadow; m.receiveShadow = receiveShadow; m.name = name;
-      m.matrixAutoUpdate = false; m.updateMatrix();
-      meshes.push(m);
+      mesh(mergeGeometries(list, false), mat);
     }
+    for (const [side, list] of pal) mesh(mergeGeometries(list, false), paletteMaterial(side, coloured.has(side)));
     return meshes;
   }
 }
@@ -464,6 +551,7 @@ export function nightGlowMaterial(color, intensity = 3, { day = 0, base = 0x2222
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance *= mix(${day.toFixed(3)}, 1.0, uNight);`);
   };
   mat.customProgramCacheKey = () => 'lmglow' + day.toFixed(3);
+  mat.userData.emission = { day, y0: 0, y1: 1, floor: 1 }; // (what the palette needs to reproduce it)
   return mat;
 }
 
@@ -483,6 +571,7 @@ export function uplitMaterial(color, intensity = 1, { y0 = 0, y1 = 40, floor = 0
   { float k = 1.0 - smoothstep(uUp.x, uUp.y, vUpY); totalEmissiveRadiance *= uNight * (uUp.z + (1.0 - uUp.z) * k * k); }`);
   };
   mat.customProgramCacheKey = () => 'lmuplit';
+  mat.userData.emission = { day: 0, y0, y1, floor };
   return mat;
 }
 

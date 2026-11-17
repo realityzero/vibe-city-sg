@@ -24,6 +24,55 @@ function skyParkHalfWidth(u) {
   return body;
 }
 
+const LASER_WIDTH = 0.45, LASER_MIN_PX = 1.4;
+/** n beams of length `len` (world space) drawn as one mesh: ribbons facing the camera, origin[i] / dir[i] set per frame */
+class Lasers {
+  constructor(n, len) {
+    this.origin = Array.from({ length: n }, () => new THREE.Vector3());
+    this.dir = Array.from({ length: n }, () => new THREE.Vector3(0, 1, 0));
+    const SEG = 8, beam = [], idx = [];
+    for (let i = 0; i < n; i++) for (let k = 0; k <= SEG; k++) {
+      const v = beam.length / 3;
+      beam.push(i, k / SEG, -1, i, k / SEG, 1);
+      if (k < SEG) idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(beam.length), 3)); // (placed in the shader)
+    g.setAttribute('beam', new THREE.Float32BufferAttribute(beam, 3));
+    g.setIndex(idx);
+    this.uniforms = {
+      uOrigin: { value: this.origin }, uDir: { value: this.dir }, uLen: { value: len }, uColor: { value: new THREE.Color(0x33ff88) },
+      uOpacity: { value: 0 }, uPxH: { value: 1000 },
+    };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: /* glsl */`
+        attribute vec3 beam; // beam index, distance along it (0..1), side of the ribbon (-1 / 1)
+        uniform vec3 uOrigin[${n}], uDir[${n}]; uniform float uLen, uPxH;
+        varying float vFade, vAcross;
+        void main() {
+          int i = int(beam.x + 0.5);
+          vec4 mv = viewMatrix * vec4(uOrigin[i] + uDir[i] * (beam.y * uLen), 1.0);
+          vec3 across = normalize(cross((viewMatrix * vec4(uDir[i], 0.0)).xyz, mv.xyz));
+          // at least LASER_MIN_PX wide: metres per pixel at this depth from the projection and the target height
+          float w = max(${LASER_WIDTH.toFixed(2)}, ${LASER_MIN_PX.toFixed(2)} * 2.0 * -mv.z / (projectionMatrix[1][1] * uPxH));
+          mv.xyz += across * beam.z * w * 0.5;
+          vFade = pow(1.0 - beam.y, 1.6); vAcross = beam.z;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor; uniform float uOpacity;
+        varying float vFade, vAcross;
+        void main() { gl_FragColor = vec4(uColor * vFade * uOpacity * (1.0 - vAcross * vAcross), 1.0); }`,
+    });
+    this.mesh = new THREE.Mesh(g, mat);
+    this.mesh.name = 'mbs-lasers'; this.mesh.frustumCulled = false; this.mesh.visible = false;
+    // the render target being drawn (main or a post pass target) sets the pixel size
+    const size = new THREE.Vector2();
+    this.mesh.onBeforeRender = r => { const rt = r.getRenderTarget(); this.uniforms.uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
+  }
+}
+
 export function buildMBS(city, quality) {
   const M = materials();
   // hotel towers at night: mostly dark glass with scattered warm rooms (many curtained), no glowing spandrels
@@ -256,24 +305,19 @@ export function buildMBS(city, quality) {
   for (const m of meshes) group.add(m);
 
   // ---- Spectra light & water show: thin additive beams from the SkyPark fanning out over the bay toward the Event
-  // Plaza waterfront (shallow angles, sweeping), fading along their length like light scattered by humid air
-  const laserMat = new THREE.MeshBasicMaterial({ color: 0x33ff88, vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-  const beams = new THREE.Group(); beams.name = 'mbs-lasers';
-  const beamGeo = new THREE.CylinderGeometry(0.22, 0.22, 900, 4, 8, true); beamGeo.translate(0, 450, 0);
-  { const P = beamGeo.attributes.position, c = new Float32Array(P.count * 3);
-    for (let i = 0; i < P.count; i++) { const f = Math.pow(1 - P.getY(i) / 900, 1.6); c[i * 3] = c[i * 3 + 1] = c[i * 3 + 2] = f; }
-    beamGeo.setAttribute('color', new THREE.BufferAttribute(c, 3)); }
+  // Plaza waterfront (shallow angles, sweeping), fading along their length like light scattered by humid air.
+  // All beams are one mesh of camera-facing ribbons: a 0.45 m beam is a fraction of a pixel across the bay on a phone
+  // (it broke up into dashes), so each ribbon is widened to at least LASER_MIN_PX on screen.
   const spectra = (city.pois || []).find(p => p.n === 'Spectra') || { x: 994.4, z: 285.8 };
-  const lasers = [];
+  const lasers = new Lasers(8, 900);
+  const aims = [];
   for (let i = 0; i < 8; i++) {
-    const m = new THREE.Mesh(beamGeo, laserMat);
-    const u = lerp(-150, 90, i / 7);
-    const p = new THREE.Vector3(u, DECK + 1, -12).applyMatrix4(F);
-    m.position.copy(p); m.frustumCulled = false;
+    const p = new THREE.Vector3(lerp(-150, 90, i / 7), DECK + 1, -12).applyMatrix4(F);
+    lasers.origin[i].copy(p);
     // home azimuth: toward the Event Plaza, spread a little per beam
-    const aim = Math.atan2(spectra.x - p.x, spectra.z - p.z) + (i - 3.5) * 0.07;
-    beams.add(m); lasers.push({ m, phase: i * 0.7, aim });
+    aims.push(Math.atan2(spectra.x - p.x, spectra.z - p.z) + (i - 3.5) * 0.07);
   }
+  const beams = lasers.mesh;
   group.add(beams);
 
   // colliders: legs as boxes (curved leg approximated by stacked boxes), crown/skypark
@@ -298,24 +342,21 @@ export function buildMBS(city, quality) {
     { id: 'skypark', name: 'Sands SkyPark', x: sky.x, y: sky.y, z: sky.z },
   ];
 
-  const tmpC = new THREE.Color();
-  const dir = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
   function update(dt, env) {
     const t = U.time.value;
     // Spectra light & water show at 20:00 and 21:00 (env.forceShow for testing)
     const h = env.time ?? 12;
     const show = (h >= 20 && h < 20.25) || (h >= 21 && h < 21.25) || env.forceShow;
-    const target = show ? 0.5 : 0;
-    laserMat.opacity += (target - laserMat.opacity) * Math.min(1, dt * 2);
-    beams.visible = laserMat.opacity > 0.01;
+    const u = lasers.uniforms;
+    u.uOpacity.value += ((show ? 0.5 : 0) - u.uOpacity.value) * Math.min(1, dt * 2);
+    beams.visible = u.uOpacity.value > 0.01;
     if (beams.visible) {
-      tmpC.setHSL((t * 0.05) % 1, 1, 0.55); laserMat.color.copy(tmpC);
-      for (const L of lasers) {
-        const az = L.aim + Math.sin(t * 0.45 + L.phase) * 0.55;
+      u.uColor.value.setHSL((t * 0.05) % 1, 1, 0.55);
+      for (let i = 0; i < aims.length; i++) {
+        const phase = i * 0.7, az = aims[i] + Math.sin(t * 0.45 + phase) * 0.55;
         // from slightly down onto the water to a few degrees above the horizon
-        const tilt = -0.2 + 0.26 * (0.5 + 0.5 * Math.sin(t * 0.31 + L.phase * 1.7));
-        dir.set(Math.sin(az) * Math.cos(tilt), Math.sin(tilt), Math.cos(az) * Math.cos(tilt));
-        L.m.quaternion.setFromUnitVectors(up, dir);
+        const tilt = -0.2 + 0.26 * (0.5 + 0.5 * Math.sin(t * 0.31 + phase * 1.7));
+        lasers.dir[i].set(Math.sin(az) * Math.cos(tilt), Math.sin(tilt), Math.cos(az) * Math.cos(tilt));
       }
     }
   }
