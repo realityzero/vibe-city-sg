@@ -6,9 +6,8 @@ import * as THREE from 'three';
 import { PathDriver } from '../entities/aiDriver.js';
 
 const START = { x: 603, z: -238 }; // Esplanade Drive bridge, southbound kerb lane
-// sunset: the sky still glows and the city is lighting up. Held there until Ken (mission cleanup unfreezes it): a few
-// game minutes later the sun stops casting shadows, which swaps every lit program for its shadowless twin (~40
-// compiles) — mid-drive, in the player's first minute
+// sunset: the sky still glows and the city is lighting up. Held there until Ken (mission cleanup unfreezes it) so the
+// opening keeps its light while the player takes the wheel
 const TIME = 19.03;
 const SHOT = 10.5;                  // s until the hand-over
 const SPEED = 17;                   // m/s (~60 km/h)

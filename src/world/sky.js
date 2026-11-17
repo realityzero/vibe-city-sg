@@ -322,7 +322,13 @@ export class SkySystem {
     HF.shadowCenter.value.copy(F); HF.shadowR.value = r; // the height field takes over the sun shadow beyond this box
     this.dir.position.set(F.x + L.x * 700, F.y + L.y * 700, F.z + L.z * 700);
     this.dir.target.updateMatrixWorld();
-    this.dir.castShadow = this.dir.intensity > 0.05;
+    // The sun never stops casting (castShadow is part of every lit program's key: switching it at dusk recompiled ~40
+    // programs on the spot); its shadows fade out with it and, once it is down, the shadow map is no longer rendered.
+    const shadowI = THREE.MathUtils.smoothstep(this.dir.intensity, 0.03, 0.12);
+    this.dir.shadow.intensity = shadowI;
+    this.dir.shadow.autoUpdate = shadowI > 0;
+    if (shadowI > 0 && !this._shadowLive) this.dir.shadow.needsUpdate = true; // first frame after sunrise
+    this._shadowLive = shadowI > 0;
 
     // hemisphere / ambient
     const day = 1 - night;
