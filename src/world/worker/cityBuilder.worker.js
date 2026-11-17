@@ -171,6 +171,33 @@ function recessRing(r, D) {
   const A0 = area2(r), A1 = area2(out);
   return A1 > 0.35 * A0 ? out : null;
 }
+// A curved or finely faceted wall (edges turning by under 25°, same facade flag) is one run for the facade shader: the
+// window grid, trims and signs run on round the facets — u counts from the run's start, wallLen is the run's length —
+// instead of restarting on every facet with a seam and columns of another width. Per edge: {u0, len (of its run)}.
+const RUN_COS = Math.cos(25 * Math.PI / 180);
+function wallRuns(ring, flags) {
+  const n = ring.length, dx = new Float64Array(n), dz = new Float64Array(n), len = new Float64Array(n), u0 = new Float64Array(n), runLen = new Float64Array(n);
+  for (let i = 0; i < n; i++) { const p = ring[i], q = ring[(i + 1) % n], l = Math.hypot(q[0] - p[0], q[1] - p[1]); len[i] = l; if (l > 0.05) { dx[i] = (q[0] - p[0]) / l; dz[i] = (q[1] - p[1]) / l; } }
+  const flag = i => (flags ? flags[i] : 0);
+  // a new run starts at edge i when the wall turns a corner or changes its facade flag (degenerate edges carry on)
+  const starts = i => {
+    if (len[i] <= 0.05) return false;
+    let j = (i - 1 + n) % n; while (j !== i && len[j] <= 0.05) j = (j - 1 + n) % n;
+    return j === i || flag(j) !== flag(i) || dx[i] * dx[j] + dz[i] * dz[j] < RUN_COS;
+  };
+  let s0 = 0; while (s0 < n && !starts(s0)) s0++;
+  if (s0 === n) s0 = 0; // a round building: one run all the way round
+  const runs = [], id = new Int32Array(n);
+  let acc = 0;
+  for (let k = 0; k < n; k++) {
+    const i = (s0 + k) % n;
+    if (k > 0 && starts(i)) { runs.push(acc); acc = 0; }
+    u0[i] = acc; id[i] = runs.length; acc += len[i];
+  }
+  runs.push(acc);
+  for (let i = 0; i < n; i++) runLen[i] = runs[id[i]];
+  return { u0, len: runLen };
+}
 const c3 = hex => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
 const srgbToLin = c => c.map(v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -456,18 +483,19 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
     const OT = b.noPhys ? 'o.' : '';
     const addWalls = (ring, yA, yB, f1x, colour, inward = false, flags = null, tag = 'w.main') => {
       TAG = OT + tag;
+      const run = wallRuns(ring, flags);
       for (let i = 0; i < ring.length; i++) {
         const p = ring[i], q = ring[(i + 1) % ring.length];
         const ex = q[0] - p[0], ez = q[1] - p[1]; const len = Math.hypot(ex, ez); if (len < 0.05) continue;
         let nx = ez / len, nz = -ex / len;
         if (inward) { nx = -nx; nz = -nz; }
-        const f2 = [len, wallTop, blockNo, accent + 16 * (flags ? flags[i] : 0)];
-        const n = [nx, 0, nz];
+        const f2 = [run.len[i], wallTop, blockNo, accent + 16 * (flags ? flags[i] : 0)];
+        const n = [nx, 0, nz], u0 = run.u0[i];
         const W = ch.walls;
-        const a = W.wv(p[0], yA, p[1], n, colour, 0, yA, f1x, f2);
-        const bb = W.wv(q[0], yA, q[1], n, colour, len, yA, f1x, f2);
-        const c = W.wv(q[0], yB, q[1], n, colour, len, yB, f1x, f2);
-        const d = W.wv(p[0], yB, p[1], n, colour, 0, yB, f1x, f2);
+        const a = W.wv(p[0], yA, p[1], n, colour, u0, yA, f1x, f2);
+        const bb = W.wv(q[0], yA, q[1], n, colour, u0 + len, yA, f1x, f2);
+        const c = W.wv(q[0], yB, q[1], n, colour, u0 + len, yB, f1x, f2);
+        const d = W.wv(p[0], yB, p[1], n, colour, u0, yB, f1x, f2);
         if (!inward) { ch.walls.tri(a, c, bb); ch.walls.tri(a, d, c); }
         else { ch.walls.tri(a, bb, c); ch.walls.tri(a, c, d); }
         wallTris += 2;
@@ -867,19 +895,25 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       }
     }
   }
-  // junction discs
+  // junction discs (a junction up on a deck — an interchange on a flyover — gets its disc, and a collider, on the deck,
+  // kept inside the parapets)
   TAG = 'roads';
   const juncDone = new Set();
   for (const r of roads) {
-    if (r.c >= 8 || r.b) continue;
+    if (r.c >= 8) continue;
     const n = r.p.length / 2;
     for (let i = 0; i < n; i++) {
       const x = r.p[i * 2], z = r.p[i * 2 + 1]; const k = kp(x, z);
       if (!isJunction(k) || juncDone.has(k)) continue; juncDone.add(k);
-      const rad = (halfW.get(k) || 3) * 1.05; const ch = chunk(chunkKey(x, z)); const g = ch.roads;
-      const SEG = 16; const c0 = g.dv(x, 0.048, z, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99);
-      for (let s = 0; s < SEG; s++) { const a = s / SEG * Math.PI * 2; g.dv(x + Math.cos(a) * rad, 0.048, z + Math.sin(a) * rad, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99); }
+      const y = r.y ? r.y[i] : 0, up = y > 0.3;
+      const rad = (halfW.get(k) || 3) * (up ? 0.92 : 1.05); const ch = chunk(chunkKey(x, z)); const g = ch.roads;
+      const SEG = 16; const c0 = g.dv(x, y + 0.048, z, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99);
+      for (let s = 0; s < SEG; s++) { const a = s / SEG * Math.PI * 2; g.dv(x + Math.cos(a) * rad, y + 0.048, z + Math.sin(a) * rad, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99); }
       for (let s = 0; s < SEG; s++) g.tri(c0, c0 + 1 + ((s + 1) % SEG), c0 + 1 + s);
+      if (up) for (let s = 0; s < SEG; s++) {
+        const a0 = s / SEG * Math.PI * 2, a1 = (s + 1) / SEG * Math.PI * 2;
+        physTri(ch, [x, y + 0.05, z], [x + Math.cos(a1) * rad, y + 0.05, z + Math.sin(a1) * rad], [x + Math.cos(a0) * rad, y + 0.05, z + Math.sin(a0) * rad]);
+      }
     }
   }
   // bridge structure: deck sides, parapets, pillars + physics decks
