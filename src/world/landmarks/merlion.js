@@ -165,11 +165,11 @@ function waterJets(jets) {
   g.boundingSphere = new THREE.Sphere().setFromPoints(arcs); g.boundingSphere.radius += 3;
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { uTime: U.time, uNight: U.night },
+    uniforms: { uTime: U.time, uNight: U.night, uPxH: { value: 1000 } },
     vertexShader: /* glsl */`
       #include <common>
       #include <logdepthbuf_pars_vertex>
-      attribute vec4 seed, launch, vel; attribute vec2 drop; uniform float uTime;
+      attribute vec4 seed, launch, vel; attribute vec2 drop; uniform float uTime, uPxH;
       varying float vA;
       void main() {
         float uLand = vel.w, uWater = drop.y;
@@ -186,7 +186,8 @@ function waterJets(jets) {
         }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = launch.w * (1.0 + t * 0.8) * 300.0 / -mv.z;
+        // droplet clusters of launch.w metres, never under 1.5 px: the arc must read across the bay on a phone
+        gl_PointSize = max(1.5, launch.w * (1.0 + t * 0.8) * projectionMatrix[1][1] * 0.5 * uPxH / -mv.z);
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */`
@@ -197,12 +198,14 @@ function waterJets(jets) {
         vec2 c = gl_PointCoord - 0.5; float d = dot(c, c);
         if (d > 0.25) discard;
         float a = (1.0 - d * 4.0) * 0.55 * vA;
-        // unlit spray: at night it only catches the floodlights (dimmer, slightly warm), not daylight
-        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.36, 0.38, 0.4), uNight);
+        // unlit spray: at night it catches the floodlights on the deck (warm white)
+        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.85, 0.78, 0.66), uNight);
         gl_FragColor = vec4(col, a);
       }`,
   });
   const pts = new THREE.Points(g, mat);
+  const size = new THREE.Vector2();
+  pts.onBeforeRender = r => { const rt = r.getRenderTarget(); mat.uniforms.uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
   const tubeMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: { uTime: U.time, uNight: U.night },
@@ -214,7 +217,7 @@ function waterJets(jets) {
         #include <logdepthbuf_fragment>
         float n = h(floor(vec2(vUv.x * 6.0, vUv.y * 40.0 - uTime * 30.0)));
         float a = (0.35 + 0.35 * n) * (1.0 - vUv.y * 0.35);
-        vec3 col = mix(vec3(0.95,0.97,1.0), vec3(0.4,0.42,0.44), uNight);
+        vec3 col = mix(vec3(0.95,0.97,1.0), vec3(0.88,0.8,0.68), uNight);
         gl_FragColor = vec4(col, a); }`,
   });
   const stream = new THREE.Mesh(mergeGeometries(tubes, false), tubeMat);
@@ -269,9 +272,9 @@ function plazaGeometry(isWater) {
 }
 
 export function buildMerlion(city, quality, renderer, env = {}) {
-  // floodlit warm-white from the deck at night (strongest on the fish body, softer up on the head)
-  const body = uplitMaterial(0xfff0dc, 0.12, { y0: 0, y1: 11, floor: 0.3, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
-  const stone = uplitMaterial(0xfff0dc, 0.07, { y0: 0, y1: 4, floor: 0.2, base: 0xe6e1d6, rough: 0.7 });
+  // floodlit warm-white from the deck at night: brightest at the foot, the whole statue still lit up to the mane
+  const body = uplitMaterial(0xffe6c4, 0.3, { y0: 0, y1: 15, floor: 0.4, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
+  const stone = uplitMaterial(0xffe6c4, 0.22, { y0: 0, y1: 15, floor: 0.4, base: 0xe6e1d6, rough: 0.7 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2c2a27, roughness: 0.9 });
   const plinth = new THREE.MeshStandardMaterial({ color: 0xb8b0a2, roughness: 0.85 });
   const group = new THREE.Group(); group.name = 'Merlion';
