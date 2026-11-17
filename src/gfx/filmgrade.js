@@ -1,7 +1,7 @@
 // Photographic finishing after tone mapping: split toning (cool shadows, warm highlights), a soft highlight
 // shoulder roll-off in saturation (bright skies/neons desaturate like film instead of clipping to flat colour),
 // mild humidity haze lift in the shadows, and fine luminance-weighted grain. Merged into the main EffectPass.
-// The split follows the light: golden hour pushes amber into the highlights and rose into the shadows, night grades
+// The split follows the light: golden hour warms the white balance and pushes amber into the highlights, night grades
 // teal shadows under magenta-tinted lights (the neon-city look) — uGolden / uNight are set every frame.
 import * as THREE from 'three';
 import { Effect, BlendFunction } from 'postprocessing';
@@ -14,11 +14,20 @@ export class FilmGradeEffect extends Effect {
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         vec3 c = max(inputColor.rgb, 0.0);
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        // split tone: teal-ish shadows, warm highlights by day; amber over rose at golden hour; teal under magenta at night
-        vec3 shadowTint = mix(mix(vec3(-0.006, 0.002, 0.012), vec3(0.006, -0.004, 0.010), uGolden), vec3(-0.008, 0.004, 0.014), uNight);
-        vec3 highTint = mix(mix(vec3(0.020, 0.008, -0.016), vec3(0.040, 0.012, -0.030), uGolden), vec3(0.016, -0.006, 0.010), uNight);
+        // golden hour white balance: the whole frame warms toward apricot (applied before the split so it survives
+        // the phone's flatter, shadow-heavy frames too)
+        // (lit tones only: warming the darks too turned a dusk sky and the shade into brown mud)
+        float g = uGolden * (1.0 - uNight) * smoothstep(0.03, 0.3, l);
+        c *= mix(vec3(1.0), vec3(1.08, 1.0, 0.85), g * uSplit);
+        l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        // split tone: teal-ish shadows, warm highlights by day; amber over cool shade at golden hour; teal shadows under
+        // magenta-pink light at night (the neon-city look)
+        vec3 shadowTint = mix(mix(vec3(-0.006, 0.002, 0.012), vec3(-0.006, 0.003, 0.012), uGolden), vec3(-0.012, 0.006, 0.018), uNight);
+        vec3 highTint = mix(mix(vec3(0.020, 0.008, -0.016), vec3(0.050, 0.014, -0.040), uGolden), vec3(0.030, -0.012, 0.026), uNight);
         float mid = smoothstep(0.08, 0.5, l) * (1.0 - smoothstep(0.6, 1.0, l));
         c += uSplit * (shadowTint * (1.0 - smoothstep(0.0, 0.45, l)) + highTint * (smoothstep(0.45, 1.0, l) + mid * 0.5 * max(uGolden, uNight)));
+        // night: coloured light keeps its colour (neon, signs, lanterns), the rest stays as it was
+        c = mix(vec3(l), c, 1.0 + 0.12 * uNight * uSplit);
         // highlight shoulder: very bright pixels lose saturation smoothly
         c = mix(c, vec3(l), smoothstep(0.82, 1.15, l) * 0.35);
         // humid air lifts the blacks a touch

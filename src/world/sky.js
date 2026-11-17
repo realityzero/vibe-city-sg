@@ -42,18 +42,21 @@ const EXTRA_TAIL = /* glsl */`
   }
   // daylight sky radiance relative to the sunlit city (Preetham at our exposure read as white paper near the horizon)
   texColor *= uSkyGain;
-  // humid horizon haze: the low sky away from the sun is a pale blue-grey, not white (sun-side glow is kept)
+  // humid tropical air: the dome is a softer blue than a dry sky's, and the low sky whitens into a milky haze toward
+  // the horizon all round (sun-side glow is kept)
   {
-    float lowSky = 1.0 - smoothstep(0.0, 0.42, max(direction.y, 0.0));
+    float lowSky = 1.0 - smoothstep(0.0, 0.42, max(direction.y, 0.0)); lowSky *= lowSky;
     float awaySun = 1.0 - smoothstep(0.55, 0.95, dot(direction, vSunDirection));
-    float k = lowSky * awaySun * (1.0 - uNight) * (1.0 - uRain * 0.7);
-    texColor *= mix(vec3(1.0), vec3(0.74, 0.82, 0.95), k);
+    float k = (1.0 - uNight) * (1.0 - uRain * 0.7);
+    vec3 milk = vec3(dot(texColor, vec3(0.3, 0.45, 0.25))) * vec3(1.02, 1.03, 1.06);
+    texColor = mix(texColor, milk, k * (0.14 + 0.56 * lowSky * awaySun));
   }
   // ---- golden hour and dusk. Preetham alone keeps a deep, saturated blue dome until the sun touches the horizon,
-  // then goes black within minutes. A low sun warms and softens the dome (a longer path through the humid air), lays
-  // a gold-to-orange glow along its side of the horizon and the rose Belt of Venus along the other; once it has set,
-  // a deep blue twilight dome (dimming ~4x per 5 deg of sun depression) with an ember band where it went down.
-  float sunSide = 0.0;
+  // then goes black within minutes. A low sun warms and softens the dome (a longer path through the humid air), fills
+  // the whole low sky with apricot haze, lays a gold-to-orange glow along its side of the horizon and a rose Belt of
+  // Venus along the other, and blooms into a wide orange glare around the disc; once it has set, a deep blue twilight
+  // dome (dimming ~4x per 5 deg of sun depression) with an ember band where it went down.
+  float sunSide = 0.0, flare = 0.0;
   if (vSunDirection.y < 0.34 && vSunDirection.y > -0.3) { // (the same for every pixel: no cost by day or at night)
     float se = vSunDirection.y, up = max(direction.y, 0.0);
     float azS = dot(normalize(direction.xz + vec2(1e-5)), normalize(vSunDirection.xz + vec2(1e-5)));
@@ -61,10 +64,18 @@ const EXTRA_TAIL = /* glsl */`
     sunSide = pow(azS * 0.5 + 0.5, 3.0) * exp(-up * 4.0) * gold;
     float lum = dot(texColor, vec3(0.3, 0.45, 0.25));
     texColor = mix(texColor, lum * vec3(1.2, 0.95, 0.86), gold * (0.75 - 0.4 * smoothstep(0.0, 0.7, up)));
+    // apricot haze: the low sky all round takes the sun's colour and glows (light scattered in the humid air)
+    texColor = mix(texColor, lum * vec3(1.45, 0.92, 0.6), gold * exp(-up * 6.0) * 0.7) + vec3(1.0, 0.6, 0.35) * 0.035 * gold * exp(-up * 9.0);
     vec3 glowTint = mix(vec3(2.0, 0.78, 0.3), vec3(1.7, 1.02, 0.5), smoothstep(-0.02, 0.2, se));
     texColor *= mix(vec3(1.0), glowTint, sunSide);
     float belt = pow(max(-azS, 0.0), 1.5) * smoothstep(0.0, 0.05, up) * exp(-up * 7.0) * gold;
-    texColor *= mix(vec3(1.0), vec3(1.4, 0.92, 1.05), belt);
+    texColor *= mix(vec3(1.0), vec3(1.3, 0.95, 1.0), belt);
+    // the low sun's glare, an orange bloom around the disc (the disc itself is a pixel or two on a phone)
+    float cs = max(dot(direction, vSunDirection), 0.0);
+    vec3 glare = vec3(1.0, 0.5, 0.18) * (pow(cs, 2400.0) * 6.0 + pow(cs, 240.0) * 0.5 + pow(cs, 24.0) * 0.06) * gold * smoothstep(-0.03, 0.01, se);
+    texColor += glare;
+    // what glass facing the low sun mirrors: a broad copper flare that also lies over the skyline below the horizon
+    flare = pow(azS * 0.5 + 0.5, 12.0) * exp(-abs(direction.y - se) * 6.0) * gold * smoothstep(-0.03, 0.02, se);
     float depth = max(-se, 0.0);
     float tw = smoothstep(0.03, -0.01, se) * (1.0 - uRain * 0.6);
     float Z = 0.12 * exp(-depth * 16.0) * tw;
@@ -95,6 +106,7 @@ const EXTRA_TAIL = /* glsl */`
       texColor = mix(texColor, bcol, smoothstep(hgt, hgt - 0.004, direction.y));
     }
     if (direction.y < 0.0) texColor = mix(texColor, vec3(0.10, 0.092, 0.08) * (0.04 + 0.96 * day) + vec3(0.02, 0.012, 0.006) * uNight, smoothstep(0.0, -0.05, direction.y));
+    texColor += vec3(1.0, 0.46, 0.15) * flare * 1.6;
   }
   // lightning: the whole cloud deck lights up blue-white, and a jagged bolt (with a side branch) drops from the
   // cloud base to the horizon at the strike azimuth. uBolt = (azimuth, seed, flash, distance factor)
@@ -297,12 +309,12 @@ export class SkySystem {
     const ld = useSun ? this.sun : this.moon;
     const elev = Math.max(0.0, ld.y);
     if (useSun) {
-      // colour temperature through the afternoon: ~5800 K high up, ~4000 K at 10 deg, ~2600 K at 3 deg (a long
-      // path through humid air); the low sun also loses some strength, so golden hour is warm, not noon-bright
-      const warm = THREE.MathUtils.smoothstep(sunY, -0.02, 0.4);
-      this._c.setRGB(1.0, 0.36 + 0.58 * warm, 0.12 + 0.76 * warm);
+      // colour temperature through the afternoon: ~5800 K high up, ~3000 K at 10 deg, ~2300 K at 3 deg (a long
+      // path through humid air); the low sun loses a little strength, but golden hour stays a strong warm key light
+      const warm = THREE.MathUtils.smoothstep(sunY, 0.0, 0.5);
+      this._c.setRGB(1.0, 0.36 + 0.58 * warm, 0.07 + 0.81 * warm ** 1.4);
       this.dir.color.copy(this._c);
-      this.dir.intensity = 5.2 * THREE.MathUtils.smoothstep(sunY, -0.03, 0.1) * THREE.MathUtils.lerp(0.72, 1, THREE.MathUtils.smoothstep(sunY, 0.05, 0.4)) * (1 - this.rain * 0.85);
+      this.dir.intensity = 5.2 * THREE.MathUtils.smoothstep(sunY, -0.03, 0.1) * THREE.MathUtils.lerp(0.85, 1, THREE.MathUtils.smoothstep(sunY, 0.05, 0.4)) * (1 - this.rain * 0.85);
     } else {
       this.dir.color.setRGB(0.55, 0.65, 1.0);
       this.dir.intensity = 0.13 * THREE.MathUtils.smoothstep(this.moon.y, 0.0, 0.2) * (1 - this.rain * 0.9);
@@ -332,19 +344,23 @@ export class SkySystem {
 
     // hemisphere / ambient
     const day = 1 - night;
-    // day: blue sky / warm ground bounce; night: sodium-orange urban glow from below, dim blue above
-    // a low sun: the sky fill weakens and turns blue-violet against the warm sun (golden-hour contrast, not noon light)
+    // day: blue sky / warm ground bounce; night: sodium-orange urban glow from below, dim blue above (strong enough
+    // that a back lane still reads as walls and a street, not a black hole)
+    // a low sun: the humid sky fill turns a soft peach and weakens a little, sunlit pavements bounce warm light into the
+    // street canyons (golden-hour contrast, not noon light — and no grey-brown mud in the shade)
     const lowSun = (1 - THREE.MathUtils.smoothstep(sunY, 0.02, 0.32)) * day * (1 - this.rain);
-    this.hemi.color.setRGB(THREE.MathUtils.lerp(0.45, 0.87, day), THREE.MathUtils.lerp(0.5, 0.92, day), THREE.MathUtils.lerp(0.85, 1.0, day)).lerp(this._hc.setRGB(0.6, 0.62, 1.0), lowSun * 0.6);
-    this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.9, 0.42, day), THREE.MathUtils.lerp(0.55, 0.36, day), THREE.MathUtils.lerp(0.3, 0.28, day));
-    this.hemi.intensity = (0.05 + 0.55 * day * (1 - 0.2 * lowSun)) * (1 - this.rain * 0.3) + night * 0.09 + this.rain * 0.12 * day + this.lightning * 2.2;
+    this.hemi.color.setRGB(THREE.MathUtils.lerp(0.45, 0.87, day), THREE.MathUtils.lerp(0.5, 0.92, day), THREE.MathUtils.lerp(0.85, 1.0, day)).lerp(this._hc.setRGB(0.95, 0.8, 0.8), lowSun * 0.6);
+    this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.9, 0.42, day), THREE.MathUtils.lerp(0.55, 0.36, day), THREE.MathUtils.lerp(0.3, 0.28, day)).lerp(this._hc.setRGB(0.72, 0.46, 0.28), lowSun * 0.6);
+    this.hemi.intensity = (0.05 + 0.55 * day * (1 - 0.1 * lowSun)) * (1 - this.rain * 0.3) + night * 0.16 + this.rain * 0.12 * day + this.lightning * 2.2;
 
     // fog = haze: the horizon sky's colour (golden at sunset, blue at dusk, city glow at night, grey in rain), so
     // distant towers and the sea fade into the sky instead of into a darker band under it
     this.haze.lerp(this.hazeTarget, Math.min(1, dt * 0.6));
     const fog = this.haze;
     this.scene.fog.color.copy(fog);
-    this.scene.fog.density = this.fogBase * (1 + this.rain * 2.5);
+    // golden hour: the humid air glows — a little more of the apricot haze between the camera and the far city
+    const gold = (1 - THREE.MathUtils.smoothstep(sunY, 0.12, 0.32)) * THREE.MathUtils.smoothstep(sunY, -0.1, 0.0) * (1 - this.rain);
+    this.scene.fog.density = this.fogBase * (1 + this.rain * 2.5) * (1 + 0.7 * gold);
     U.fogColor.value.copy(fog); U.fogDensity.value = this.scene.fog.density;
 
     // window lighting schedules (fraction of windows lit)
