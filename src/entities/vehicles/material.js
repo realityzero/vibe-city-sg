@@ -172,11 +172,24 @@ const FRAG_EMIT = /* glsl */`
 }
 `;
 
+// Hero rig: a hero vehicle's moving parts (wheels, pop-up lamps, rotor blades) are drawn with its body. Each vertex
+// names its part in the `part` attribute (0 = rigid body) and uPart[] holds every part's matrix from its own frame into
+// vehicle space (all zeros = hidden). The wheel geometry is drawn once per wheel by an instanced draw without instanced
+// attributes: wheel i reads slot 2i (part 1: spins and steers) and 2i + 1 (part 2: steers only, the caliper).
+// Body parts use slots WHEEL_SLOTS.. (part = slot + 1).
+export const RIG_SLOTS = 12, WHEEL_SLOTS = 8;
+const RIG_PARS = /* glsl */`
+attribute float part;
+uniform mat4 uPart[${RIG_SLOTS}];
+mat4 rigPart() { int s = int(part + 0.5) - 1 + 2 * gl_InstanceID; return s < 0 ? mat4(1.0) : uPart[s]; }
+`;
+
 /**
  * Creates the uber material. instanced=true reads per-instance attributes; otherwise uniforms
- * (material.userData.uPaint / uLights) that the caller mutates.
+ * (material.userData.uPaint / uLights) that the caller mutates. rig=true moves vertices by part (see RIG_PARS;
+ * material.userData.uPart, geometry attribute `part`).
  */
-export function createVehicleMaterial(atlas, { instanced = false, transparent = false } = {}) {
+export function createVehicleMaterial(atlas, { instanced = false, transparent = false, rig = false } = {}) {
   const m = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, vertexColors: true, map: atlas || null,
     roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06,
@@ -185,6 +198,7 @@ export function createVehicleMaterial(atlas, { instanced = false, transparent = 
   if (transparent) { m.transparent = true; m.alphaTest = 0; m.opacity = 0.82; m.depthWrite = false; }
   m.userData.uPaint = { value: new THREE.Color(1, 1, 1) };
   m.userData.uLights = { value: new THREE.Vector4(0, 0, 0, 0) };
+  if (rig) m.userData.uPart = { value: Array.from({ length: RIG_SLOTS }, () => new THREE.Matrix4()) };
   const U = m.userData.decal = {
     uDecalA: { value: new THREE.Vector4(-2, 4, 1.2, 1.8) }, uDecalB: { value: new THREE.Vector4(1.1, 0.3, 0.3, 0) }, uDecalC: { value: new THREE.Vector4(0, 0, 0, 0) },
     uRectSR: { value: new THREE.Vector4() }, uRectSL: { value: new THREE.Vector4() }, uRectF: { value: new THREE.Vector4() }, uRectR: { value: new THREE.Vector4() },
@@ -196,6 +210,13 @@ export function createVehicleMaterial(atlas, { instanced = false, transparent = 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\n' + VERT_PARS)
       .replace('#include <color_vertex>', '#include <color_vertex>\n' + VERT_COLOR);
+    if (rig) {
+      shader.uniforms.uPart = m.userData.uPart;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\n' + RIG_PARS)
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nmat4 partM = rigPart();\nobjectNormal = mat3(partM) * objectNormal;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = (partM * vec4(transformed, 1.0)).xyz;');
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
       .replace('#include <color_fragment>', '#include <color_fragment>\n' + FRAG_DECAL)
@@ -204,7 +225,21 @@ export function createVehicleMaterial(atlas, { instanced = false, transparent = 
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n#ifdef USE_CLEARCOAT\nmaterial.clearcoat = saturate(clearcoat * vMatP.z);\n#endif')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_EMIT);
   };
-  m.customProgramCacheKey = () => `vehicleUber_${instanced ? 1 : 0}_${transparent ? 1 : 0}`;
+  m.customProgramCacheKey = () => `vehicleUber_${instanced ? 1 : 0}_${transparent ? 1 : 0}${rig ? '_rig' : ''}`;
+  return m;
+}
+
+/** Shadow-depth twin of a rig material (object.customDepthMaterial): the same parts in the same places. The shadow
+ * renderer copies map / alphaTest over from the drawn material, as it does for its own depth material. */
+export function createRigDepthMaterial(rigMaterial) {
+  const m = new THREE.MeshDepthMaterial();
+  m.onBeforeCompile = shader => {
+    shader.uniforms.uPart = rigMaterial.userData.uPart;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n' + RIG_PARS)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = (rigPart() * vec4(transformed, 1.0)).xyz;');
+  };
+  m.customProgramCacheKey = () => 'vehicleRigDepth';
   return m;
 }
 

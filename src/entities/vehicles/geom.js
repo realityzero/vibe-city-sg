@@ -96,6 +96,46 @@ export class PartBuilder {
 }
 
 /**
+ * Concatenates built PartBuilder geometries into `target`, tagging each source's vertices with its part id (the rig's
+ * float attribute `part`, see material.js). A lone source keeps its own attribute buffers (nothing copied or uploaded
+ * twice) and only gains the tag; otherwise the first source comes first in the merged arrays and is rebuilt as a view
+ * of them, so its data isn't held twice.
+ * @param {{geometry: THREE.BufferGeometry, part: number}[]} sources
+ */
+export function mergeParts(sources, target = new THREE.BufferGeometry()) {
+  const first = sources[0].geometry, names = Object.keys(first.attributes);
+  const nv = sources.reduce((s, p) => s + p.geometry.attributes.position.count, 0);
+  const tag = new Float32Array(nv);
+  if (sources.length === 1) {
+    for (const k of names) target.setAttribute(k, first.attributes[k]);
+    target.setIndex(first.index);
+    tag.fill(sources[0].part);
+  } else {
+    const ni = sources.reduce((s, p) => s + p.geometry.index.count, 0);
+    const I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+    for (const k of names) {
+      const a = first.attributes[k], out = new a.array.constructor(nv * a.itemSize);
+      let o = 0;
+      for (const { geometry: g } of sources) { out.set(g.attributes[k].array, o); o += g.attributes[k].array.length; }
+      target.setAttribute(k, new THREE.BufferAttribute(out, a.itemSize, a.normalized));
+    }
+    let ov = 0, oi = 0;
+    for (const { geometry: g, part } of sources) {
+      const n = g.attributes.position.count, idx = g.index.array;
+      for (let i = 0; i < idx.length; i++) I[oi + i] = idx[i] + ov;
+      tag.fill(part, ov, ov + n);
+      ov += n; oi += idx.length;
+    }
+    target.setIndex(new THREE.BufferAttribute(I, 1));
+    const n = first.attributes.position.count;
+    for (const k of names) { const a = target.attributes[k]; first.setAttribute(k, new THREE.BufferAttribute(a.array.subarray(0, n * a.itemSize), a.itemSize, a.normalized)); }
+    first.setIndex(new THREE.BufferAttribute(I.subarray(0, first.index.count), 1));
+  }
+  target.setAttribute('part', new THREE.BufferAttribute(tag, 1));
+  return target;
+}
+
+/**
  * Grid surface from rows of points (rows = stations, columns = section loop).
  * Normals are smooth within the grid. `flip` reverses winding.
  */
