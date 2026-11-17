@@ -177,6 +177,18 @@ for a while, so allocation *churn* during the load matters as well as what stays
   walls, tree trunks and traffic lanes, and leave gaps in the deck parapet at the landings.
   `tests/scratch/bridgewalk.mjs` walks over every bridge, `bridgeexits.mjs` checks each stair foot floods out to a sidewalk.
 
+## Streetscape (furniture, HDB estates, hawker centres)
+- The city builder places street furniture (`world/worker/streetscape.js`, hash-seeded, after the trees): kopitiam
+  tables and umbrellas near food and shopfronts, planters, benches, shared bikes, pushcarts, potted plants by
+  five-foot-way piers, condensers on shophouse back walls, stone tables in HDB void decks, a playground and fitness
+  corner per estate. It keeps clear of buildings, carriageways and their sidewalk lines (hw + 4 m), footway lines
+  (2.4 m), trees and landmark clearings. The pieces (`world/streetpieces.js`) are one `BatchedMesh` with the city's
+  structure material, instanced within 150 m of the camera (420 m for playgrounds): one draw call plus its shadow.
+  Linkways between HDB blocks are chunk `structNear` geometry.
+- `TreeColliders.trunkNear` also answers for furniture (people walk round it); sturdy pieces get low colliders.
+- Low halls holding a food centre (OSM name or POI) are built as hawker centres: a 3.4 m colonnade with tables round
+  the stalls (facade flag 6) under a hipped roof. Long shophouse walls are rows of ~5.5 m units in their own pastels.
+
 ## Street life (pedestrians)
 - The crowd lives around the **camera** (`Pedestrians.viewer`), not the player, and is spent where it looks: walkers
   are placed in the view cone (or just beside it), only where they can't be seen popping in (out of the frustum,
