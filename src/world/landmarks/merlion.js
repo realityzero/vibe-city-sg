@@ -203,7 +203,53 @@ function waterJet(mouth, v0, { count = 700, size = 0.9, spread = 0.18, water = W
   return grp;
 }
 
-export function buildMerlion() {
+function graniteTexture() {
+  const t = canvasTexture(256, 256, (ctx, w, h) => {
+    const r = rng(41), n = 4, sz = w / n;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const v = 200 + Math.floor(r() * 22), tint = Math.floor(r() * 8);
+      ctx.fillStyle = `rgb(${v},${v - 3 - tint},${v - 10 - tint})`; ctx.fillRect(x * sz, y * sz, sz, sz);
+      for (let k = 0; k < 90; k++) { const g = 150 + Math.floor(r() * 90); ctx.fillStyle = `rgba(${g},${g - 6},${g - 12},0.35)`; ctx.fillRect(x * sz + r() * sz, y * sz + r() * sz, 1.5, 1.5); }
+    }
+    ctx.strokeStyle = 'rgba(96,90,82,0.85)'; ctx.lineWidth = 2;
+    for (let i = 0; i <= n; i++) { ctx.beginPath(); ctx.moveTo(i * sz, 0); ctx.lineTo(i * sz, h); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i * sz); ctx.lineTo(w, i * sz); ctx.stroke(); }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+
+// Merlion Park is an open granite promontory (the statue at its tip, the viewing pier in front), not a lawn: paving
+// over the land of the site, with the grove kept back on the Fullerton side (the clearing below keeps trees off it).
+const PLAZA = { x: 604, z: 18, r: 40, west: 571 };
+const onPlaza = (x, z) => x >= PLAZA.west && (x - PLAZA.x) ** 2 + (z - PLAZA.z) ** 2 < PLAZA.r * PLAZA.r;
+function plazaGeometry(isWater) {
+  const pos = [], uv = [], idx = [], y = 0.07, cell = 1, tile = 2.4;
+  const quad = (x0, x1, z0, z1) => {
+    const b = pos.length / 3;
+    pos.push(x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1);
+    uv.push(x0 / tile, z0 / tile, x1 / tile, z0 / tile, x1 / tile, z1 / tile, x0 / tile, z1 / tile);
+    idx.push(b, b + 2, b + 1, b, b + 3, b + 2);
+  };
+  for (let z = PLAZA.z - PLAZA.r; z < PLAZA.z + PLAZA.r; z += cell) {
+    let run = null; // runs of paved cells along x become one quad
+    for (let x = PLAZA.west; x <= PLAZA.x + PLAZA.r; x += cell) {
+      // stay ~1.2 m inside the land: the ground draws a smoothed waterline and its quay wall, the paving ends behind it
+      const cx = x + cell / 2, cz = z + cell / 2, e = 1.2;
+      const paved = x < PLAZA.x + PLAZA.r && onPlaza(cx, cz) && !isWater(cx, cz) && !isWater(cx + e, cz) && !isWater(cx - e, cz) && !isWater(cx, cz + e) && !isWater(cx, cz - e);
+      if (paved && run === null) run = x;
+      else if (!paved && run !== null) { quad(run, x, z, z + cell); run = null; }
+    }
+  }
+  if (!idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => i % 3 === 1 ? 1 : 0), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+export function buildMerlion(city, quality, renderer, env = {}) {
   // floodlit warm-white from the deck at night (strongest on the fish body, softer up on the head)
   const body = uplitMaterial(0xfff0dc, 0.12, { y0: 0, y1: 11, floor: 0.3, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
   const stone = uplitMaterial(0xfff0dc, 0.07, { y0: 0, y1: 4, floor: 0.2, base: 0xe6e1d6, rough: 0.7 });
@@ -212,20 +258,21 @@ export function buildMerlion() {
   const group = new THREE.Group(); group.name = 'Merlion';
   const pois = [], colliders = [];
   const statues = [
-    { x: 612.5, z: 22.5, yaw: -0.12, scale: 1, name: 'Merlion', id: 'merlion', water: WATER_LEVEL },
+    // the hero statue a touch over life size (8.6 m -> ~10.8 m): read from across the bay against the CBD behind it
+    { x: 612.5, z: 22.5, yaw: -0.12, scale: 1.25, name: 'Merlion', id: 'merlion', water: WATER_LEVEL, hero: true },
     { x: 590, z: 22.4, yaw: -0.05, scale: 0.26, name: 'Merlion Cub', id: 'merlion_cub', water: 0.6 },
   ];
   for (const s of statues) {
     const B = new Bucket();
     const { mouth } = merlionGeometry(B, { body, stone, dark, base: plinth }, 7);
     // platform the statue stands on (main merlion: semicircular viewing deck at the water's edge)
-    if (s.scale === 1) {
+    if (s.hero) {
       const deck = new THREE.CylinderGeometry(4.2, 4.4, 1.8, 32); deck.translate(0, -0.9 + 0.02, 0); B.add(plinth, deck);
     } else {
       const ped = new THREE.CylinderGeometry(2.6, 2.8, 2.2, 20); ped.translate(0, -1.1, 0); B.add(plinth, ped);
       const basin = new THREE.TorusGeometry(5.5, 0.35, 6, 32); basin.rotateX(Math.PI / 2); basin.translate(6, -2.4, 0); B.add(plinth, basin);
     }
-    const F = frameFromAngle(s.x, s.z, s.yaw, s.scale === 1 ? 0.02 : 0.6);
+    const F = frameFromAngle(s.x, s.z, s.yaw, s.hero ? 0.02 : 0.6);
     F.multiply(new THREE.Matrix4().makeScale(s.scale, s.scale, s.scale));
     const meshes = B.build({ name: s.id });
     for (const m of meshes) { m.geometry.applyMatrix4(F); m.geometry.computeBoundingSphere(); group.add(m); }
@@ -233,12 +280,18 @@ export function buildMerlion() {
     const wMouth = mouth.clone().applyMatrix4(F);
     const dir = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     const v0 = dir.multiplyScalar(7.2 * Math.sqrt(s.scale)).add(new THREE.Vector3(0, 1.6 * Math.sqrt(s.scale), 0));
-    group.add(waterJet(wMouth, v0, { count: s.scale === 1 ? 700 : 160, size: s.scale === 1 ? 0.9 : 0.35, spread: s.scale === 1 ? 0.18 : 0.06, water: s.scale === 1 ? WATER_LEVEL : 0.1 }));
+    group.add(waterJet(wMouth, v0, { count: s.hero ? 700 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1 }));
     pois.push({ id: s.id, name: s.name, x: s.x, y: 0, z: s.z });
     colliders.push({ type: 'cylinder', center: [s.x, 4.3 * s.scale, s.z], radius: 2.5 * s.scale, halfHeight: 4.3 * s.scale });
   }
+  const plaza = env.isWater && plazaGeometry(env.isWater);
+  if (plaza) {
+    const m = new THREE.Mesh(plaza, new THREE.MeshStandardMaterial({ map: graniteTexture(), roughness: 0.78, metalness: 0 }));
+    m.name = 'merlion_plaza'; m.receiveShadow = true; group.add(m);
+  }
   return {
     group, colliders, pois,
+    clearings: [{ x: PLAZA.x, z: PLAZA.z, r: PLAZA.r, inside: (x, z) => x >= PLAZA.west - 2 }],
     exclusions: [circlePoly(612.5, 22.5, 5, 12)],
     reflective: group.children.filter(c => c.isMesh),
   };

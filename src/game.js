@@ -289,7 +289,7 @@ export class Game {
     let landmarks = null;
     try {
       const mod = await import('./world/landmarks/index.js');
-      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high' });
+      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.isWater(x, z) });
       this.scene.add(landmarks.group);
       gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));
@@ -319,8 +319,11 @@ export class Game {
     // no trees standing in a traffic lane (some generated/OSM trees sit on the carriageway — now that trunks are solid
     // they'd be invisible roadblocks for the AI and a wall for the player)
     {
-      const T = this.city.trees, keep = [], t0 = performance.now();
+      // ...nor on a landmark's plaza (the Merlion's granite promontory was a grove that hid the statue)
+      const T = this.city.trees, keep = [], t0 = performance.now(), clear = this.landmarks?.clearings || [];
+      const onPlaza = (x, z) => clear.some(c => (x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r && (!c.inside || c.inside(x, z)));
       for (let i = 0; i < T.length; i += 5) {
+        if (onPlaza(T[i], T[i + 1])) continue;
         const n = this.roadnet.nearestLane(T[i], T[i + 1], 6, l => l.cls <= 7); if (!n || n.dist > 1.9) for (let k = 0; k < 5; k++) keep.push(T[i + k]);
         if (i % 50000 === 49995) await brk();
       }
