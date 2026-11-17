@@ -72,7 +72,7 @@ treads water. **WASD** front crawl, **Shift** faster, swim into a low edge (or *
 
 ## Story (8 missions)
 
-1. **The Lion City** — land in a Chinatown capsule hotel, meet Ken Rosenberg at Lau Pa Sat.
+1. **The Lion City** — sunset over the bay at the wheel of an Infernus; meet Ken Rosenberg at Lau Pa Sat.
 2. **Vibe Coding** — pick a startup (ChopeChain, Kopi.ai, DurianDash) and vibe-code it with Claudia, the AI.
 3. **Chope!** — Lance Vance's growth hack: hit four hawker centres before the lunch rush ends.
 4. **Poached** — chase down the Why Combinator scout who stole the laptop.
@@ -103,6 +103,7 @@ treads water. **WASD** front crawl, **Shift** faster, swim into a low edge (or *
   with tables, smoking grills and diners; tourists photographing the Merlion; office lunch crowds at Raffles Place;
   crowds for the Supertree show; district-appropriate pedestrians (aunties in Chinatown, suits in the CBD).
 - **Hype economy:** stunts go viral and raise your startup's valuation; arrests and crashes make the news.
+  Near misses at speed (a car or a pedestrian within a metre) pay cash — chain them for a multiplier.
   **B** in a car = Kopi Gao boost (caffeine nitro).
 - **Extras:** photo mode (**`**) with film filters, a rainbow after tropical storms, and Claudia texting you
   commentary on your life choices.
@@ -128,7 +129,8 @@ Mouse look captures the mouse on click; where the browser won't allow that, clic
 **Phones and tablets** (landscape) get on-screen controls: a floating move stick under the left thumb (it also
 steers), drag anywhere else to look, pinch to zoom, and context buttons on the right — JUMP / RUN / PUNCH / ENTER on
 foot, GAS / BRAKE / DRIFT / EXIT / HORN / RADIO / KOPI in a car, UP / DOWN in the air, CLIMB / BOARD in the water.
-Tap the radar for the map (long-press sets a waypoint), and the top bar has pause, camera, Claudia and fullscreen.
+Tap the radar for the map (long-press sets a waypoint); the top bar has pause (and skip while someone talks), and the
+pause menu has camera view, Claudia and fullscreen.
 The radar moves to the top-left so nothing the thumbs use covers it. Touch-first devices start on the Low preset.
 
 ## Cheats (type them while playing)
