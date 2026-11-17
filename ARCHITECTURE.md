@@ -61,10 +61,10 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   last frame, or roads are wet (then it mirrors about the street plane, `REFL.road`); the city swaps to cheap facade
   materials for it (`city.setReflectionMaterials`). Every light is also on `REFLECT_LAYER` (one light state for all
   passes: no 0-light program variants, sunlit reflections, stable shadow-depth program keys). On Low the reflection is
-  *lite* (`reflections: 'lite'`): quarter resolution, water only, built from one camera pose over 6 frames (a sixth of
-  the mirrored city each, the city batches dealt as alternate chunks) into a back buffer swapped in when complete, and
-  smeared into vertical streaks by the water shader — the bay at night mirrors the lit city for ~0.25 ms a frame on an
-  M2 instead of ~1.3 ms. `tests/scratch/waterab.mjs` (A/B cost), `reflcheck.mjs` (per-slice cost),
+  *lite* (`reflections: 'lite'`): quarter resolution, water only, built from one camera pose over 8 frames (an eighth
+  of the mirrored city each — dealt per pose by triangles in its frustum, the city batches as two halves of alternate
+  chunks) into a back buffer swapped in when complete, and smeared into vertical streaks by the water shader — the bay
+  at night mirrors the lit city for ~0.2-0.3 ms a frame on an M2 instead of ~1.3 ms. `tests/scratch/waterab.mjs` (A/B cost), `reflcheck.mjs` (per-slice cost),
   `watermotion.mjs` (contact sheets of the water in motion).
 - One `scene.updateMatrixWorld()` per frame; renders inside the frame run with `matrixWorldAutoUpdate = false`.
 - The ground plane is cut into 24 m cells: all-land cells use a shader without `discard` (so early depth rejection skips

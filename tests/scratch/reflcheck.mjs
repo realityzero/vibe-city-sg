@@ -1,6 +1,6 @@
 // Water reflection checks at phone settings over the bay: (1) the desktop reflection is pixel-identical with the ground on
 // the reflection layer or not, (2) frame cost per lite slice (each frame synced) against no reflection.
-//   node tests/scratch/reflcheck.mjs [--url http://127.0.0.1:4173/]
+//   node tests/scratch/reflcheck.mjs [--url http://127.0.0.1:4173/] [--quick (only 1)] [--parts (also each part alone)]
 import { launch } from '../mobile/lib.mjs';
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 const URL0 = arg('url', 'http://127.0.0.1:4173/');
@@ -10,7 +10,7 @@ await h.page.waitForFunction(() => window.__game?.worldReady && __game.state ===
 for (const [name, pos, look] of [['bay', [480, 40, 140], [900, 60, 300]], ['river', [-520, 8, -300], [-460, 4, -380]]]) {
 await h.page.evaluate(([pos, look]) => { const g = __game, V = g.camera.position.constructor; g.timeScale = 0; g.cameraRig.override = { position: new V(...pos), lookAt: new V(...look), snap: true, fov: 62 }; }, [pos, look]);
 await h.page.waitForTimeout(3000);
-const r = await h.page.evaluate(quick => {
+const r = await h.page.evaluate(([quick, parts]) => {
   const g = __game, R = g.R.renderer, w = g.water, gl = R.getContext(), px = new Uint8Array(4), out = {};
   g.paused = true;
   const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
@@ -33,15 +33,22 @@ const r = await h.page.evaluate(quick => {
   const per = [], offs = [];
   for (let r = 0; r < 3; r++) {
     w.setReflections(false); offs.push(run(null)); w.setReflections('lite'); run(null);
-    w._lite.jobs.forEach((_, s) => { (per[s] ||= []).push(run(s)); });
+    w._lite.load.forEach((_, s) => { (per[s] ||= []).push(run(s)); });
   }
   const off = med(offs);
   out.off = off.toFixed(3); out.slices = per.map(x => `+${(med(x) - off).toFixed(3)}`).join(' ');
-  out.cpu = w._lite.jobs.map((_, s) => med(cpu[s]).toFixed(3)).join(' ');
-  out.jobs = w._lite.jobs.map(j => `hides ${j.hide.length}, half of ${j.halves.map(([o, p]) => o.name + '/' + p).join(' ') || '-'}`).join(' | ');
+  if (parts) { // each part drawn alone (pinned to job 1, everything else in job 0)
+    const P = w._lite.parts, saved = P.map(p => p.job), cost = [];
+    w.setReflections(false); const off2 = run(null); w.setReflections('lite'); run(null);
+    for (const q of P.filter(p => p.w > 0)) { P.forEach(p => { p.job = p === q ? 1 : 0; }); cost.push([(q.o.name || q.o.parent?.name || q.o.type) + (q.share >= 0 ? '/' + q.share : ''), q.w, run(1) - off2]); }
+    P.forEach((p, i) => { p.job = saved[i]; });
+    out.parts = cost.sort((a, b) => b[2] - a[2]).map(([n, w, c]) => `${n} ${(w / 3e3).toFixed(0)}k tris ${c.toFixed(3)} ms`);
+  }
+  out.cpu = w._lite.load.map((_, s) => med(cpu[s]).toFixed(3)).join(' ');
+  out.jobs = w._lite.load.map((_, j) => w._lite.parts.filter(p => p.job === j && p.w > 0).map(p => (p.o.name || p.o.parent?.name || p.o.type) + (p.share >= 0 ? '/' + p.share : '')).slice(0, 5).join('+')).join(' | ');
   g.paused = false;
   return out;
-}, process.argv.includes('--quick'));
+}, [process.argv.includes('--quick'), process.argv.includes('--parts')]);
 console.log(name, r);
 }
 await h.browser.close();

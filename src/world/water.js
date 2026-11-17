@@ -8,7 +8,8 @@ import { WATER_LEVEL } from '../core/constants.js';
 import { REFL } from '../gfx/materials.js';
 
 export const REFLECT_LAYER = 2;
-const LITE_SLICES = 6, LITE_MARGIN = 1.15; // lite reflection: frames per rebuild, frustum widening (tangent scale)
+// lite reflection: frames per rebuild, parts each city batch is dealt as, frustum widening (tangent scale)
+const LITE_SLICES = 8, LITE_SHARES = 2, LITE_MARGIN = 1.15;
 
 export class Water {
   constructor({ size = 60000, reflections = true, resScale = 0.4, liteScale = 0.25 } = {}) {
@@ -255,7 +256,10 @@ vec2 waveGrad(vec2 p, float t) {
   // little wider than the camera's so turning while the next one builds doesn't run off its edge.
   _renderLite(renderer, scene, camera) {
     if (!this._lite) {
-      this._lite = { back: this.rt.clone(), cam: new THREE.PerspectiveCamera(), texMatrix: new THREE.Matrix4(), pos: new THREE.Vector3(), front: new THREE.Vector3(), slice: 0, ready: false, jobs: null, was: [] };
+      this._lite = {
+        back: this.rt.clone(), cam: new THREE.PerspectiveCamera(), texMatrix: new THREE.Matrix4(), pos: new THREE.Vector3(), front: new THREE.Vector3(), slice: 0, ready: false,
+        parts: null, order: null, was: [], load: new Array(LITE_SLICES), frustum: new THREE.Frustum(), m: new THREE.Matrix4(), sphere: new THREE.Sphere(), range: {},
+      };
       this._lite.cam.layers.set(REFLECT_LAYER);
     }
     const L = this._lite;
@@ -271,14 +275,15 @@ vec2 waveGrad(vec2 p, float t) {
       L.cam.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) / 2) * LITE_MARGIN));
       L.cam.aspect = camera.aspect; L.cam.updateProjectionMatrix();
       L.texMatrix.multiply(L.cam.projectionMatrix).multiply(L.cam.matrixWorldInverse);
+      if (!L.parts) { L.parts = this._liteParts(scene); L.order = L.parts.slice(); }
+      this._liteDeal(L);
       this._clipOblique(L.cam, WATER_LEVEL);
       L.pos.copy(cp);
-      L.jobs ??= this._liteJobs(scene);
     }
     // the first reflection (warm-up) is built in one go: it compiles every reflection program before play
     const one = L.ready;
-    if (one) this._liteShare(L.jobs[L.slice], false);
-    try { this._draw(renderer, scene, L.cam, L.back, L.slice > 0 && one); } finally { if (one) this._liteShare(L.jobs[L.slice], true); }
+    if (one) this._liteShare(L.slice, false);
+    try { this._draw(renderer, scene, L.cam, L.back, L.slice > 0 && one); } finally { if (one) this._liteShare(L.slice, true); }
     L.slice = one ? L.slice + 1 : LITE_SLICES;
     if (L.slice < LITE_SLICES) return;
     L.slice = 0; L.ready = true;
@@ -287,44 +292,67 @@ vec2 waveGrad(vec2 p, float t) {
     this.texMatrix.copy(L.texMatrix); L.front.copy(L.pos);
   }
 
-  /** deals what the reflection draws into LITE_SLICES jobs of about equal triangle count, largest first. A batched mesh
-   *  (the city's walls, roofs, structures: per-chunk culled, one draw each) is dealt as two halves, alternate chunks,
-   *  so no job is stuck with a whole one. A job: what it hides — whole objects, and [batch, parity] halves */
-  _liteJobs(scene) {
-    const parts = [], range = {}, shown = o => {
-      let n = 0;
-      for (let i = 0; i < o.instanceCount; i++) if (o.getVisibleAt(i)) n += o.getGeometryRangeAt(o.getGeometryIdAt(i), range).count;
-      return n;
-    };
+  /** what the reflection draws, as parts to deal into jobs: objects, and each batched mesh (the city's walls, roofs,
+   *  structures — one multi-draw each, culled per chunk) as LITE_SHARES parts of interleaved chunks, so no job is stuck
+   *  with all of one. A batch's parts are consecutive (share 0 first). */
+  _liteParts(scene) {
+    const parts = [];
     scene.traverse(o => {
       if (!(o.isMesh || o.isPoints) || o === this.mesh || !o.layers.isEnabled(REFLECT_LAYER)) return;
-      if (o.isBatchedMesh) { const n = shown(o) / 2; parts.push([o, n, 0], [o, n, 1]); return; }
-      const g = o.geometry; parts.push([o, (g.index ? g.index.count : g.attributes.position.count) * (o.isInstancedMesh ? o.count : 1), -1]);
+      if (!o.isBatchedMesh) { parts.push({ o, share: -1, w: 0, job: 0 }); return; }
+      for (let share = 0; share < LITE_SHARES; share++) parts.push({ o, share, w: 0, job: 0 });
     });
-    const deal = Array.from({ length: LITE_SLICES }, () => []), load = new Array(LITE_SLICES).fill(0);
-    for (const p of parts.sort((a, b) => b[1] - a[1])) { const i = load.indexOf(Math.min(...load)); deal[i].push(p); load[i] += p[1]; }
-    return deal.map(mine => {
-      const has = (o, parity) => mine.some(p => p[0] === o && p[2] === parity), job = { hide: [], halves: [] };
-      for (const [o, , parity] of parts) {
-        if (parity < 0) { if (!has(o, -1)) job.hide.push(o); continue; }
-        if (parity === 1) continue; // (each batch once)
-        const even = has(o, 0), odd = has(o, 1);
-        if (!even && !odd) job.hide.push(o); else if (even !== odd) job.halves.push([o, even ? 1 : 0]); // the other half hides
-      }
-      return job;
-    });
+    return parts;
   }
 
-  /** hides what a lite job doesn't draw (restore = false), or shows it again */
-  _liteShare(job, restore) {
-    const was = this._lite.was;
-    let k = 0;
-    for (const o of job.hide) { if (restore) o.visible = was[k]; else { was[k] = o.visible; o.visible = false; } k++; }
-    for (const [bm, parity] of job.halves) {
-      for (let i = parity; i < bm.instanceCount; i += 2) {
-        if (restore) { if (was[k]) bm.setVisibleAt(i, true); } else { was[k] = bm.getVisibleAt(i); if (was[k]) bm.setVisibleAt(i, false); }
-        k++;
+  /** deals the parts to LITE_SLICES jobs of about equal triangle count in this pose's frustum (largest first): what
+   *  each costs depends on where the camera looks (the CBD towers by the river, the Helix by the bay) */
+  _liteDeal(L) {
+    const f = L.frustum, m = L.m, sp = L.sphere, load = L.load.fill(0);
+    f.setFromProjectionMatrix(m.multiplyMatrices(L.cam.projectionMatrix, L.cam.matrixWorldInverse));
+    const shown = o => { for (let a = o; a; a = a.parent) if (!a.visible) return false; return true; };
+    for (const p of L.parts) {
+      const o = p.o; p.w = 0;
+      if (!shown(o)) continue;
+      if (p.share < 0) {
+        const g = o.geometry;
+        if (o.frustumCulled && !f.intersectsObject(o)) continue;
+        p.w = (g.index ? g.index.count : g.attributes.position.count) * (o.isInstancedMesh ? o.count : g.isInstancedBufferGeometry ? g.instanceCount : 1);
+        continue;
       }
+      for (let i = p.share; i < o.instanceCount; i += LITE_SHARES) {
+        if (!o.getVisibleAt(i)) continue;
+        const gid = o.getGeometryIdAt(i);
+        o.getBoundingSphereAt(gid, sp).applyMatrix4(o.getMatrixAt(i, m).premultiply(o.matrixWorld));
+        if (f.intersectsSphere(sp)) p.w += o.getGeometryRangeAt(gid, L.range).count;
+      }
+    }
+    L.order.sort((a, b) => b.w - a.w);
+    for (const p of L.order) { let j = 0; for (let k = 1; k < LITE_SLICES; k++) if (load[k] < load[j]) j = k; p.job = j; load[j] += p.w; }
+  }
+
+  /** hides what job j doesn't draw (restore = false), or shows it again */
+  _liteShare(j, restore) {
+    const L = this._lite, was = L.was, parts = L.parts;
+    let k = 0;
+    for (let n = 0; n < parts.length; n++) {
+      const p = parts[n], o = p.o;
+      if (p.share < 0) {
+        if (p.job === j) continue;
+        if (restore) o.visible = was[k]; else { was[k] = o.visible; o.visible = false; }
+        k++; continue;
+      }
+      // a batch: its LITE_SHARES parts from here on; drawn whole, not at all, or the chunks of the shares dealt to j
+      let mine = 0;
+      for (let s = 0; s < LITE_SHARES; s++) if (parts[n + s].job === j) mine++;
+      if (mine === 0) { if (restore) o.visible = was[k]; else { was[k] = o.visible; o.visible = false; } k++; }
+      else if (mine < LITE_SHARES) {
+        for (let i = 0; i < o.instanceCount; i++, k++) {
+          if (parts[n + i % LITE_SHARES].job === j) continue;
+          if (restore) { if (was[k]) o.setVisibleAt(i, true); } else if ((was[k] = o.getVisibleAt(i))) o.setVisibleAt(i, false);
+        }
+      }
+      n += LITE_SHARES - 1;
     }
   }
 }

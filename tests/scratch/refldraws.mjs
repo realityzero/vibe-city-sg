@@ -23,7 +23,7 @@ const r = await h.page.evaluate(mode => {
     return res;
   };
   // (lite: one full build is one call per job)
-  const calls = mode === 'lite' ? w._lite.jobs.length : 1;
+  const calls = mode === 'lite' ? w._lite.load.length : 1;
   for (let i = 0; i < calls; i++) w.renderReflection(R, g.scene, g.camera);
   R.renderBufferDirect = orig;
   g.paused = false;
