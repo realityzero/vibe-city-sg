@@ -1,12 +1,14 @@
 // Instanced renderer for AI traffic: one InstancedMesh per vehicle type (low LOD body incl. lights,
-// glass and decals) + one InstancedMesh per wheel style shared by all types. Per-instance paint colour
-// and light state live in instanced attributes read by the uber material.
+// glass and decals) + one InstancedMesh per wheel style shared by all types, and far stand-ins (a painted box with a
+// glasshouse and lamps, scaled to the type: two draws for every far car). Per-instance paint colour and light state live
+// in instanced attributes read by the uber material.
 import * as THREE from 'three';
 import { getTypeAssets, poolTexture } from './model.js';
 import { withLampField } from '../../gfx/lampfield.js';
 import { VEHICLE_SPECS } from './specs.js';
 import { createVehicleMaterial, packLights, vehicleTime, setDecalParams } from './material.js';
 import { buildWheelLow, wheelAtlas } from './wheels.js';
+import { PartBuilder, box } from './geom.js';
 
 const _m = new THREE.Matrix4(), _w = new THREE.Matrix4(), _l = new THREE.Matrix4(), _b = new THREE.Matrix4();
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
@@ -14,6 +16,33 @@ const _v = new THREE.Vector3(), _s = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1), X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0);
 const _c = new THREE.Color();
 const lightArr = [0, 0, 0, 0];
+
+// Far stand-ins, 1 m long / wide / tall (front at -z, origin on the ground), scaled per instance to the type's size:
+// a car (body, glasshouse, roof, lamps; bikes and vans too: a few pixels at that range) and a double-decker.
+function farCar() {
+  const pb = new PartBuilder(null), M = new THREE.Matrix4();
+  pb.add(box(0.9, 0.22, 0.84), 'black', { matrix: M.makeTranslation(0, 0.11, 0) });
+  pb.add(box(1, 0.36, 1), 'paint', { matrix: M.makeTranslation(0, 0.4, 0) });
+  pb.add(box(0.84, 0.3, 0.5), 'glass', { matrix: M.makeTranslation(0, 0.73, 0.04) });
+  pb.add(box(0.8, 0.08, 0.42), 'paint', { matrix: M.makeTranslation(0, 0.92, 0.05) });
+  for (const x of [-0.3, 0.3]) {
+    pb.add(box(0.22, 0.07, 0.02), 'head', { matrix: M.makeTranslation(x, 0.47, -0.505) });
+    pb.add(box(0.22, 0.07, 0.02), 'tail', { matrix: M.makeTranslation(x, 0.5, 0.505) });
+  }
+  return pb.build();
+}
+function farBus() {
+  const pb = new PartBuilder(null), M = new THREE.Matrix4();
+  pb.add(box(0.92, 0.1, 0.9), 'black', { matrix: M.makeTranslation(0, 0.05, 0) });
+  pb.add(box(1, 0.9, 1), 'paint', { matrix: M.makeTranslation(0, 0.55, 0) });
+  for (const [y, h] of [[0.43, 0.14], [0.77, 0.16]]) pb.add(box(1.01, h, 0.96), 'glass', { matrix: M.makeTranslation(0, y, 0.01) });
+  pb.add(box(0.9, 0.5, 0.02), 'glass', { matrix: M.makeTranslation(0, 0.62, -0.505) });
+  for (const x of [-0.34, 0.34]) {
+    pb.add(box(0.14, 0.04, 0.02), 'head', { matrix: M.makeTranslation(x, 0.16, -0.505) });
+    pb.add(box(0.1, 0.06, 0.02), 'tail', { matrix: M.makeTranslation(x, 0.2, 0.505) });
+  }
+  return pb.build();
+}
 
 function shareGeometry(src) {
   const g = new THREE.BufferGeometry();
@@ -76,7 +105,7 @@ class InstancePool {
 }
 
 export class TrafficRenderer {
-  constructor(scene, { maxPerType = 64, maxWheels = null, castShadow = true } = {}) {
+  constructor(scene, { maxPerType = 64, maxWheels = null, maxFar = 160, castShadow = true } = {}) {
     this.scene = scene;
     this.maxPerType = maxPerType;
     this.castShadow = castShadow;
@@ -89,6 +118,11 @@ export class TrafficRenderer {
     this.wheelPools = {
       alloy: new InstancePool(scene, buildWheelLow({ rimRatio: 0.64 }), wmat, wMax, { castShadow: false }),
       steel: new InstancePool(scene, buildWheelLow({ rimRatio: 0.6, steel: true }), wmat, Math.ceil(wMax / 3), { castShadow: false }),
+    };
+    // far stand-ins share the wheels' material (white atlas texel, no livery decals): no program of their own
+    this.farPools = {
+      car: new InstancePool(scene, farCar(), wmat, maxFar, { castShadow: false }),
+      bus: new InstancePool(scene, farBus(), wmat, Math.ceil(maxFar / 8), { castShadow: false }),
     };
     // headlight pools on the road ahead of the nearest cars at night (no real lights: one additive instanced draw)
     const pg = new THREE.PlaneGeometry(6.5, 13); pg.rotateX(-Math.PI / 2);
@@ -112,25 +146,27 @@ export class TrafficRenderer {
     return T;
   }
 
-  /** Adds a car; returns an id (or -1 if the per-type pool is full). */
-  add(type, color) {
+  /** Adds a car — or its far stand-in (`far`); `pool: false` for craft that throw no headlight pool on the road.
+   * Returns an id (or -1 if the pool is full). */
+  add(type, color, { far = false, pool = true } = {}) {
     const T = this._type(type);
-    const car = { id: this.nextId++, type, T, slot: -1, wheels: [], m: new THREE.Matrix4(), headOn: -1 };
-    car.slot = T.pool.alloc(car);
+    const body = far ? this.farPools[type === 'bus' ? 'bus' : 'car'] : T.pool;
+    const car = { id: this.nextId++, type, T, pool: body, far, lightPool: pool && !far, scale: far ? new THREE.Vector3(T.spec.width, T.spec.height, T.spec.length) : ONE, slot: -1, wheels: [], m: new THREE.Matrix4(), headOn: -1 };
+    car.slot = body.alloc(car);
     if (car.slot < 0) return -1;
     const col = color ?? T.A.design?.bodyColor ?? T.spec.colours[Math.floor(Math.random() * T.spec.colours.length)];
     this.setColor(car, col);
     const wp = this.wheelPools[T.wheelStyle];
-    for (let i = 0; i < T.A.wheels.length; i++) {
+    if (!far) for (let i = 0; i < T.A.wheels.length; i++) {
       const rec = { car, i, pool: wp, slot: -1 };
       rec.slot = wp.alloc(rec);
       if (rec.slot >= 0) car.wheels.push(rec);
     }
     // park far away until the first setTransform
     _m.makeTranslation(0, -1000, 0);
-    T.pool.mesh.setMatrixAt(car.slot, _m);
+    body.mesh.setMatrixAt(car.slot, _m);
     for (const w of car.wheels) w.pool.mesh.setMatrixAt(w.slot, _m);
-    T.pool.dirty = true; wp.dirty = true;
+    body.dirty = true; wp.dirty = true;
     this.cars.set(car.id, car);
     return car.id;
   }
@@ -139,15 +175,15 @@ export class TrafficRenderer {
     const car = typeof carOrId === 'number' ? this.cars.get(carOrId) : carOrId;
     if (!car) return;
     _c.set(color);
-    const a = car.T.pool.paint.array;
+    const a = car.pool.paint.array;
     a[car.slot * 3] = _c.r; a[car.slot * 3 + 1] = _c.g; a[car.slot * 3 + 2] = _c.b;
-    car.T.pool.dirty = true;
+    car.pool.dirty = true;
   }
 
   remove(id) {
     const car = this.cars.get(id);
     if (!car) return;
-    const moved = car.T.pool.free(car.slot);
+    const moved = car.pool.free(car.slot);
     if (moved) moved.slot = car.slot;
     for (const w of car.wheels) { const mv = w.pool.free(w.slot); if (mv) mv.slot = w.slot; }
     this.cars.delete(id);
@@ -163,19 +199,19 @@ export class TrafficRenderer {
   setTransform(id, position, quaternion, wheelSpin = 0, steer = 0, lights = null, tilt = null) {
     const car = this.cars.get(id);
     if (!car) return;
-    const T = car.T, A = T.A;
-    _m.compose(position, quaternion, ONE);
-    if (tilt) {
+    const A = car.T.A, P = car.pool;
+    _m.compose(position, quaternion, car.scale);
+    if (tilt && !car.far) {
       const e = _l.makeRotationFromQuaternion(tilt).elements, h = 0.5;
       e[12] = -e[4] * h; e[13] = h - e[5] * h; e[14] = -e[6] * h; // rotate about (0, h, 0): t = p - R p
-      T.pool.mesh.setMatrixAt(car.slot, _b.multiplyMatrices(_m, _l));
-    } else T.pool.mesh.setMatrixAt(car.slot, _m);
+      P.mesh.setMatrixAt(car.slot, _b.multiplyMatrices(_m, _l));
+    } else P.mesh.setMatrixAt(car.slot, _m);
     if (lights) {
       packLights(lights, lightArr);
-      T.pool.lights.array.set(lightArr, car.slot * 4);
-      if (lights.head) { car.m.copy(_m); car.headOn = this.frame; }
+      P.lights.array.set(lightArr, car.slot * 4);
+      if (lights.head && car.lightPool) { car.m.copy(_m); car.headOn = this.frame; }
     }
-    T.pool.dirty = true;
+    P.dirty = true;
     for (const w of car.wheels) {
       const ws = A.wheels[w.i];
       const r = ws.r ?? A.wheelR, width = ws.w ?? A.wheelW;
@@ -194,6 +230,7 @@ export class TrafficRenderer {
     vehicleTime.value = performance.now() / 1000;
     for (const T of this.types.values()) T.pool.flush();
     for (const p of Object.values(this.wheelPools)) p.flush();
+    for (const p of Object.values(this.farPools)) p.flush();
     this._updatePools();
     this.frame++;
   }
@@ -229,6 +266,7 @@ export class TrafficRenderer {
   dispose() {
     for (const T of this.types.values()) T.pool.dispose();
     for (const p of Object.values(this.wheelPools)) p.dispose();
+    for (const p of Object.values(this.farPools)) p.dispose();
     this.types.clear(); this.cars.clear();
   }
 }
