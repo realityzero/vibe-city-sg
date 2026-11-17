@@ -31,6 +31,7 @@ import { Missions } from './missions/manager.js';
 import { Extras } from './missions/extras.js';
 import { Spawns } from './world/spawns.js';
 import { FX } from './world/fx.js';
+import { Juice } from './world/juice.js';
 import { Cheats, CHEATS } from './missions/cheats.js';
 import { Stunts } from './missions/stunts.js';
 import { Taxi } from './missions/taxi.js';
@@ -387,6 +388,7 @@ export class Game {
     this.missions = new Missions(this);
     this.extras = new Extras(this);
     this.fx = new FX(this);
+    this.juice = new Juice(this);
     await this.mark('missions, extras, fx');
     await brk();
     this.spawns = new Spawns(this);
@@ -540,12 +542,20 @@ export class Game {
     ev.on('playerDied', r => this.playerDown(r || 'died'));
     ev.on('playerBusted', () => this.playerArrested());
     ev.on('enterVehicle', v => {
-      if (!this._toldDriving) { this._toldDriving = true; setTimeout(() => this.ui.help('<b>W/S</b> drive & brake, <b>A/D</b> steer, <b>Space</b> handbrake. <b>Q/E</b> change radio station, <b>V</b> camera, <b>F</b> get out.', 9000), 1200); }
+      if (this.player.controlsEnabled) this.driveHint(); // (a cutscene that seats Tommy gives it once he has the wheel)
       this.ui.hud.flashVehicle(v.spec.name); const st = this.audio?.radio; if (st && st.current < 0 && !v.isBike) st.setStation(Math.floor(Math.random() * Math.min(5, st.stations.length))); });
     ev.on('exitVehicle', () => { });
     ev.on('vehicleImpact', ({ vehicle, damage }) => { if (vehicle === this.player.vehicle) { this.cameraRig.shake(Math.min(1, damage / 60)); if (damage > 140 && !vehicle.isAircraft) this.player.damage((damage - 140) * 0.03, 'crash'); } });
     ev.on('carjack', () => this.progress.stats.carjacks++);
     ev.on('pedHit', () => this.progress.stats.peds++);
+  }
+
+  /** the driving controls, once per session, the first time Tommy has the wheel */
+  driveHint(delay = 1200) {
+    if (this._toldDriving) return;
+    this._toldDriving = true;
+    setTimeout(() => this.ui.hint('<b>W/S</b> drive & brake, <b>A/D</b> steer, <b>Space</b> handbrake. <b>Q/E</b> change radio station, <b>V</b> camera, <b>F</b> get out.',
+      'Hold <b>GAS</b> to drive, <b>BRAKE</b> to stop and reverse, steer with your <b>left thumb</b>. <b>DRIFT</b> is the handbrake, <b>RADIO</b> changes station, <b>EXIT</b> gets out.', 9000), delay);
   }
 
   async playerDown(reason) {
@@ -629,6 +639,7 @@ export class Game {
       map: { x: this.player.position.x, z: this.player.position.z, blips: this.allBlips() },
       secrets: CHEATS.map(c => ({ name: this.cheats.found.has(c.code) ? `${c.code} — ${c.name}` : c.name, desc: c.desc, found: this.cheats.found.has(c.code), hint: 'Type a code while playing. Vice City veterans know a few.' })),
       onSettingsChange: (k, v, all) => this.onSettingsChange(k, v, all),
+      actions: this.touch?.on ? this.touch.menuActions() : null,
     });
   }
   resume() { this.ui.pause.close(); this.paused = false; this.input.lock(); }
@@ -788,6 +799,7 @@ export class Game {
       this.hype.update(simDt);
       this.updateVehicleFx(simDt);
       this.cleanupVehicles(simDt);
+      this.juice.update(simDt, dt);
       this.fx.update(simDt);
       // distance stat
       if (this._lastPos) this.progress.stats.distance += Math.min(50, this._lastPos.distanceTo(this.player.position)); else this._lastPos = new THREE.Vector3();
@@ -811,7 +823,7 @@ export class Game {
     this.streetProps?.update(dt);
     this.streetDetail?.update(dt);
     this.nightGlow?.update();
-    this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1 });
+    this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1, forceShow: this.showcase });
     this.updateAudio(dt);
     this.updateHud(dt);
     // minigames cover the screen: keep the GPU idle except for an occasional refresh
@@ -855,11 +867,13 @@ export class Game {
       if (v.skid > 0.45 && v.grounded && v.wheelPos) {
         for (const k of bike ? [2] : [2, 3]) { const w = v.wheelPos[k]; this.fx.skid(`${v.collider.handle}_${k}`, V.p.set(bike ? 0 : w[0], 0, w[1]).applyQuaternion(v.quaternion).add(v.position)); }
         // tyre smoke only for proper slides at speed; bikes smoke less (one small tyre)
-        const amt = (v.skid - 0.45) / 0.55, rate = (bike ? 7 : 16) * amt;
-        if (v.speed > 7 && Math.random() < dt * rate) {
-          const lv = v.body.linvel(); V.vel.set(lv.x, 0, lv.z);
-          const w = v.wheelPos[bike ? 2 : (Math.random() < 0.5 ? 2 : 3)];
-          this.fx.tyreSmoke(V.p.set(bike ? 0 : w[0], 0.25, w[1]).applyQuaternion(v.quaternion).add(v.position), V.vel, amt, scale);
+        const amt = (v.skid - 0.45) / 0.55, rate = (bike ? 8 : 22) * amt;
+        // (as many puffs as the frame's share of the rate: a slow phone frame doesn't thin the cloud into blobs)
+        const puffs = v.speed > 7 ? Math.floor(dt * rate + Math.random()) : 0;
+        if (puffs) { const lv = v.body.linvel(); V.vel.set(lv.x, 0, lv.z); }
+        for (let k = 0; k < puffs; k++) {
+          const w = v.wheelPos[bike ? 2 : (k + (Math.random() < 0.5 ? 0 : 1)) % 2 + 2];
+          this.fx.tyreSmoke(V.p.set(bike ? 0 : w[0], 0.25, w[1] + (Math.random() - 0.5) * 0.5).applyQuaternion(v.quaternion).add(v.position), V.vel, amt, scale);
         }
       }
       // visible wear: paint darkens as the car takes damage
@@ -875,7 +889,7 @@ export class Game {
       if (v.health <= 0) {
         v.burnT = (v.burnT || 0) + dt;
         // fair warning, GTA-style: the engine burns for six seconds before it goes up
-        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.help('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', 4000); this.audio?.sfx?.('wanted_up'); }
+        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.hint('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', '<b>She\'s on fire!</b> Get out — tap <b>EXIT</b> — and run.', 4000); this.audio?.sfx?.('wanted_up'); }
         if (v.burnT > 6) this.explodeVehicle(v);
       }
     }
@@ -936,7 +950,8 @@ export class Game {
     if (this._zoneT <= 0) {
       this._zoneT = 1;
       const z = districtAt(p.position.x, p.position.z);
-      if (z && z !== this._zone) { this._zone = z; this.ui.hud.flashZone(z); }
+      // (not while a cutscene hides the HUD: the district would be marked as seen and never shown)
+      if (z && z !== this._zone && this.ui.hud.visible) { this._zone = z; this.ui.hud.flashZone(z); }
     }
     // radar
     // radar: mission-critical blips always; amenities only when close (the full map shows everything)

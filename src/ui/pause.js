@@ -36,7 +36,7 @@ export class PauseMenu {
     this.ui = ui;
     this.root = el('div', 'vc-pause vc-hidden vc-interactive');
     this.root.innerHTML = `<div class="top"><div class="brand">Vibe City</div><div class="tabs"></div><div class="spacer"></div>
-      <button class="act quit">Quit to title</button><button class="act resume">Resume</button></div><div class="body"></div>`;
+      <button class="act quit">Quit to title</button><button class="act resume">Resume</button></div><div class="quick"></div><div class="body"></div>`;
     parent.appendChild(this.root);
     this.tabsEl = this.root.querySelector('.tabs');
     this.body = this.root.querySelector('.body');
@@ -66,6 +66,15 @@ export class PauseMenu {
     if (this.ui.map.isOpen) this.ui.map.close();
     this.settings = { ...DEFAULT_SETTINGS, ...(opts.settings || {}) };
     this.root.querySelector('.quit').classList.toggle('vc-hidden', !opts.onQuit);
+    // quick actions (touch: camera, Claudia, fullscreen): resume first, then act in the game
+    const quick = this.root.querySelector('.quick');
+    quick.textContent = '';
+    for (const [label, run] of opts.actions || []) {
+      const b = el('button', 'act', escapeHtml(label));
+      b.onclick = () => { opts.onResume?.(); run(); };
+      quick.appendChild(b);
+    }
+    quick.classList.toggle('vc-hidden', !opts.actions?.length);
     this.root.classList.remove('vc-hidden');
     this.isOpen = true;
     this._renderBrief(); this._renderStats(); this._renderSecrets(); this._renderSettings();

@@ -1,6 +1,7 @@
 // On-screen controls for phones and tablets. A floating move stick on the left, context buttons on the right (on foot,
 // swimming, driving, boating, flying), drag anywhere else to look, pinch to zoom the camera, tap the radar for the map,
-// and a small system bar (pause, camera, Claudia, skip line, fullscreen). Buttons dispatch the same key events a
+// and a pause button (plus skip while a line or the intro plays; camera, Claudia and fullscreen live in the pause menu,
+// out of the prime top strip). Buttons dispatch the same key events a
 // keyboard would, so every system that listens for keys works unchanged; the stick feeds Input.stick and look drags
 // feed Input.mouse. Turns on for touch-first devices or at the first touch, and off again when a real mouse moves.
 import './touch.css';
@@ -27,7 +28,7 @@ const MODES = {
   boat: [['gas', 'a'], ['brake', 'b'], ['exit', 'd'], ['horn', 'e']],
   air: [['up', 'a'], ['down', 'b'], ['exit', 'd']],
 };
-const SYS = [['pause', 'II', 'Escape'], ['cam', 'CAM', 'KeyV'], ['ai', 'AI', 'Slash', '/'], ['skip', '▶▶', 'Enter'], ['full', '⛶']];
+const SYS = [['pause', 'II', 'Escape'], ['skip', '▶▶', 'Enter']];
 const LOOK_GAIN = 2.4;   // touch px -> mouse px (a third of the screen turns ~100°)
 const PINCH_GAIN = 0.012; // pinch px -> wheel steps
 
@@ -47,10 +48,9 @@ export class TouchControls {
     this.stick = el('div', 'stick', '<div class="knob"></div>'); this.knob = this.stick.firstChild;
     this.cluster = el('div', 'cluster');
     this.bar = el('div', 'sysbar');
-    for (const [id, label, code, key] of SYS) {
-      if (id === 'full' && !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) continue;
+    for (const [id, label, code] of SYS) {
       const b = el('button', `sys ${id}`, label);
-      this.bind(b, id === 'full' ? () => this.toggleFullscreen() : code, false, key);
+      this.bind(b, code, false);
       this.bar.appendChild(b);
     }
     root.append(this.surf, this.stick, this.cluster, this.bar, el('div', 'rotate', '<b>Turn your device sideways</b><span>Vibe City plays in landscape</span>'));
@@ -161,6 +161,14 @@ export class TouchControls {
     this.looks.clear();
   }
 
+  /** pause-menu entries for what the system bar used to hold: [label, run once the game has resumed] */
+  menuActions() {
+    const tap = (code, key) => () => { this.key(code, true, key); this.key(code, false, key); };
+    const a = [['Camera view', tap('KeyV')], ['Ask Claudia', tap('Slash', '/')]];
+    if (document.fullscreenEnabled || document.webkitFullscreenEnabled) a.push(['Full screen', () => this.toggleFullscreen()]);
+    return a;
+  }
+
   toggleFullscreen() {
     const d = document, fs = d.fullscreenElement || d.webkitFullscreenElement;
     if (fs) (d.exitFullscreen || d.webkitExitFullscreen)?.call(d);
@@ -185,7 +193,7 @@ export class TouchControls {
     const ctl = play && p.controlsEnabled && g.input.enabled;
     const mode = v ? (v.isAircraft || v.spec.kind === 'drone' ? 'air' : v.isBoat ? 'boat' : 'car') : p?.swimming ? 'swim' : 'foot';
     if (mode !== this.mode) { this.releaseAll(); this.mode = mode; this.buildCluster(mode); this.root.dataset.mode = mode; }
-    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub ? 'sub' : ''}`;
+    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub || g.ui.skippable ? 'sub' : ''}`;
     if (flags !== this.flags) {
       if (this.flags.includes('ctl') && !ctl) this.releaseAll();
       this.flags = flags;

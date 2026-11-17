@@ -217,6 +217,7 @@ export class Vehicle {
 
   onImpact(other, force) {
     if (this.grace > 0) return;
+    this.game.juice?.contact(this, other, force); // sparks and grind (world/juice.js)
     const now = performance.now();
     // scrapes and kerb knocks are free; a solid hit costs a few hundred, a head-on at speed most of a sedan
     const dmg = Math.max(0, force / (this.spec.mass * 9.81) - 12) * 3.6;

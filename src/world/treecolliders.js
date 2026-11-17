@@ -3,7 +3,7 @@
 // and Tommy hit them, wheel rays and the camera ray don't (a trunk sweeping through the camera ray would jolt the view).
 import { G, groups } from '../physics/physics.js';
 
-const CELL = 40;
+export const CELL = 40; // m, grid cell of the tree lookup (also used by core/occluders.js)
 
 export class TreeColliders {
   constructor(game, veg, { pool = 150, radius = 50 } = {}) {

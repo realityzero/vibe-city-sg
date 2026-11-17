@@ -158,6 +158,19 @@ for a while, so allocation *churn* during the load matters as well as what stays
   overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right turn from above);
   `tests/mobile/trafficcpu.mjs` times `Traffic.update` at phone settings.
 - The follow camera uses frame-rate independent smoothing, a softer vertical follow and a fast-but-not-instant pull-in.
+  Thin occluders between it and Tommy (trunks, lamp posts, traffic-light poles: `core/occluders.js`, from the tree /
+  lamp grids) are cut by pushing the near plane just past them — never into the subject or the ground at the screen's
+  foot. On phone-sized screens the chase view sits further back and higher. Cutscene overrides can `track(camera, dt)`
+  (run after the world moved, so a tracking shot stays locked to the interpolated car); `blendFrom()` eases a
+  cutscene's last shot into the follow view.
+- Driving juice (`world/juice.js`): near misses (boxes on the ground plane followed through the pass) pay cash and hype
+  with a popup and a FOV kick; sparks from the contact point of every player scrape (`Vehicle.onImpact` hook, Rapier
+  pair manifold); 0.3 s slow motion on big crashes; view-space Kopi Gao speed lines. Pooled, created at load.
+- New game: mission 1 opens cold (`missions/coldopen.js`): sunset on the Esplanade Drive bridge, a tracking shot of the
+  Infernus, a radio ident and the title card, then the camera blends into the chase view and the car cruises on until
+  the player touches the controls. Time holds at sunset until Ken: once the sun stops casting shadows every lit
+  program swaps for its shadowless twin (~40 compiles — the same hitch free roam has at dusk). A retry starts at the
+  capsule hotel as before.
   Small props have no colliders; trees get solid trunks near the player from a pool of static cylinders
   (`world/treecolliders.js`, group `PROP`: cars and Tommy hit them, wheel rays and the camera ray don't).
 - Every long-distance move of the player goes through `Game.relocate()` -> `SafeSpots.find()` (`world/safespot.js`):

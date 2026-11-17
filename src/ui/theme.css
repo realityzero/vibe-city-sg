@@ -55,6 +55,8 @@
 .vc-money.bump { animation: vc-bump .45s ease-out; }
 .vc-money.loss { color: var(--red); }
 .vc-money .cur { font-size: 0.72em; margin-right: 0.04em; }
+.vc-money .lz { color: rgba(127,227,106,.22); -webkit-text-stroke-color: rgba(0,0,0,.3); }
+.vc-money.loss .lz { color: rgba(255,61,84,.22); }
 @keyframes vc-bump { 0% { transform: scale(1); } 30% { transform: scale(1.12); filter: brightness(1.6); } 100% { transform: scale(1); } }
 .vc-val { font: italic 600 calc(var(--u) * 2.5)/1 var(--f-hud); color: var(--cyan-hi); letter-spacing: .08em; text-transform: uppercase; }
 .vc-val b { font-weight: 800; color: var(--cyan); letter-spacing: .02em; font-size: 1.25em; }
@@ -99,6 +101,13 @@
 
 /* speedometer next to radar */
 .vc-speedo { position: absolute; left: calc(var(--u) * 33); bottom: calc(var(--u) * 4.2); font: italic 800 calc(var(--u) * 4.8)/0.9 var(--f-hud); color: #fff; transition: opacity .4s; }
+/* Kopi Gao boost meter (missions/hype.js) under the speedometer */
+.vc-kopi { position: absolute; left: calc(var(--u) * 33); bottom: calc(var(--u) * 2.3); width: calc(var(--u) * 14); height: calc(var(--u) * .9); border-radius: 99em;
+  background: rgba(0,0,0,.55); box-shadow: 0 0 0 1px rgba(255,255,255,.25); pointer-events: none; }
+.vc-kopi .fill { height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, #7a4a2a, #e8a35c); }
+.vc-kopi .lbl { position: absolute; left: calc(100% + var(--u) * 1); top: 50%; transform: translateY(-50%); white-space: nowrap;
+  font: italic 700 calc(var(--u) * 1.8)/1 var(--f-hud); letter-spacing: .14em; text-transform: uppercase; color: #f2d3b0; text-shadow: 0 1px 2px #000; }
+.vc-touchmode .vc-kopi .key { display: none; }
 .vc-speedo small { font: italic 600 calc(var(--u) * 1.9)/1 var(--f-hud); letter-spacing: .2em; color: var(--cyan-hi); margin-left: .25em; }
 .vc-speedo .veh { display: block; font: italic 600 calc(var(--u) * 2)/1.4 var(--f-hud); letter-spacing: .12em; color: #d9d2ff; text-transform: uppercase; }
 
@@ -177,6 +186,20 @@
 .vc-lb.bot { bottom: 0; transform: translateY(100%); }
 .vc-lb.on { transform: none; }
 .vc-fade { position: absolute; inset: 0; background: #000; opacity: 0; transition-property: opacity; transition-timing-function: ease-in-out; }
+/* cold-open title card: the title screen's neon script, in the sky between the Flyer and Marina Bay Sands */
+.vc-titlecard { position: absolute; left: 50%; top: calc(12vh + var(--u) * 3); transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity 1.4s ease-in-out; z-index: 3; pointer-events: none; }
+.vc-titlecard.vc-show { opacity: 1; }
+.vc-titlecard .k { font: 400 calc(var(--u) * 2.4)/1 var(--f-display); letter-spacing: .5em; margin-left: .5em; color: #fff; text-shadow: 0 .08em 0 #000, 0 0 .5em rgba(255,255,255,.3); }
+.vc-titlecard .t { font: 400 calc(var(--u) * 14)/0.9 var(--f-script); color: #ffd3ec; padding: 0 .25em; margin-top: calc(var(--u) * .6); transform: rotate(-6deg);
+  text-shadow: 0 0 .02em #fff, 0 0 .08em var(--pink), 0 0 .18em var(--pink), 0 0 .38em #ff1f8f, 0 .03em .02em #4b0030; }
+.vc-titlecard.vc-show .t { animation: vc-neonon 1.6s steps(1) both; }
+@keyframes vc-neonon { 0% { opacity: 0; } 12% { opacity: .7; } 16% { opacity: .1; } 24% { opacity: 1; } 30% { opacity: .45; } 36%, 100% { opacity: 1; } }
+.vc-titlecard .s { font: 400 calc(var(--u) * 3.4)/1 var(--f-neon); letter-spacing: .5em; margin: calc(var(--u) * 1.2) 0 0 .5em; color: var(--cyan-hi); text-shadow: 0 0 .15em var(--cyan), 0 0 .5em rgba(47,230,255,.6); }
+.vc-titlecard .c { font: italic 600 calc(var(--u) * 2)/1 var(--f-hud); letter-spacing: .3em; margin: calc(var(--u) * 1.4) 0 0 .3em; color: #e9dcff; opacity: .8; text-shadow: 0 1px 2px #000; }
+.vc-skiphint { position: absolute; right: calc(var(--u) * 3.6); bottom: calc(var(--u) * 2.4); z-index: 3; font: italic 700 calc(var(--u) * 2.2)/1 var(--f-hud); letter-spacing: .2em; text-transform: uppercase;
+  color: rgba(255,255,255,.6); opacity: 0; transition: opacity .6s; pointer-events: none; }
+.vc-skiphint.vc-show { opacity: 1; transition-delay: 1.5s; }
+.vc-touchmode .vc-skiphint { display: none; }
 
 /* ---------------------------------------------------------------- choice */
 .vc-choice { position: absolute; left: 50%; bottom: calc(var(--u) * 19); transform: translateX(-50%); width: min(80vw, calc(var(--u) * 96));
@@ -326,7 +349,8 @@
 .vc-fullmap .hdr .s { font: italic 600 calc(var(--u)*2)/1 var(--f-hud); letter-spacing: .3em; color: var(--cyan-hi); text-transform: uppercase; }
 @keyframes vc-fadein { from { opacity: 0; } }
 
-.vc-pause { position: absolute; inset: 0; background: rgba(6,2,16,.72); backdrop-filter: blur(6px) saturate(1.2); display: grid; grid-template-rows: auto 1fr; animation: vc-fadein .2s; }
+.vc-pause { position: absolute; inset: 0; background: rgba(6,2,16,.72); backdrop-filter: blur(6px) saturate(1.2); display: grid; grid-template-rows: auto auto 1fr; animation: vc-fadein .2s; }
+.vc-pause .top { grid-row: 1; } .vc-pause .quick { grid-row: 2; } .vc-pause .body { grid-row: 3; }
 .vc-pause .top { display: flex; align-items: center; gap: calc(var(--u)*3); padding: calc(var(--u)*2.6) calc(var(--u)*4) calc(var(--u)*1.6); }
 .vc-pause .brand { font: 400 calc(var(--u)*6.4)/0.9 var(--f-script); color: #ffd3ec; text-shadow: 0 0 .08em var(--pink), 0 0 .2em var(--pink); transform: rotate(-5deg); margin-right: calc(var(--u)*2); }
 .vc-pause .tabs { display: flex; gap: calc(var(--u)*.6); }
@@ -337,6 +361,8 @@
 .vc-pause .act { all: unset; cursor: pointer; font: italic 800 calc(var(--u)*2.6)/1 var(--f-hud); letter-spacing: .1em; text-transform: uppercase; padding: calc(var(--u)*1.1) calc(var(--u)*2.2); border-radius: 99em; border: 1px solid rgba(255,255,255,.3); color: #fff; }
 .vc-pause .act.resume { background: var(--cyan); color: #06121a; border-color: var(--cyan); box-shadow: 0 0 calc(var(--u)*2) rgba(47,230,255,.5); }
 .vc-pause .act:hover { filter: brightness(1.2); }
+.vc-pause .quick { display: flex; gap: calc(var(--u)*1.6); padding: 0 calc(var(--u)*4) calc(var(--u)*1.2); }
+.vc-pause .quick .act { background: rgba(255,255,255,.06); }
 .vc-pause .body { position: relative; margin: 0 calc(var(--u)*4) calc(var(--u)*4); border-radius: calc(var(--u)*1.6); overflow: hidden; border: 1px solid rgba(255,255,255,.14); background: rgba(10,5,24,.75); min-height: 0; }
 .vc-pause .pane { position: absolute; inset: 0; overflow: auto; padding: calc(var(--u)*3) calc(var(--u)*4); font: 500 calc(var(--u)*2.2)/1.5 var(--f-ui); }
 .vc-pause .pane.map { padding: 0; }
@@ -398,6 +424,15 @@
 .vc-stunt .row span { color: #d9d2ff; text-align: right; -webkit-text-stroke: calc(var(--u)*.3) #000; paint-order: stroke fill; }
 .vc-stunt .row b { color: #fff; text-align: left; font-weight: 800; -webkit-text-stroke: calc(var(--u)*.3) #000; paint-order: stroke fill; }
 .vc-stunt .rw { margin-top: calc(var(--u)*.8); font: italic 800 calc(var(--u) * 6)/1 var(--f-hud); color: var(--money); -webkit-text-stroke: calc(var(--u)*.5) #000; paint-order: stroke fill; }
+/* near-miss popup: pink HUD italic over the road, the cash in money green, springs in and floats off */
+.vc-shave { position: absolute; left: 50%; top: 23%; text-align: center; opacity: 0; pointer-events: none; z-index: 3; transform: translateX(-50%); }
+.vc-shave.go { animation: vc-shave 1.5s cubic-bezier(.2,.9,.25,1) both; }
+@keyframes vc-shave { 0% { opacity: 0; transform: translateX(-50%) scale(1.7); } 9% { opacity: 1; transform: translateX(-50%) scale(.96); } 16% { transform: translateX(-50%) scale(1); }
+  72% { opacity: 1; transform: translateX(-50%) translateY(-12%); } 100% { opacity: 0; transform: translateX(-50%) translateY(-45%); } }
+.vc-shave .t { font: italic 800 calc(var(--u) * 5.4)/1 var(--f-hud); letter-spacing: .05em; text-transform: uppercase; color: var(--pink-hi);
+  -webkit-text-stroke: calc(var(--u) * .5) #000; paint-order: stroke fill; text-shadow: 0 0 calc(var(--u) * 2) rgba(255,63,164,.6); }
+.vc-shave .c { margin-top: calc(var(--u) * .4); font: italic 800 calc(var(--u) * 4)/1 var(--f-hud); color: var(--money); letter-spacing: .03em; -webkit-text-stroke: calc(var(--u) * .45) #000; paint-order: stroke fill; }
+.vc-shave .x { margin-left: .35em; color: var(--cyan-hi); }
 
 /* slow-mo replay look */
 .vc-slowmo { position: absolute; inset: 0; opacity: 0; transition: opacity .45s; pointer-events: none; z-index: 2;

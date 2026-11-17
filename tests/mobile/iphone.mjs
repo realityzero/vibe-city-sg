@@ -98,7 +98,16 @@ try {
   // 5. touch controls: stick walks, drag looks, JUMP jumps
   mem.mark = 'play';
   const st = () => page.evaluate(() => { const p = __game.player; return { x: p.position.x, z: p.position.z, yaw: __game.cameraRig.yaw, vy: p.vy, grounded: p.grounded }; });
-  const ptr = (type, x, y, id) => page.evaluate(([type, x, y, id]) => document.querySelector('.vc-touch .surf').dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: id === 1 })), [type, x, y, id]);
+  const ptr = (type, x, y, id, sel = '.vc-touch .surf') => page.evaluate(([type, x, y, id, sel]) => document.querySelector(sel).dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: id === 1 })), [type, x, y, id, sel]);
+  // a new game opens at the wheel (the cold open): hold BRAKE to a stop, then EXIT for the on-foot checks
+  if (await page.evaluate(() => !!__game.player.vehicle)) {
+    const bk = await center('.vc-touch .b-brake');
+    if (bk) { await ptr('pointerdown', ...bk, 3, '.vc-touch .b-brake'); await until(() => __game.player.vehicle.speed < 0.8, 10000); await ptr('pointerup', ...bk, 3, '.vc-touch .b-brake'); }
+    const ex = await center('.vc-touch .b-exit');
+    if (ex) await tap(...ex);
+    if (await until(() => !__game.player.vehicle && __game.player.state === 'foot', 6000)) pass('BRAKE + EXIT', 'out of the car'); else fail('BRAKE + EXIT', 'still in the car');
+    await page.waitForTimeout(800);
+  }
   let a = await st(), b;
   await ptr('pointerdown', 560, 170, 1); for (let k = 1; k <= 8; k++) await ptr('pointermove', 560 + k * 15, 170, 1); await ptr('pointerup', 680, 170, 1);
   await page.waitForTimeout(200); b = await st();
