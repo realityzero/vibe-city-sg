@@ -499,9 +499,9 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           // lobbies are lit day and night: cool white for offices/hospitals, warm for hotels and condos
           if (lobby) { lampI = 0.42 + 0.18 * h; lampCol = fUse > 7.5 || fUse == 6.0 ? vec3(1.0, 0.8, 0.58) : vec3(0.92, 0.95, 1.0); roomBase = mix(vec3(0.74, 0.71, 0.66), vec3(0.5, 0.47, 0.44), h2); }
           // trading shops are lit day and night: fluorescent provision shops/kopitiams, warm goldsmiths and bakeries
-          // shophouse ground floors that aren't shops (homes, offices, hotels) keep a lit front room day and night: their
-          // deep arcades are in shade, unlit glazing there read as black holes
-          if (ground && shop && !shopUse) { lampI = 0.32 + 0.16 * h; lampCol = vec3(1.0, 0.82, 0.6); }
+          // shophouse ground floors that aren't shops (homes, offices, hotels) and civic halls keep a lit front room day
+          // and night: unlit, their arched glazing in the shade read as a row of black holes
+          if (ground && ((shop && !shopUse) || (fStyle > 5.5 && fStyle < 6.5))) { lampI = 0.58 + 0.2 * h; lampCol = vec3(1.0, 0.82, 0.6); }
           if (shopG) { lampI = shopOpen ? (0.62 + 0.25 * h) * mix(1.0, 0.55, uNight) : 0.0; lampCol = shopFam == 4.0 || shopFam == 5.0 ? vec3(1.0, 0.8, 0.58) : mix(vec3(0.86, 0.95, 1.0), vec3(1.0, 0.9, 0.76), step(0.7, h2)); roomBase = mix(vec3(0.55, 0.38, 0.22), vec3(0.42, 0.45, 0.4), h2); }
           vec3 interior;
           if (camDist < uDetailDist && far < 0.5 && !(ground && hdb)) {
