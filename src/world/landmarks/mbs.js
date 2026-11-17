@@ -2,7 +2,7 @@
 // and the rippling podium roofs. Positions derived from the OSM footprints of the towers / SkyPark.
 import {
   THREE, U, Bucket, materials, facadeMaterial, nightGlowMaterial, extrudeProfile, frameMatrix, rng, smooth, lerp,
-  ringOf, exclusionsForBuildings, signedArea, fixWinding, extrudeFootprint, capGeometry,
+  ringOf, exclusionsForBuildings, signedArea, fixWinding, extrudeFootprint, capGeometry, offsetRing, flipFaces,
 } from './common.js';
 
 // local frame: +x = along the tower line (NNE), +z = east (towards Gardens by the Bay)
@@ -75,8 +75,9 @@ class Lasers {
 
 export function buildMBS(city, quality) {
   const M = materials();
-  // hotel towers at night: mostly dark glass with scattered warm rooms (many curtained), no glowing spandrels
-  const towerMat = facadeMaterial({ wall: 0xd5dadc, glass: 0x3d5462, cell: [2.15, 3.47], frame: [0.02, 0.3, 0.02], lit: 0.24, seed: 3, bands: 1, litIntensity: 1.5, warm: 0xffb36b, glassRough: 0.06, wallGlow: 0.025 });
+  // hotel towers at night: mostly dark glass with scattered warm rooms (many curtained), the spandrels washed amber by
+  // the floodlights at their feet
+  const towerMat = facadeMaterial({ wall: 0xd5dadc, glass: 0x3d5462, cell: [2.15, 3.47], frame: [0.02, 0.3, 0.02], lit: 0.24, seed: 3, bands: 1, litIntensity: 1.5, warm: 0xffb36b, glassRough: 0.06, wallGlow: 0.32, wallGlowColor: 0xffb46a, wallGlowY: [10, TOP, 0.3] });
   const innerMat = facadeMaterial({ wall: 0x9aa3a8, glass: 0x2e3b42, cell: [3.0, 3.47], frame: [0.1, 0.3, 0.05], lit: 0.25, seed: 5, litIntensity: 1.6 });
   const hullMat = new THREE.MeshStandardMaterial({ color: 0xe9ebec, roughness: 0.4, metalness: 0.35 });
   const deckMat = new THREE.MeshStandardMaterial({ color: 0xb59e80, roughness: 0.75 });
@@ -86,8 +87,11 @@ export function buildMBS(city, quality) {
   const bandGlow = nightGlowMaterial(0xfff4e6, 0.35, { base: 0xe9ebec, rough: 0.4, metal: 0.35 });
   const roofMetal = new THREE.MeshStandardMaterial({ color: 0xe4e6e6, roughness: 0.45, metalness: 0.35 });
   const roofGlass = new THREE.MeshStandardMaterial({ color: 0x9fb3ba, roughness: 0.1, metalness: 0.7 });
-  // retail / expo glazing: tall panes, nearly all lit at night (not an office grid of lit and dark rooms)
-  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [4.5, 5.5], frame: [0.03, 0.06, 0.04], lit: 0.97, seed: 11, warm: 0xffeccc, cool: 0xfff4e0, litIntensity: 1.0, curtains: 0.05 });
+  // retail / expo glazing: tall dark panes on slim mullions with the warm mall behind them, one even glow at night
+  // (not an office grid of lit and dark rooms)
+  const podGlass = facadeMaterial({ wall: 0xa9b0b3, glass: 0x26343c, cell: [1.6, 5.5], frame: [0.03, 0.03, 0.03], lit: 1, seed: 11, warm: 0xffcf9a, cool: 0xffdcb0, litIntensity: 0.16, curtains: 0, vary: 0.12, glassMetal: 0.4 });
+  // the roof's edge over the promenade: a crisp line of light at night
+  const canopyEdge = nightGlowMaterial(0xfff2dc, 2.4, { base: 0xe4e6e6, rough: 0.45, metal: 0.35 });
   const pavilionMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.5 });
 
   const F = frameMatrix(ORIGIN[0], ORIGIN[1], AX[0], AX[1]);
@@ -214,16 +218,25 @@ export function buildMBS(city, quality) {
     const tr = trunkGeo.clone(); tr.translate(u, DECK + 1.2, a); B.add(M.deck, tr, F);
   }
 
-  // ---- podium: the Shoppes / Expo blocks (OSM 7323-7325, drawn by the city as 25 m office slabs) rebuilt as glazed
-  // 16.5 m podiums under the four rippling wave roofs that replace the OSM skillion strips 7053..7095
+  // ---- podium: The Shoppes (OSM 8522, the strip along the bay promenade) and the blocks behind it (7323-7325), drawn
+  // by the city as 16-25 m office slabs, rebuilt as glazed 16.5 m podiums under the four rippling wave roofs that replace
+  // the OSM skillion strips 7053..7095. The flat roof oversails the glazing as a canopy with a lit edge.
   const byId = new Map(city.buildings.map(b => [b.id, b]));
-  const PODIUM = [7323, 7324, 7325], PODIUM_H = 16.5;
+  const SHOPPES = 8522, PODIUM = [7323, 7324, 7325], PODIUM_H = 16.5, CANOPY = 2.2;
   const podiumColliders = [];
-  for (const id of PODIUM) {
+  for (const id of [SHOPPES, ...PODIUM]) {
     const b = byId.get(id); if (!b) continue;
-    const r = ringOf(b);
+    const r = ringOf(b), holes = (b.ho || []).map(h => { const q = []; for (let i = 0; i < h.length; i += 2) q.push([h[i], h[i + 1]]); return q; });
     B.add(podGlass, extrudeFootprint(r, 0, PODIUM_H, { top: false }));
-    B.add(roofMetal, capGeometry(r, PODIUM_H));
+    const roof = offsetRing(r, CANOPY);
+    B.add(roofMetal, capGeometry(roof, PODIUM_H + 0.15, false, holes));
+    B.add(roofMetal, capGeometry(roof, PODIUM_H - 0.45, true, holes));
+    B.add(canopyEdge, extrudeFootprint(roof, PODIUM_H - 0.45, PODIUM_H + 0.15, { top: false }));
+    // the Rain Oculus: the round void through the Shoppes' roof, lined with glass (facing into it), a pool at its foot
+    for (const h of holes) {
+      B.add(M.darkGlass, flipFaces(extrudeFootprint(h, 0, PODIUM_H + 0.15, { top: false })));
+      B.add(M.pool, capGeometry(h, 0.15));
+    }
     const g = extrudeFootprint(r, 0, PODIUM_H);
     podiumColliders.push({ type: 'trimesh', vertices: new Float32Array(g.attributes.position.array), indices: new Uint32Array([...Array(g.attributes.position.count).keys()]) });
   }
@@ -348,7 +361,7 @@ export function buildMBS(city, quality) {
   }
   { const c = toWorld(-25, (TOP + DECK) / 2, 0); colliders.push({ type: 'box', center: [c.x, c.y, c.z], half: [171, (DECK - TOP) / 2 + 0.5, 19], yaw }); }
 
-  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831, ...PODIUM].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
+  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831, SHOPPES, ...PODIUM].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
   const sky = toWorld(110, DECK + 1, 0), lobby = toWorld(-50, 0, -30), base = toWorld(-50, 0, 0);
   const pois = [
     { id: 'mbs', name: 'Marina Bay Sands', x: base.x, y: 0, z: base.z },
