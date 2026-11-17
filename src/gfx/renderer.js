@@ -11,7 +11,7 @@ import { EffectComposer, RenderPass, EffectPass, GodRaysEffect, BlendFunction, B
 
 export const QUALITY = {
   // (low: no film grain — at a phone's ~4x upscale it reads as noise, not film)
-  low: { pixelRatio: 0.75, shadows: 1024, shadowRadius: 110, reflections: false, bloom: true, smaa: false, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
+  low: { pixelRatio: 0.75, shadows: 1024, shadowRadius: 110, reflections: 'lite', bloom: true, smaa: false, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
   medium: { pixelRatio: 1.0, shadows: 2048, shadowRadius: 150, reflections: true, bloom: true, smaa: true, ao: false, treeDist: 900, treeNear: 170, drawDist: 3500 },
   high: { pixelRatio: 1.25, shadows: 2048, shadowRadius: 170, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1300, treeNear: 230, drawDist: 5000 },
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
