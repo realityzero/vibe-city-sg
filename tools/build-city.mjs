@@ -273,6 +273,12 @@ for (const el of bEls) {
     if (has && !ground && minPart < Infinity) b.capH = minPart;
   }
 }
+// a freestanding hut of a few square metres with no height in OSM (kiosk, guard post, lift or pump house) is one storey,
+// not a narrow shophouse tower; slivers of a terrace (they share party-wall nodes with their neighbours) stay as they are
+const ringKey = p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`;
+const sharedNodes = new Map();
+for (const b of rawB) for (const p of b.outer) sharedNodes.set(ringKey(p), (sharedNodes.get(ringKey(p)) || 0) + 1);
+const isKiosk = b => b.btype === 'yes' && !b.isPart && b.area < 40 && b.outer.filter(p => sharedNodes.get(ringKey(p)) > 1).length < 2;
 let seed = 1337;
 const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 const buildings = [];
@@ -281,6 +287,7 @@ let bid = 0;
 const order = rawB.filter(b => !b.hasParts).concat(rawB.filter(b => b.hasParts && b.capH));
 for (const b of order) {
   const { t, btype, area } = b;
+  const kiosk = isKiosk(b);
   let height = parseNum(t.height);
   const levels = parseNum(t['building:levels']);
   const roofLevels = parseNum(t['roof:levels']);
@@ -292,6 +299,7 @@ for (const b of order) {
     else if (btype === 'roof') height = 4.5;
     else if (['train_station', 'transportation'].includes(btype)) height = 5;
     else if (['house', 'detached', 'semidetached_house', 'terrace'].includes(btype)) height = 8 + rand() * 3;
+    else if (kiosk) height = 3.2 + rand() * 1.2;
     else if (area < 250) height = 9 + rand() * 4;
     else if (area < 900) height = 11 + rand() * 9;
     else height = 14 + rand() * 22;
@@ -316,7 +324,7 @@ for (const b of order) {
   else if (['industrial', 'warehouse', 'service', 'storage_tank', 'hangar'].includes(btype)) style = STYLE.industrial;
   else if (height >= 45 && (material === 'glass' || ['commercial', 'office', 'yes', 'hotel', 'retail', 'mixed_use', 'bank'].includes(btype))) style = (material === 'concrete' && rand() < 0.5) ? STYLE.office : STYLE.glass;
   else if (['residential', 'apartments', 'dormitory'].includes(btype) && height > 18) style = /hdb/i.test(res) ? STYLE.hdb : STYLE.resi;
-  else if (height <= 17 && area < 700 && lv <= 4 && !['hotel', 'office', 'hospital', 'school'].includes(btype)) style = STYLE.shophouse;
+  else if (height <= 17 && area < 700 && lv <= 4 && !kiosk && !['hotel', 'office', 'hospital', 'school'].includes(btype)) style = STYLE.shophouse;
   else if (height <= 20) style = STYLE.lowrise;
   else style = rand() < 0.5 ? STYLE.office : (height > 40 ? STYLE.glass : STYLE.office);
 
