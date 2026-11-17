@@ -791,9 +791,11 @@ const litBegin = (extra = '') => 'float fSunVis = 1.0;\n' + THREE.ShaderChunk.li
   .replace('vDirectionalShadowCoord[ i ] ) : 1.0;', 'vDirectionalShadowCoord[ i ] ) : 1.0; directLight.color *= fSunVis;');
 const IBL_TWEAK = '#include <lights_fragment_maps>\niblIrradiance = mix(vec3(dot(iblIrradiance, vec3(0.3333))), iblIrradiance, 0.35) * uIblDiffuse * mix(0.45, 1.0, fAO);\nradiance *= 0.25 * fAO;';
 const HUE_VAR = 'diffuseColor.rgb *= mix(vec3(0.88, 1.0, 1.06), vec3(1.08, 1.03, 0.8), vIH) * (0.88 + 0.24 * fract(vIH * 7.31));';
-const IGN = 'fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))'; // interleaved gradient noise
 
-// near LOD: leaf cards + bark. Fades out (screen-door dither, complementary to the impostors) across uFade.
+// near LOD: leaf cards + bark. Hands over to the impostor across uFade by alpha erosion: the leaves' alpha-test
+// threshold rises to 1 while the impostor's falls from 1 to its normal cut, so the thin outer foliage goes first and
+// the dense core last. (A screen-door dither did this before: with no TAA to resolve it, every tree in the band was
+// a visible stipple pattern — worst on a phone's 4x upscale.) Trunks switch over at mid-band.
 function treeMaterial(atlas, uFade) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0, map: atlas, alphaTest: 0.42, side: THREE.DoubleSide });
   m.onBeforeCompile = sh => {
@@ -820,7 +822,7 @@ function treeMaterial(atlas, uFade) {
       .replace('#include <project_vertex>', '#include <project_vertex>\nif (vFadeN > 0.999) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);');
     sh.fragmentShader = `uniform float uWet; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform float uIblDiffuse; uniform float uNight; uniform float uTime;
       varying float vAO; varying float vKind; varying float vIH; varying float vLY; varying vec3 vTP; varying vec3 vTW; varying vec3 vLP; varying float vFadeN;\n${NOISE}\n` + sh.fragmentShader
-      .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>\nif (${IGN} < vFadeN) discard;\nfloat fAO = vAO;`)
+      .replace('#include <alphatest_fragment>', `if (diffuseColor.a < mix(alphaTest, 1.0, vFadeN) || (vKind < 0.5 || vKind > 1.5) && vFadeN > 0.5) discard;\nfloat fAO = vAO;`)
       // foliage keeps the clump/crown-outward normal on both faces (no back-face flip): soft volumetric shading
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nif (vKind > 0.5 && vKind < 1.5) normal = normalize(vNormal);')
       .replace('#include <lights_fragment_maps>', IBL_TWEAK)
@@ -855,12 +857,12 @@ function treeMaterial(atlas, uFade) {
       .replace('#include <lights_fragment_begin>', litBegin())
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\nif (vKind > 0.5 && vKind < 1.5) ${foliageLight('1.0')}`);
   };
-  m.customProgramCacheKey = () => 'tree-near-v5';
+  m.customProgramCacheKey = () => 'tree-near-v6';
   return withLampField(m);
 }
 
 // impostor cards (see bakeImpostors). One quad per side view + one top quad per tree; attributes iA = (x, z, yaw,
-// scale), iB = (species, vertical scale). uFade: near↔impostor dither band, uFar: draw distance.
+// scale), iB = (species, vertical scale). uFade: near↔impostor hand-over band, uFar: draw distance.
 // billboard vertex code shared by the colour and shadow-depth materials. Distance gating uses the main camera
 // (uCamMain); orientation uses cameraPosition, so in the shadow pass the cards turn to face the sun and cast the
 // silhouette the sun would see.
@@ -937,7 +939,7 @@ function impostorMaterial(albedo, normalTex, sp, shared) {
       .replace('#include <lights_fragment_begin>', litBegin(' directLight.color *= vHFSun;'))
       .replace('#include <map_fragment>', `
       vec4 it = mix(texture2D(uImp, vUvA), texture2D(uImp, vUvB), vBlend);
-      if (it.a < vCut || ${IGN} >= vFadeI) discard;
+      if (it.a < mix(1.01, vCut, vFadeI)) discard; // (fades in by alpha erosion across the hand-over band)
       diffuseColor.rgb *= it.rgb;
       vec4 inr = mix(texture2D(uImpN, vUvA), texture2D(uImpN, vUvB), vBlend);
       float fAO = inr.a;`)
@@ -947,7 +949,7 @@ function impostorMaterial(albedo, normalTex, sp, shared) {
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>\n${HUE_VAR}\nroughnessFactor = mix(0.7, 0.45, uWet);`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${foliageLight('vHFSun')}`);
   };
-  m.customProgramCacheKey = () => 'tree-imp-v4';
+  m.customProgramCacheKey = () => 'tree-imp-v5';
   return withLampField(m);
 }
 function impostorDepthMaterial(albedo, sp, shared) {
@@ -1024,7 +1026,7 @@ function petalTexture() {
 }
 
 // The quality presets' treeNear was the old mid-LOD switch distance; the near models now hand straight over to
-// impostors a bit closer in, across a short dithered band.
+// impostors a bit closer in, across a short band.
 const NEAR_SCALE = 0.6, FADE_BAND = 18;
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere(), _q = new THREE.Quaternion();
 
