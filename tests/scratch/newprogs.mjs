@@ -1,10 +1,12 @@
 // lists shader programs compiled AFTER the warm-up (=> runtime hitches)
+//   node tests/scratch/newprogs.mjs [query] [--url http://127.0.0.1:5174/]
 import { chromium } from '../lib/browser.mjs';
+const ui = process.argv.indexOf('--url'), URL0 = ui > 0 ? process.argv.splice(ui, 2)[1] : 'http://127.0.0.1:5174/';
 const browser = await chromium.launch({ headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on('pageerror', e => console.log('[pageerror]', e.message));
 page.on('console', m => { if (/warmUp/.test(m.text())) console.log(m.text()); });
-await page.goto('http://127.0.0.1:5174/' + (process.argv[2] || ''), { waitUntil: 'load' });
+await page.goto(URL0 + (process.argv[2] || ''), { waitUntil: 'load' });
 await page.waitForTimeout(1000); await page.keyboard.press('Enter');
 await page.waitForFunction(() => window.__game?.worldReady, null, { timeout: 120000 });
 await page.evaluate(() => { window.__p0 = new Set(__game.R.renderer.info.programs); });

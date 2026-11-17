@@ -156,6 +156,28 @@ for a while, so allocation *churn* during the load matters as well as what stays
   walls, tree trunks and traffic lanes, and leave gaps in the deck parapet at the landings.
   `tests/scratch/bridgewalk.mjs` walks over every bridge, `bridgeexits.mjs` checks each stair foot floods out to a sidewalk.
 
+## Street life (pedestrians)
+- The crowd lives around the **camera** (`Pedestrians.viewer`), not the player, and is spent where it looks: walkers
+  are placed in the view cone (or just beside it), only where they can't be seen popping in (out of the frustum,
+  beyond `popDist`, or behind a building by a ray) and recycled as soon as they're out of sight beyond that ring.
+  Density per m² of view is the same on every preset (80 people / 75 m on Low, 150 / ~100 m on High); a camera cut
+  or `Game.relocate` fills the new view at once. Scenes (`world/scenes.js`) also activate around the camera.
+- `entities/walkways.js`: what's walkable — road sidewalks plus OSM footways / pedestrian streets, each line vetted
+  lazily around the viewer (~0.35 ms a frame) with the parts inside buildings, in water or on a carriageway cut
+  away (a divided road's sidewalk line runs down the other carriageway). Open paving (ground mask B ≥ 220, off the carriageway) gets
+  strollers and groups; `standable()` is the check for anyone placed off a line.
+- People: district/hour mix (office crowds by day, nightlife districts at night, delivery riders at meal times,
+  joggers on park/waterfront paths at dawn and dusk), own pace and habits (window shopping, phone, tourist photos),
+  gatherings at hotspots (shopfronts, hawker centres, bars, MRT exits, bus-stop benches, tourist photo groups at
+  landmarks), umbrellas per person as rain passes. Crowd props are instanced pieces toggled by `look.acc` bits
+  (umbrella / trolley pose the right arm in the shader); phone screens are emissive (`uNight`).
+- Reactions: dive / run out of the player's car path with a bark; crashes, explosions (`events 'explosion'`),
+  stunts and hits get filmed — event `'filmed' { count, pos, kind }` for anything that wants "filmed by N people".
+- `world/streetlife.js`: the director stages one small scene every 20-40 s in view 25-60 m ahead (otters on a
+  promenade, junglefowl crossing — traffic waits —, a jaywalking delivery rider, two uncles arguing with onlookers
+  filming), recruiting people already there; critters are two instanced draws per species, only while out.
+- `node tests/scratch/pedcount.mjs --url ...` counts visible people per gallery view and the crowd's CPU per frame.
+
 ## Voice-over
 - Every spoken line is a pre-rendered take in `public/vo/` (mp3 + `manifest.json`), rendered OFFLINE with Microsoft
   Edge's neural voices (`tools/vo/*`, see `tools/vo/README.md`). The game never calls a TTS service at runtime — a
@@ -183,11 +205,12 @@ src/game.js                 orchestrator: loading, main loop, wiring, pause/map,
 src/core/                   input, events, settings/save, camera rig, photo mode, visibility (BVH line-of-sight)
 src/gfx/                    renderer + post (AO, auto-exposure, bloom, ACES, Vibe Vision), city materials/shaders
 src/world/                  city (worker-built chunks), sky/sun/moon, water reflections, weather, vegetation,
-                            road network (lanes/signals/routing), props, street props, markers, fx, spawns, ambient life
+                            road network (lanes/signals/routing), props, street props, markers, fx, spawns, ambient life,
+                            street-life director (staged micro-scenes)
 src/world/landmarks/        hand-built procedural landmarks (MBS, Flyer, Supertrees, Esplanade, Merlion, CBD towers, civic)
 src/physics/                Rapier world wrapper (heightfield ground, trimesh city, fixed step, contact forces)
 src/entities/               player, Vehicle (ray-cast car/bike), Boat (buoyancy), Aircraft (heli/drone), traffic AI,
-                            pedestrians, wanted/police (+ air wing), PathDriver AI, Claudia autopilot
+                            pedestrians (+ walkways), wanted/police (+ air wing), PathDriver AI, Claudia autopilot
 src/entities/humanoid/      procedural humans (Tommy, NPCs) + instanced crowd
 src/entities/vehicles/      procedural vehicle/boat/aircraft models + instanced traffic renderer
 src/audio/                  procedural radio stations, engines, SFX, ambience; voice-over playback (vo.js, voice.js,
