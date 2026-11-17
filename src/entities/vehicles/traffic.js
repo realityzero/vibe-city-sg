@@ -8,7 +8,7 @@ import { VEHICLE_SPECS } from './specs.js';
 import { createVehicleMaterial, packLights, vehicleTime, setDecalParams } from './material.js';
 import { buildWheelLow, wheelAtlas } from './wheels.js';
 
-const _m = new THREE.Matrix4(), _w = new THREE.Matrix4(), _l = new THREE.Matrix4();
+const _m = new THREE.Matrix4(), _w = new THREE.Matrix4(), _l = new THREE.Matrix4(), _b = new THREE.Matrix4();
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _v = new THREE.Vector3(), _s = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1), X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0);
@@ -157,13 +157,19 @@ export class TrafficRenderer {
    * position/quaternion: world transform of the car origin (ground centre between axles).
    * wheelSpin: accumulated wheel rotation in radians (rolling forward = decreasing).
    * steer: front wheel steer angle (radians, + = left). lights: { head, brake, siren, indicatorL, indicatorR, reverse, taxiSign }.
+   * tilt: optional body-only rotation in car space (roll / pitch on the suspension, about a point 0.5 m up — roughly
+   * the roll centre); the wheels stay on the road.
    */
-  setTransform(id, position, quaternion, wheelSpin = 0, steer = 0, lights = null) {
+  setTransform(id, position, quaternion, wheelSpin = 0, steer = 0, lights = null, tilt = null) {
     const car = this.cars.get(id);
     if (!car) return;
     const T = car.T, A = T.A;
     _m.compose(position, quaternion, ONE);
-    T.pool.mesh.setMatrixAt(car.slot, _m);
+    if (tilt) {
+      const e = _l.makeRotationFromQuaternion(tilt).elements, h = 0.5;
+      e[12] = -e[4] * h; e[13] = h - e[5] * h; e[14] = -e[6] * h; // rotate about (0, h, 0): t = p - R p
+      T.pool.mesh.setMatrixAt(car.slot, _b.multiplyMatrices(_m, _l));
+    } else T.pool.mesh.setMatrixAt(car.slot, _m);
     if (lights) {
       packLights(lights, lightArr);
       T.pool.lights.array.set(lightArr, car.slot * 4);

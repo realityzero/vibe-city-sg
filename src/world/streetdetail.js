@@ -478,7 +478,7 @@ export class StreetDetail {
       if (doneAt.some(([px, pz]) => Math.hypot(px - x, pz - z) < half)) return;
       const sw = net2.nearestSidewalk(x, z, 30); if (!sw || sw.dist > 14) return;
       const s = sw.sw.path; let best = 0, bd = 1e9; // arc-length of the projection
-      for (let i = 0; i < s.n - 1; i++) { const ax = s.x(i), az = s.z(i), bx = s.x(i + 1), bz = s.z(i + 1), dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); const dd = Math.hypot(ax + dx * t - x, az + dz * t - z); if (dd < bd) { bd = dd; best = s.cum[i] + Math.sqrt(L2) * t; } }
+      for (let i = 0; i < s.n - 1; i++) { const ax = s.x(i), az = s.z(i), bx = s.x(i + 1), bz = s.z(i + 1), dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); const dd = Math.hypot(ax + dx * t - x, az + dz * t - z); if (dd < bd) { bd = dd; best = s.arc(i) + Math.sqrt(L2) * t; } }
       linkway(sw.sw, best - half, best + half); doneAt.push([x, z]); lw++;
     };
     for (const p of data.pois) if (p.k === 'subway_entrance') linkFrom(p.x, p.z, 28);
