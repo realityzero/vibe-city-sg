@@ -21,6 +21,7 @@ export const C = {
   linkRoof: [0x3e6b4f, 0x7a2f2f, 0x2f4f7a, 0x5f6a70].map(lin),
   rubber: [0x3f8f55, 0xc4583a, 0x3c6fb4, 0x7b5aa6].map(lin),
   play: [0xe23b2e, 0xf2c230, 0x2f7fd6, 0x3fae49, 0xf07f1e].map(lin),
+  produce: [0xc8281e, 0xf08a1c, 0x5aa02c, 0xf2cf2a, 0x7a2a5a, 0xe8e0c8].map(lin), crate: [0x9a6a3a, 0x2f6fb0, 0xc23a2a].map(lin),
 };
 
 // ---------------------------------------------------------------- geometry writer
@@ -142,6 +143,14 @@ export const PIECE = {
     K.prism(0, 0, 0, 0.5, 0.2, 0.27, 6, pick(C.pot, h), false);
     K.prism(0, 0, 0.45, 1.15 + h * 0.4, 0.34, 0.1, 5, pick(C.shrub, h * 3));
   },
+  // a shop's wares set out on the five-foot-way: a trestle of produce crates, stacked boxes, a sack
+  goods(K, h) {
+    const P = k => C.produce[Math.floor(h * 7 + k * 2.3) % C.produce.length], cr = pick(C.crate, h * 3);
+    K.box(0, 0, 0, 0.75, 0.5, 0.32, C.wood);
+    for (let k = 0; k < 3; k++) { const x = -0.5 + k * 0.5; K.box(x, 0.5, 0, 0.22, 0.16, 0.26, cr); K.box(x, 0.66, 0, 0.19, 0.05, 0.22, P(k)); }
+    K.box(1.05, 0, -0.05, 0.22, 0.32, 0.2, cr); K.box(1.05, 0.32, -0.05, 0.2, 0.26, 0.18, P(3));
+    K.prism(-1.05, 0, 0, 0.5, 0.2, 0.15, 6, C.canvas);
+  },
   // stone table and four round stools of the void deck
   stoneTable(K) {
     K.prism(0, 0, 0.7, 0.76, 0.45, 0.45, 8, C.terrazzo);
@@ -203,7 +212,7 @@ export const PIECE = {
 };
 
 // colour variants per kind (h = (v + 0.5) / n); the order is the kind's index in the placement records
-export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 1, condenser: 1, playground: 4, fitness: 3 };
+export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 1, condenser: 1, playground: 4, fitness: 3, goods: 6 };
 export const KINDS = Object.keys(VARIANTS);
 
 // covered linkway along local +z from 0 to L: a slab roof on two rows of posts (under the void-deck soffit, 2.85 m up,

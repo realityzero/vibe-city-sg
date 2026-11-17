@@ -17,7 +17,7 @@ const KIND = Object.fromEntries(KINDS.map((k, i) => [k, i]));
  * ctx (from the city builder): city, M (meta), maskAt, occAt, occMark(x, z, r), roadGrid + RG, chunk(x, z) -> chunk,
  * exclusions (landmark footprints: rings of [x, z]), clearings (landmark plazas: {x, z, r}), pip(x, z, ring),
  * setTag(name), and what the building loop collected: shopFronts, piers,
- * shopBacks, hdbBlocks, colonnade. Returns { pieces: Float32Array of (kind, x, y, z, yaw, h), obstacles: Float32Array
+ * shopGoods, shopBacks, hdbBlocks, colonnade. Returns { pieces: Float32Array of (kind, x, y, z, yaw, h), obstacles: Float32Array
  * of (x, z, radius, solid), counts }.
  */
 export function buildStreetscape(ctx) {
@@ -116,14 +116,14 @@ export function buildStreetscape(ctx) {
       const n = 2 + Math.floor(hash(pz, px) * 3);
       for (let k = 0; k < n; k++) {
         const tx = px + ux * (k - (n - 1) / 2) * 2.5, tz = pz + uz * (k - (n - 1) / 2) * 2.5, hk = hash(tx, tz);
-        if (!offWalls(tx, tz, 2.8) || !free(tx, tz, 1.15)) continue;
+        if (!offWalls(tx, tz, 2.0) || !free(tx, tz, 1.15)) continue;
         put('kopitiam', tx, tz, yaw + hk, hk, 1.0, false);
         if (hk < 0.4) put('umbrella', tx, tz, hk * 6, hk * 2.5, 0, false);
       }
-      if (h < 0.06 && offWalls(px + uz * 2.6, pz - ux * 2.6, 2.6) && free(px + uz * 2.6, pz - ux * 2.6, 1.1)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
+      if (h < 0.06 && offWalls(px + uz * 2.6, pz - ux * 2.6, 2.0) && free(px + uz * 2.6, pz - ux * 2.6, 1.1)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
     } else if (h < (maskAt(px, pz, 2) >= 250 ? 0.11 : 0.06)) {
       const yaw = Math.round(hash(pz, x) * 4) * Math.PI / 2;
-      if (!offWalls(px, pz, 2.8) || !free(px, pz, 1.2)) continue;
+      if (!offWalls(px, pz, 2.0) || !free(px, pz, 1.2)) continue;
       put('planter', px, pz, yaw, hash(px + 5, pz), 0.85, true);
       const bx = px + Math.sin(yaw) * 1.35, bz = pz + Math.cos(yaw) * 1.35;
       if (h < 0.06 && free(bx, bz, 0.9)) put('bench', bx, bz, yaw, 0, 0.8, true);
@@ -142,7 +142,11 @@ export function buildStreetscape(ctx) {
   // ---- shophouses: potted plants by the five-foot-way piers, aircon condensers on the back walls
   for (const f of ctx.piers) {
     const h = hash(f[0] * 1.7, f[1] * 2.9); if (h > 0.28) continue;
-    put('pot', f[0], f[1], h * 9, h * 3.5, 0, false);
+    put('pot', f[0], f[1], h * 9, h * 3.5, 0, false, 0.12); // (on the five-foot-way's raised floor)
+  }
+  for (const [x, z, yaw] of ctx.shopGoods) {
+    const h = hash(x * 2.1, z * 1.3); if (h > 0.35) continue;
+    put('goods', x, z, yaw, h * 2.8, 0, false, 0.12);
   }
   for (const w of ctx.shopBacks) {
     const [px, pz, qx, qz, nx, nz, y0, fh, floors] = w, len = Math.hypot(qx - px, qz - pz), units = Math.max(1, Math.round(len / 5.5));
@@ -187,7 +191,7 @@ export function buildStreetscape(ctx) {
     if (!best || linked.has(Math.min(i, bj) * 100000 + Math.max(i, bj))) continue;
     // from the edge of one void deck to the other's
     const dx = best.bx - best.ax, dz = best.bz - best.az, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
-    if (!linkClear(best.ax + ux * 2.5, best.az + uz * 2.5, best.bx - ux * 2.5, best.bz - uz * 2.5)) continue;
+    if (!linkClear(best.ax + ux * 3.5, best.az + uz * 3.5, best.bx - ux * 3.5, best.bz - uz * 3.5)) continue;
     linked.add(Math.min(i, bj) * 100000 + Math.max(i, bj));
     ctx.setTag('s.linkway');
     linkway(K.at(ctx.chunk(best.ax + dx / 2, best.az + dz / 2).structNear, best.ax - ux * 0.1, 0, best.az - uz * 0.1, Math.atan2(dx, dz)), L + 0.2, pick(C.linkRoof, hash(best.ax, best.az)));

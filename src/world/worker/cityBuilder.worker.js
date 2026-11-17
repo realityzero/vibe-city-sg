@@ -373,9 +373,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const excluded = (x, z) => excl.some(p => pip(x, z, p));
   let nb = 0, wallTris = 0, roofTris = 0;
   const buildingInfo = []; // for main thread: footprint centroid/height (used by radar, missions, vegetation)
-  // collected for the street furniture (streetscape.js): shopfront points, pier-side pot spots, shophouse back walls,
+  // collected for the street furniture (streetscape.js): shopfront points, pier-side pot spots, wares in front of the
+  // shops, shophouse back walls,
   // HDB blocks, and table spots in void decks and hawker colonnades
-  const shopFronts = [], piers = [], shopBacks = [], hdbBlocks = [], colonnade = [];
+  const shopFronts = [], piers = [], shopGoods = [], shopBacks = [], hdbBlocks = [], colonnade = [];
   // hawker centres: low halls named as one, or holding one (OSM puts most as a POI inside a plain building)
   const HAWKER = /food cent(re|er)|hawker|cooked food/i, hawkerPois = city.pois.filter(p => HAWKER.test(p.n || ''));
   const isHawkerHall = (b, ring, area) => !b.noPhys && (b.m || 0) < 0.5 && b.h <= 21 && (b.l || 1) <= 3 && area > 600
@@ -587,7 +588,12 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         for (let k = recess.first ? 0 : 1; k < nP; k++) {
           const t = pw / 2 + 0.02 + (len - pw - 0.04) * k / (nP - 1);
           pillar(p[0] + ux * t + inx * (pw / 2 + 0.03), p[1] + uz * t + inz * (pw / 2 + 0.03), ux, uz, pw, y0, H1, f2);
-          if (isShop && k < nP - 1) piers.push([p[0] + ux * (t + pw / 2 + 0.34) + inx * 0.32, p[1] + uz * (t + pw / 2 + 0.34) + inz * 0.32]);
+          if (isShop && k < nP - 1) {
+            piers.push([p[0] + ux * (t + pw / 2 + 0.34) + inx * 0.32, p[1] + uz * (t + pw / 2 + 0.34) + inz * 0.32]);
+            // and the middle of the bay against the shopfront, where a shop sets out its wares (facing the street)
+            const tm = t + (len - pw) / (nP - 1) / 2, dm = recess.D[i] - 0.45;
+            shopGoods.push([p[0] + ux * tm + inx * dm, p[1] + uz * tm + inz * dm, Math.atan2(-inx, -inz)]);
+          }
         }
         // furniture in the bays: stone tables in the void deck, the hawker centre's tables all round
         // (bays meeting at a corner share it: one set there)
@@ -681,7 +687,8 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         if (fi >= 0) { const p = outer[fi], q = outer[(fi + 1) % nE]; const fx = q[0] - p[0], fz = q[1] - p[1], fl = Math.hypot(fx, fz) || 1; alongShort = Math.abs((fx * o.ux + fz * o.uz) / fl) < 0.5; }
         if (alongShort) { const ux0 = o.ux; o.ux = -o.uz; o.uz = ux0; [o.L, o.Wd] = [o.Wd, o.L]; }
       }
-      if (o && o.area > 0 && area / o.area > 0.78 && o.Wd > 2) {
+      // (only on near-rectangular plans: on an L or a wedge the box's roof hangs metres past the facades)
+      if (o && o.area > 0 && area / o.area > 0.9 && o.Wd > 2) {
         const ov = 0.35; // eave overhang
         const L = o.L / 2 + ov, Wh = o.Wd / 2 + ov;
         const ux = o.ux, uz = o.uz, vx = -uz, vz = ux;
@@ -831,7 +838,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         }
       }
     }
-    if (base < 3 && !b.noPhys) occFillRing(outer, 255);
+    // (the outline too: a footprint narrower than the 2 m grid can slip between its cell centres, and a tree planted
+    // in it pokes its crown through the roof)
+    if (base < 3 && !b.noPhys) { occFillRing(outer, 255); occStroke(outer.concat([outer[0]]), 1.2, 255); }
     if (!b.noPhys) buildingInfo.push(b.id, cx, cz, top, style);
     nb++;
     if (nb % 1500 === 0) progress(0.1 + 0.35 * Math.min(1, nb / (city.buildings.length + outskirts.length)), 'Raising the skyline');
@@ -1075,6 +1084,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
 
   // ================= TREES =================
   progress(0.8, 'Planting rain trees');
+  for (const ring of excl) occFillRing(ring, 255); // (landmarks raise their own buildings there)
   // types: 0 rain tree (wide), 1 angsana/tembusu (medium), 2 palm, 3 shrub/bush, 4 slim tree (yellow flame)
   const trees = [];
   const place = (x, z, type, scale, minGap = 0) => {
@@ -1126,7 +1136,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   // ================= STREET FURNITURE ================= (after the trees: it keeps clear of them)
   const tFurn = performance.now();
   const furniture = buildStreetscape({
-    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopBacks, hdbBlocks, colonnade,
+    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
     chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occDisc(x, z, r, 115), setTag: t => { TAG = t; },
   });
   furniture.counts.ms = Math.round(performance.now() - tFurn);
