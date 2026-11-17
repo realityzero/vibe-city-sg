@@ -463,12 +463,13 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         if (win > 0.001) {
           vec3 gAlb; float gMetal, gRough, transmit;
           if (fStyle < 0.5) {
-            // real glazing, not chrome: clear low-E (dark, the floors behind visible), tinted reflective, and a few
-            // silver-coated towers; specular comes from Fresnel + the coating, not from treating glass as metal
+            // real glazing, not chrome: clear low-E (dark, the floors behind visible), tinted reflective (the CBD's
+            // blue-green, bronze and grey) and silver-coated towers; specular comes from Fresnel + the coating, not from
+            // treating glass as metal
             float gk = fract(fSeed * 13.7);
-            if (gk < 0.4) { gAlb = vec3(0.018, 0.024, 0.028) * (0.9 + 0.2 * h); gMetal = 0.05; gRough = 0.035 + 0.04 * h; transmit = 1.0; }
-            else if (gk < 0.82) { gAlb = mix(vec3(0.03), wallCol * 0.9, 0.5) * (0.94 + 0.12 * h); gMetal = 0.3; gRough = 0.03 + 0.04 * h; transmit = 0.7; }
-            else { gAlb = mix(vec3(0.04), wallCol * 1.05, 0.7) * (0.95 + 0.1 * h); gMetal = 0.58; gRough = 0.025 + 0.03 * h; transmit = 0.35; }
+            if (gk < 0.22) { gAlb = vec3(0.018, 0.024, 0.028) * (0.9 + 0.2 * h); gMetal = 0.05; gRough = 0.035 + 0.04 * h; transmit = 1.0; }
+            else if (gk < 0.7) { gAlb = mix(vec3(0.03), wallCol, 0.68) * (0.94 + 0.12 * h); gMetal = 0.3; gRough = 0.03 + 0.04 * h; transmit = 0.7; }
+            else { gAlb = mix(vec3(0.04), wallCol * 1.1, 0.8) * (0.95 + 0.1 * h); gMetal = 0.58; gRough = 0.025 + 0.03 * h; transmit = 0.35; }
             // panels are never perfectly coplanar: a slight tilt per panel breaks reflections up (more = crumpled foil)
             vec3 Tw = vec3(-N.z, 0.0, N.x);
             vec2 tl = (vec2(hash12(cid + fSeed * 11.0), hash12(cid.yx + fSeed * 23.0)) - 0.5) * 0.012;
