@@ -213,7 +213,7 @@ export class StreetProps {
     const n = U.night.value;
     for (const m of this.signMats) m.emissiveIntensity = 0.05 + n * 0.5;
     // lit from inside after dusk: bright enough for the bloom to pick up
-    if (this.lanternMat) this.lanternMat.emissiveIntensity = 0.12 + n * 3.2;
+    if (this.lanternMat) this.lanternMat.emissiveIntensity = 0.12 + n * 2.2;
     if (this.adMat) this.adMat.emissiveIntensity = 0.25 + n * 1.4;
   }
 }

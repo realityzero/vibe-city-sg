@@ -1308,8 +1308,10 @@ float maskClass(vec4 v, float f, float lo) {
         vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
         vec3 dirt = mix(vec3(0.17, 0.12, 0.08), vec3(0.12, 0.13, 0.06), n1);
         col = mix(dirt, grass, smoothstep(0.3, 0.6, n1 + 0.25));
-        // (woods darker than lawn, faded across the filtered mask: a per-texel switch drew 2 m squares on lawns)
-        vec3 gcol = gc < 0.5 ? pitch : grass * mix(0.75, 1.0, smoothstep(0.74, 0.97, g + edgeN * 1.5));
+        // (woods darker than lawn and a pitch's brighter turf fade across the filtered mask: switching per 2 m texel drew
+        // squares wherever a stray pitch or woods texel sits in a lawn)
+        vec3 lawn = grass * mix(0.75, 1.0, smoothstep(0.74, 0.97, g + edgeN * 1.5));
+        vec3 gcol = gc < 0.5 ? mix(pitch, lawn, smoothstep(0.42, 0.62, g + edgeN)) : lawn;
         col = mix(col, gcol, gv);
       }
       // paving channel
