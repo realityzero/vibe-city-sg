@@ -30,8 +30,8 @@ function sampleKeys(t, out) {
 }
 
 const kerbSouthbound = l => {
-  const P = l.path.xyz, n = l.path.n;
-  return l.cls <= 3 && l.idx === 0 && P[(n - 1) * 3 + 2] - P[2] > Math.abs(P[(n - 1) * 3] - P[0]);
+  const p = l.path, k = p.n - 1;
+  return l.cls <= 3 && l.idx === 0 && p.z(k) - p.z(0) > Math.abs(p.x(k) - p.x(0));
 };
 
 /** Plays the cold open inside a mission context; resolves once the player has the wheel. dest: the first stop. */

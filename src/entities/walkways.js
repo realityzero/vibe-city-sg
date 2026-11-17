@@ -82,7 +82,8 @@ export class Walkways {
         const path = Path.fromPoints(run), k = path.n - 1;
         const w = sw ? { path, foot: false, edge: sw.edge, side: sw.side, half: 0.55 } : { path, foot: true, cross, half: Math.max(0.15, Math.min(2.5, (r.w || 2) / 2 - 0.5)) };
         w.ends = [[path.x(0), path.z(0)], [path.x(k), path.z(k)]];
-        this._register(this.grid, w, path.xyz, 3);
+        w.p = path.st.xyz; w.i0 = path.o * 3; w.i1 = (path.o + path.n) * 3; w.st = 3; // its points, for _register
+        this._register(this.grid, w);
       }
       run = [];
     };
