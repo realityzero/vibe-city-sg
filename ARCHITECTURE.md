@@ -92,6 +92,13 @@ for a while, so allocation *churn* during the load matters as well as what stays
   between steps and inside the heavy ones. `await someSyncFunction()` only queues a microtask and lets no input through.
 - Static props scattered over the city (MRT kiosks, ERP / expressway gantries) are merged per material into one mesh
   each (`gfx/mergeStatic.js`): ~120 fewer draw calls a frame. Transparent parts stay separate (sorted per mesh).
+- Hero vehicles (player, parked, mission, police) are a *rig* (`vehicles/model.js` `heroRig`, `material.js` `RIG_PARS`):
+  per type, one body geometry that also holds the moving parts (pop-up lamps, rotor blades) and one wheel geometry
+  drawn once per wheel by an instanced draw. A `part` vertex attribute picks a matrix from the car's `uPart[]`, mirrored
+  from the wheel / lid / rotor Object3Ds before each render (they stay the API: `wheels`, `wheelPivots`, `rotors`); a
+  custom depth material moves the same parts in the shadow pass. Lamps were already per-vertex light channels switched
+  by the per-car `uLights`. A car is body + wheels + glass (3 draws, ~12 before); `tests/scratch/vehdraws.mjs` counts
+  them, `heroshots.mjs` diffs posed close-ups against another build, `heroprogs.mjs` checks for post-warm-up programs.
 - Static geometry normals: 8-bit normalized; facades 16-bit (glass mirrors the sky) and packed so each wall keeps its
   `wallId` bin (the facade shader seeds weathering from the wall's orientation). `?f32normals` for A/B.
 - Cutscene line of sight (`core/visibility.js`) uses the physics world plus *sight-only* colliders the city builder

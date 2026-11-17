@@ -5,10 +5,11 @@ import { SPECIAL } from './special.js';
 import { CRAFT } from './craft.js';
 import { assembleCar } from './car.js';
 import { VEHICLE_SPECS } from './specs.js';
-import { createVehicleMaterial, packLights, vehicleTime, setDecalParams } from './material.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createVehicleMaterial, createRigDepthMaterial, packLights, vehicleTime, setDecalParams, RIG_SLOTS, WHEEL_SLOTS } from './material.js';
 import { buildWheelHigh } from './wheels.js';
 import { withLampField } from '../../gfx/lampfield.js';
-import { PartBuilder, roundedBox, box, M4 } from './geom.js';
+import { PartBuilder, roundedBox, box, M4, mergeParts } from './geom.js';
 
 const cache = new Map();
 
@@ -101,22 +102,88 @@ function searchlightMaterial() {
   return _searchMat;
 }
 
+let _pool = null;
 function makeBeams(A) {
-  // cheap fake headlight cones (soft, fading with length) + ground light pool; visible only with lights on
-  const g = new THREE.Group();
-  for (const h of A.headlights) {
+  // cheap fake headlight cones (soft, fading with length) + ground light pool; visible only with lights on. A type's
+  // cones are one geometry (additive, no depth write: drawn together they blend exactly as they did apart).
+  A.beamGeo ??= mergeGeometries(A.headlights.map(h => {
     const cone = new THREE.CylinderGeometry(0.08, 2.4, 16, 20, 1, true);
     // uv.y: 0 at the lamp, 1 at the far end
     const uv = cone.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i));
-    cone.translate(0, -8, 0); cone.rotateX(Math.PI / 2 - 0.07);
-    const m = new THREE.Mesh(cone, beamMaterial()); m.position.set(h.x, h.y, h.z); m.renderOrder = 5;
-    g.add(m);
-  }
-  const pool = new THREE.Mesh(new THREE.PlaneGeometry(7, 14), new THREE.MeshBasicMaterial({ map: poolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }));
+    cone.translate(0, -8, 0); cone.rotateX(Math.PI / 2 - 0.07); cone.translate(h.x, h.y, h.z);
+    return cone;
+  }));
+  _pool ??= { geometry: new THREE.PlaneGeometry(7, 14), material: new THREE.MeshBasicMaterial({ map: poolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }) };
+  const g = new THREE.Group();
+  const cones = new THREE.Mesh(A.beamGeo, beamMaterial()); cones.renderOrder = 5;
+  const pool = new THREE.Mesh(_pool.geometry, _pool.material);
   pool.rotation.x = -Math.PI / 2; pool.position.set(0, 0.03, (A.headlights[0]?.z ?? -2) - 8);
-  g.add(pool);
+  g.add(cones, pool);
   g.visible = false;
   return g;
+}
+
+// ---- hero rig (material.js RIG_PARS): per type, the body with its moving parts, and one wheel drawn once per wheel.
+// Built with a type's first hero model, not in getTypeAssets: warm-up paints every traffic type's atlas, and few of
+// those types are ever seen up close.
+const POPUP_TRAVEL = 0.1;      // lids rise this far (and tilt) when the lamps open
+const SUSPENSION_TRAVEL = 0.5; // a wheel centre's reach from rest (Vehicle: pivot at connY - suspension length)
+const _s = new THREE.Sphere(), _b = new THREE.Box3();
+
+function popupGeometry(atlas) {
+  const pb = new PartBuilder(atlas);
+  pb.add(roundedBox(0.36, 0.1, 0.26, 0.015, 2), 'paint', { matrix: M4.t(0, -0.05, 0) });
+  pb.add(box(0.3, 0.07, 0.01), 'head', { matrix: M4.t(0, -0.05, -0.131) });
+  pb.add(box(0.33, 0.012, 0.012), 'trim', { matrix: M4.t(0, -0.012, -0.132) });
+  return pb.build();
+}
+
+/** distance of a geometry's farthest vertex from its origin (the point its part turns about) */
+function reach(geometry) {
+  const p = geometry.attributes.position;
+  let r2 = 0;
+  for (let i = 0; i < p.count; i++) r2 = Math.max(r2, p.getX(i) ** 2 + p.getY(i) ** 2 + p.getZ(i) ** 2);
+  return Math.sqrt(r2);
+}
+
+/** culling bounds that hold every pose: the rest bounds (if any) plus each part's sweep [x, y, z, radius] */
+function setPoseBounds(geometry, sweeps, rest = null) {
+  geometry.boundingBox = rest ? rest.boundingBox.clone() : new THREE.Box3();
+  geometry.boundingSphere = rest ? rest.boundingSphere.clone() : new THREE.Sphere(new THREE.Vector3(), -1);
+  for (const [x, y, z, r] of sweeps) {
+    _s.center.set(x, y, z); _s.radius = r;
+    geometry.boundingSphere.union(_s); geometry.boundingBox.union(_s.getBoundingBox(_b));
+  }
+}
+
+/** a type's moving body parts in rig slot order (from WHEEL_SLOTS): pop-up lamp lids, then rotors */
+function movingParts(A) {
+  const R = A.rotors ?? {};
+  return [
+    ...(A.popups ?? []).map(popup => ({ popup })),
+    ...[['main', R.main], ['tail', R.tail], ...(R.props ?? []).map(d => ['props', d])].filter(([, d]) => d).map(([name, rotor]) => ({ name, rotor })),
+  ];
+}
+
+function heroRig(A) {
+  if (A.rig) return A.rig;
+  const lid = A.popups ? popupGeometry(A.atlas) : null, lidReach = lid ? reach(lid) + POPUP_TRAVEL : 0;
+  const parts = movingParts(A).map(({ popup: p, rotor: d }) => p ? { geometry: lid, sweep: [p.x, p.y, p.z, lidReach] } : { geometry: d.geometry, sweep: [...d.pos, reach(d.geometry)] });
+  if (parts.length > RIG_SLOTS - WHEEL_SLOTS) throw new Error(`vehicle rig: ${parts.length} moving parts, room for ${RIG_SLOTS - WHEEL_SLOTS}`);
+  const body = mergeParts([{ geometry: A.geometry, part: 0 }, ...parts.map((p, j) => ({ geometry: p.geometry, part: WHEEL_SLOTS + j + 1 }))]);
+  setPoseBounds(body, parts.map(p => p.sweep), A.geometry);
+  let wheels = null, caliper = false;
+  if (A.wheels.length) {
+    if (A.wheels.length * 2 > WHEEL_SLOTS) throw new Error(`vehicle rig: ${A.wheels.length} wheels, room for ${WHEEL_SLOTS / 2}`);
+    const ws = A.wheelStyle;
+    const w = buildWheelHigh(A.atlas, { R: A.wheelR, w: A.wheelW, rimRatio: ws.rimRatio ?? 0.66, style: ws.style ?? 'spoke5', rimMat: ws.rimMat ?? 'alloy', caliper: ws.caliper ?? true });
+    caliper = !!w.fixed;
+    wheels = mergeParts([{ geometry: w.spin, part: 1 }, ...(caliper ? [{ geometry: w.fixed, part: 2 }] : [])], new THREE.InstancedBufferGeometry());
+    wheels.instanceCount = A.wheels.length;
+    const r = reach(wheels);
+    setPoseBounds(wheels, A.wheels.map(o => [o.x, o.y, o.z, r * (o.scale ?? 1) + SUSPENSION_TRAVEL]));
+  }
+  return (A.rig = { body, wheels, caliper });
 }
 
 /**
@@ -127,78 +194,75 @@ function makeBeams(A) {
 export function createVehicleModel(type, { color, seed = 0, lod = 'high', beams = true, rider } = {}) {
   const A = getTypeAssets(type, lod, { rider });
   const spec = VEHICLE_SPECS[type];
-  const mat = withLampField(createVehicleMaterial(A.texture, { instanced: false })); // street lamps light the body at night
+  const rig = heroRig(A);
+  const mat = withLampField(createVehicleMaterial(A.texture, { rig: true })); // street lamps light the body at night
   setDecalParams(mat, A.decal, A.atlas);
   const paint = color ?? A.design?.bodyColor ?? spec.colours[Math.abs(seed) % spec.colours.length];
   mat.userData.uPaint.value.set(paint);
   const root = new THREE.Group(); root.name = `vehicle:${type}`;
-  const body = new THREE.Mesh(A.geometry, mat);
-  body.castShadow = true; body.receiveShadow = true;
-  root.add(body);
+
+  // Moving parts are Object3Ds (driven as before: Vehicle / Aircraft / update() set their transforms); each rig slot
+  // follows one of them, mirrored into uPart once per render (shadow and main pass alike) just before drawing.
+  // slot: { node, local: fixed matrix after the node's (left-wheel flip / scale), on: false = hidden }
+  const slots = new Array(RIG_SLOTS).fill(null), uPart = mat.userData.uPart.value;
+  let stamp = -1;
+  const syncParts = renderer => {
+    if (renderer.info.render.frame === stamp) return;
+    stamp = renderer.info.render.frame;
+    for (let k = 0; k < RIG_SLOTS; k++) {
+      const s = slots[k], M = uPart[k];
+      if (!s) continue;
+      if (!s.on) { M.elements.fill(0); continue; }
+      M.copy(s.node.matrix);
+      for (let p = s.node.parent; p !== root; p = p.parent) M.premultiply(p.matrix);
+      if (s.local) M.multiply(s.local);
+    }
+  };
+  const depthMat = createRigDepthMaterial(mat);
+  const rigMesh = geometry => {
+    const m = new THREE.Mesh(geometry, mat);
+    m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = depthMat;
+    m.onBeforeRender = m.onBeforeShadow = syncParts;
+    root.add(m);
+    return m;
+  };
+  const body = rigMesh(rig.body);
+  if (rig.wheels) rigMesh(rig.wheels);
   let glass = null, glassMat = null;
   if (A.glassGeo) {
     glassMat = createVehicleMaterial(A.texture, { transparent: true });
     glass = new THREE.Mesh(A.glassGeo, glassMat); glass.renderOrder = 2;
     root.add(glass);
   }
-  // wheels
-  if (!A.wheelGeo && A.wheels.length) {
-    const ws = A.wheelStyle;
-    A.wheelGeo = buildWheelHigh(A.atlas, { R: A.wheelR, w: A.wheelW, rimRatio: ws.rimRatio ?? 0.66, style: ws.style ?? 'spoke5', rimMat: ws.rimMat ?? 'alloy', caliper: ws.caliper ?? true });
-  }
+  // wheels: pivot (suspension height, steer) > spin; the left ones turned to face out
   const wheels = [], wheelPivots = [];
-  for (const w of A.wheels) {
+  A.wheels.forEach((w, i) => {
     const pivot = new THREE.Group(); pivot.position.set(w.x, w.y, w.z);
     const spin = new THREE.Group();
-    const m = new THREE.Mesh(A.wheelGeo.spin, mat); m.castShadow = true;
-    const left = w.x < 0 || w.left;
-    if (left) m.rotation.y = Math.PI;
-    if (w.scale) m.scale.setScalar(w.scale);
-    spin.add(m); pivot.add(spin);
-    if (A.wheelGeo.fixed && !w.noCaliper) { const f = new THREE.Mesh(A.wheelGeo.fixed, mat); if (left) f.rotation.y = Math.PI; pivot.add(f); }
-    root.add(pivot);
+    pivot.add(spin); root.add(pivot);
+    const flip = w.x < 0 || w.left ? new THREE.Matrix4().makeRotationY(Math.PI) : null;
+    const local = w.scale ? new THREE.Matrix4().makeScale(w.scale, w.scale, w.scale).premultiply(flip ?? new THREE.Matrix4()) : flip;
+    slots[2 * i] = { node: spin, local, on: true };
+    if (rig.caliper) slots[2 * i + 1] = { node: pivot, local: flip, on: !w.noCaliper };
     wheels.push(spin); wheelPivots.push(pivot);
-  }
-  // pop-up headlights
-  const popups = [];
-  if (A.popups) {
-    for (const p of A.popups) {
-      const pb = new PartBuilder(A.atlas);
-      pb.add(roundedBox(0.36, 0.1, 0.26, 0.015, 2), 'paint', { matrix: M4.t(0, -0.05, 0) });
-      pb.add(box(0.3, 0.07, 0.01), 'head', { matrix: M4.t(0, -0.05, -0.131) });
-      pb.add(box(0.33, 0.012, 0.012), 'trim', { matrix: M4.t(0, -0.012, -0.132) });
-      const g = pb.build();
-      const m = new THREE.Mesh(g, mat); m.castShadow = true;
-      const grp = new THREE.Group(); grp.position.set(p.x, p.y, p.z); grp.add(m);
-      root.add(grp);
-      popups.push({ grp, base: p.y, open: 0 });
-    }
-  }
+  });
+  // pop-up headlights and rotors (helicopters / drones: spun by update() from model.rotorSpeed, with a motion-blur disc)
+  const popups = [], rotorList = [], rotors = A.rotors ? {} : null;
+  movingParts(A).forEach(({ popup: p, rotor: d, name }, j) => {
+    const g = new THREE.Group(); root.add(g);
+    const slot = slots[WHEEL_SLOTS + j] = { node: g, local: null, on: true };
+    if (p) { g.position.set(p.x, p.y, p.z); popups.push({ grp: g, base: p.y, open: 0 }); return; }
+    g.position.set(...d.pos);
+    const discMat = new THREE.MeshBasicMaterial({ map: blurTexture(d.blades), transparent: true, opacity: 0, depthWrite: false, forceSinglePass: true, side: THREE.DoubleSide, color: 0x202022 });
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(d.radius, 40), discMat);
+    if (d.axis === 'y') disc.rotation.x = -Math.PI / 2; else disc.rotation.y = Math.PI / 2;
+    disc.renderOrder = 3; disc.visible = false;
+    g.add(disc);
+    rotorList.push({ g, blades: slot, disc, axis: d.axis, ratio: d.ratio ?? 1, dir: d.dir ?? 1 });
+    if (name === 'props') (rotors.props ??= []).push(g); else rotors[name] = g;
+  });
   const beamsGrp = beams && A.headlights?.length && !spec.kind ? makeBeams(A) : null;
   if (beamsGrp) root.add(beamsGrp);
-
-  // rotors (helicopters / drones): Object3Ds spun by update() from model.rotorSpeed, with a motion-blur disc
-  let rotors = null;
-  const rotorList = [];
-  if (A.rotors) {
-    rotors = {};
-    const mk = d => {
-      const g = new THREE.Group(); g.position.set(...d.pos);
-      const blades = new THREE.Mesh(d.geometry, mat); blades.castShadow = true;
-      g.add(blades);
-      const discMat = new THREE.MeshBasicMaterial({ map: blurTexture(d.blades), transparent: true, opacity: 0, depthWrite: false, forceSinglePass: true, side: THREE.DoubleSide, color: 0x202022 });
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(d.radius, 40), discMat);
-      if (d.axis === 'y') disc.rotation.x = -Math.PI / 2; else disc.rotation.y = Math.PI / 2;
-      disc.renderOrder = 3; disc.visible = false;
-      g.add(disc);
-      root.add(g);
-      rotorList.push({ g, blades, disc, axis: d.axis, ratio: d.ratio ?? 1, dir: d.dir ?? 1 });
-      return g;
-    };
-    if (A.rotors.main) rotors.main = mk(A.rotors.main);
-    if (A.rotors.tail) rotors.tail = mk(A.rotors.tail);
-    if (A.rotors.props) rotors.props = A.rotors.props.map(mk);
-  }
   // police searchlight: Object3D whose local -Z is the beam direction (pitched down/forward)
   let spotlight = null, spotBeam = null, spotlightTarget = null;
   if (A.spotlight) {
@@ -256,12 +320,13 @@ export function createVehicleModel(type, { color, seed = 0, lod = 'high', beams 
         const blur = Math.min(1, Math.max(0, (sp - 8) / 20));
         r.disc.visible = blur > 0.01;
         r.disc.material.opacity = blur * 0.55;
-        r.blades.visible = blur < 0.85;
+        r.blades.on = blur < 0.85;
       }
     },
     setColor(c) { mat.userData.uPaint.value.set(c); },
     get color() { return mat.userData.uPaint.value.getHex(); },
-    dispose() { mat.dispose(); glassMat?.dispose(); for (const r of rotorList) { r.disc.geometry.dispose(); r.disc.material.dispose(); } spotBeam?.geometry.dispose(); beamsGrp?.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); root.removeFromParent(); },
+    // (rig, glass and beam geometry and the beam materials belong to the type / module and stay)
+    dispose() { mat.dispose(); depthMat.dispose(); glassMat?.dispose(); for (const r of rotorList) { r.disc.geometry.dispose(); r.disc.material.dispose(); } spotBeam?.geometry.dispose(); root.removeFromParent(); },
   };
   model.setLights({});
   return model;
