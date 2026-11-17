@@ -4,6 +4,7 @@ import { THREE, Bucket, materials, domeGeometry, ringOf, exclusionsForBuildings,
 // the Outdoor Theatre on the waterfront: a stage with the bay behind it, terraced seating rising toward the podium,
 // under the wave canopy the city draws (OSM 329, 15-16 m) on slim columns
 const STAGE = { x: 780, z: -200, rx: 13, rz: 6, h: 1.1 };
+const VIEW_DIR = [-0.55, 0.83], VIEW_CLEAR = 45; // the domes' hero side (toward the Merlion), kept clear of trees this far out
 
 /** distance from (x, z) to a ring's outline (0 inside it) */
 function ringDist(x, z, r) {
@@ -104,10 +105,12 @@ export function buildEsplanade(city, quality) {
   return {
     group, exclusions: exclusionsForBuildings(exList), colliders, reflective: [...meshes, inst],
     pois: [{ id: 'esplanade', name: 'Esplanade – Theatres on the Bay', x: 700, y: 0, z: -300 }],
-    // the domes stand free on their podium with the promenade open to the bay: no park trees against the building
+    // the domes stand free on their podium with the promenade open to the bay: no park trees against the building, and
+    // none in the foreground of the classic view from the Merlion and the Esplanade Bridge (south-west)
     clearings: [{ x: STAGE.x, z: STAGE.z - 12, r: 30 }, ...[...exList, podium].filter(Boolean).map(b => {
-      const r = ringOf(b), [x, z] = areaCentroid(r);
-      return { x, z, r: Math.max(...r.map(p => Math.hypot(p[0] - x, p[1] - z))) + 16, inside: (px, pz) => ringDist(px, pz, r) < 16 };
+      const r = ringOf(b), [x, z] = areaCentroid(r), view = b !== podium;
+      const reach = view ? VIEW_CLEAR : 16;
+      return { x, z, r: Math.max(...r.map(p => Math.hypot(p[0] - x, p[1] - z))) + reach, inside: (px, pz) => { const d = ringDist(px, pz, r); return d < 16 || (view && d < reach && (px - x) * VIEW_DIR[0] + (pz - z) * VIEW_DIR[1] > 0); } };
     })],
   };
 }
