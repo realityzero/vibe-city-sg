@@ -16,10 +16,11 @@ export class Hype {
     ev.on('playerBusted', () => this.bump(-0.04, `Your arrest ${pick(BAD)}`));
     ev.on('trafficWreck', () => { if (Math.random() < 0.25) this.bump(-0.004); });
     ev.on('pedHit', () => this.bump(-0.01));
+    // boost meter under the speedometer (styled with the HUD: ui/theme.css .vc-kopi)
     this.kopiEl = document.createElement('div'); this.kopiEl.className = 'vc-kopi';
-    this.kopiEl.style.cssText = "position:fixed;left:236px;bottom:36px;width:120px;height:8px;border-radius:4px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.25);pointer-events:none;z-index:30;display:none";
-    this.kopiEl.innerHTML = '<div style="height:100%;width:100%;border-radius:3px;background:linear-gradient(90deg,#7a4a2a,#e8a35c)"></div><div style="position:absolute;top:-15px;left:0;font:600 11px \'Barlow Condensed\',sans-serif;letter-spacing:.12em;color:#f2d3b0;text-shadow:0 1px 2px #000">KOPI GAO [B]</div>';
-    document.body.appendChild(this.kopiEl);
+    this.kopiEl.style.display = 'none';
+    this.kopiEl.innerHTML = '<div class="fill"></div><div class="lbl">Kopi Gao <span class="key">[B]</span></div>';
+    game.ui.root.querySelector('.vc-layer-game').appendChild(this.kopiEl);
     this.lastVal = 0;
     this._f = new THREE.Vector3(); this._p = new THREE.Vector3(); this._b = new THREE.Vector3(); this._lv = new THREE.Vector3();
     addEventListener('keydown', e => { if (e.code === 'KeyB' && !e.__cheatTyping && !e.__uiHandled) this.boostKey = true; });
@@ -38,7 +39,7 @@ export class Hype {
     const g = this.game, m = g.missions, v = g.player.vehicle;
     // Kopi Gao boost
     const car = v && v.vc && !v.isBoat && !v.isAircraft;
-    this.kopiEl.style.display = car && g.state === 'play' ? 'block' : 'none';
+    this.kopiEl.style.display = car && g.state === 'play' && g.ui.hud.visible ? 'block' : 'none';
     if (car) {
       const want = this.boostKey && this.kopi > 0.02 && g.player.controlsEnabled;
       if (want) {

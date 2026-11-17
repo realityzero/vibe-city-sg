@@ -136,6 +136,10 @@ export class UI {
     this._log({ text, objective: true });
     this._timedShow(this._objEl, text, duration, 'obj');
   }
+  /** true while the on-screen touch controls are up (ui/touch.js) */
+  get touchMode() { return this.root.classList.contains('vc-touchmode'); }
+  /** A controls tip in the player's own terms: the keyboard wording, or the on-screen buttons on a touch screen. */
+  hint(keys, touch, duration) { this.help(touch && this.touchMode ? touch : keys, duration); }
   help(text, duration = 6500) {
     if (!text) { this._helpEl.classList.remove('vc-show'); return; }
     this._timedShow(this._helpEl, keyify(text), duration, 'help');

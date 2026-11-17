@@ -540,12 +540,20 @@ export class Game {
     ev.on('playerDied', r => this.playerDown(r || 'died'));
     ev.on('playerBusted', () => this.playerArrested());
     ev.on('enterVehicle', v => {
-      if (!this._toldDriving) { this._toldDriving = true; setTimeout(() => this.ui.help('<b>W/S</b> drive & brake, <b>A/D</b> steer, <b>Space</b> handbrake. <b>Q/E</b> change radio station, <b>V</b> camera, <b>F</b> get out.', 9000), 1200); }
+      if (this.player.controlsEnabled) this.driveHint(); // (a cutscene that seats Tommy gives it once he has the wheel)
       this.ui.hud.flashVehicle(v.spec.name); const st = this.audio?.radio; if (st && st.current < 0 && !v.isBike) st.setStation(Math.floor(Math.random() * Math.min(5, st.stations.length))); });
     ev.on('exitVehicle', () => { });
     ev.on('vehicleImpact', ({ vehicle, damage }) => { if (vehicle === this.player.vehicle) { this.cameraRig.shake(Math.min(1, damage / 60)); if (damage > 140 && !vehicle.isAircraft) this.player.damage((damage - 140) * 0.03, 'crash'); } });
     ev.on('carjack', () => this.progress.stats.carjacks++);
     ev.on('pedHit', () => this.progress.stats.peds++);
+  }
+
+  /** the driving controls, once per session, the first time Tommy has the wheel */
+  driveHint(delay = 1200) {
+    if (this._toldDriving) return;
+    this._toldDriving = true;
+    setTimeout(() => this.ui.hint('<b>W/S</b> drive & brake, <b>A/D</b> steer, <b>Space</b> handbrake. <b>Q/E</b> change radio station, <b>V</b> camera, <b>F</b> get out.',
+      'Hold <b>GAS</b> to drive, <b>BRAKE</b> to stop and reverse, steer with your <b>left thumb</b>. <b>DRIFT</b> is the handbrake, <b>RADIO</b> changes station, <b>EXIT</b> gets out.', 9000), delay);
   }
 
   async playerDown(reason) {
@@ -629,6 +637,7 @@ export class Game {
       map: { x: this.player.position.x, z: this.player.position.z, blips: this.allBlips() },
       secrets: CHEATS.map(c => ({ name: this.cheats.found.has(c.code) ? `${c.code} — ${c.name}` : c.name, desc: c.desc, found: this.cheats.found.has(c.code), hint: 'Type a code while playing. Vice City veterans know a few.' })),
       onSettingsChange: (k, v, all) => this.onSettingsChange(k, v, all),
+      actions: this.touch?.on ? this.touch.menuActions() : null,
     });
   }
   resume() { this.ui.pause.close(); this.paused = false; this.input.lock(); }
@@ -875,7 +884,7 @@ export class Game {
       if (v.health <= 0) {
         v.burnT = (v.burnT || 0) + dt;
         // fair warning, GTA-style: the engine burns for six seconds before it goes up
-        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.help('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', 4000); this.audio?.sfx?.('wanted_up'); }
+        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.hint('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', '<b>She\'s on fire!</b> Get out — tap <b>EXIT</b> — and run.', 4000); this.audio?.sfx?.('wanted_up'); }
         if (v.burnT > 6) this.explodeVehicle(v);
       }
     }
@@ -935,7 +944,8 @@ export class Game {
     if (this._zoneT <= 0) {
       this._zoneT = 1;
       const z = districtAt(p.position.x, p.position.z);
-      if (z && z !== this._zone) { this._zone = z; this.ui.hud.flashZone(z); }
+      // (not while a cutscene hides the HUD: the district would be marked as seen and never shown)
+      if (z && z !== this._zone && this.ui.hud.visible) { this._zone = z; this.ui.hud.flashZone(z); }
     }
     // radar
     // radar: mission-critical blips always; amenities only when close (the full map shows everything)

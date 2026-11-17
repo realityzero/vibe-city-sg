@@ -76,7 +76,7 @@
 .vc-touchmode .vc-phone { right: auto; left: calc(var(--u) * 3 + var(--sl)); bottom: calc(var(--t) * 34 + var(--sb)); scale: .62; transform-origin: bottom left; }
 .vc-touchmode .vc-bottom { bottom: calc(var(--u) * 3.5 + var(--sb)); width: min(70vw, calc(100vw - var(--t) * 112), calc(var(--u) * 120)); }
 .vc-touchmode .vc-map-zoom button { width: max(calc(var(--u) * 4.4), 40px); height: max(calc(var(--u) * 4.4), 40px); }
-html.vc-touch-on .vc-kopi { left: calc(14px + env(safe-area-inset-left, 0px)) !important; top: 41vh !important; bottom: auto !important; }
+.vc-touchmode .vc-kopi { left: calc(var(--u) * 3 + var(--sl)); top: calc(var(--u) * 37.5); bottom: auto; width: calc(var(--u) * 12); }
 
 /* full map close button (all devices) */
 .vc-map-close { all: unset; position: absolute; right: calc(var(--u) * 8.4); top: calc(var(--u) * 2); width: max(calc(var(--u) * 4.4), 32px); height: max(calc(var(--u) * 4.4), 32px); display: grid; place-items: center; cursor: pointer;

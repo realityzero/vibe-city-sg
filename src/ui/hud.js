@@ -9,7 +9,7 @@ export class Hud {
     this.weapon = el('div', 'vc-weapon');
     const col = el('div', 'vc-hud-col');
     this.clock = el('div', 'vc-clock vc-outline', '12:00');
-    this.money = el('div', 'vc-money vc-outline', '<span class="cur">S$</span>00000000');
+    this.money = el('div', 'vc-money vc-outline', '<span class="cur">S$</span><span class="lz">0000000</span>0');
     this.val = el('div', 'vc-val vc-outline-thin vc-hidden');
     this.users = el('div', 'vc-users vc-outline-thin vc-hidden');
     const vitals = el('div', 'vc-vitals');
@@ -56,7 +56,9 @@ export class Hud {
       const m = Math.round(s.money);
       if (m !== p.money) {
         const neg = m < 0;
-        this.money.innerHTML = `<span class="cur">${neg ? '-S$' : 'S$'}</span>${String(Math.abs(m)).padStart(8, '0')}`;
+        // eight digits, Vice City style, with the leading zeros dimmed so the amount itself reads at a glance
+        const digits = String(Math.abs(m)), lead = Math.max(0, 8 - digits.length);
+        this.money.innerHTML = `<span class="cur">${neg ? '-S$' : 'S$'}</span>${lead ? `<span class="lz">${'0'.repeat(lead)}</span>` : ''}${digits}`;
         this.money.classList.toggle('loss', neg);
         if (p.money != null) restartClass(this.money, 'bump');
         p.money = m;

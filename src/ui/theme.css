@@ -55,6 +55,8 @@
 .vc-money.bump { animation: vc-bump .45s ease-out; }
 .vc-money.loss { color: var(--red); }
 .vc-money .cur { font-size: 0.72em; margin-right: 0.04em; }
+.vc-money .lz { color: rgba(127,227,106,.22); -webkit-text-stroke-color: rgba(0,0,0,.3); }
+.vc-money.loss .lz { color: rgba(255,61,84,.22); }
 @keyframes vc-bump { 0% { transform: scale(1); } 30% { transform: scale(1.12); filter: brightness(1.6); } 100% { transform: scale(1); } }
 .vc-val { font: italic 600 calc(var(--u) * 2.5)/1 var(--f-hud); color: var(--cyan-hi); letter-spacing: .08em; text-transform: uppercase; }
 .vc-val b { font-weight: 800; color: var(--cyan); letter-spacing: .02em; font-size: 1.25em; }
@@ -99,6 +101,13 @@
 
 /* speedometer next to radar */
 .vc-speedo { position: absolute; left: calc(var(--u) * 33); bottom: calc(var(--u) * 4.2); font: italic 800 calc(var(--u) * 4.8)/0.9 var(--f-hud); color: #fff; transition: opacity .4s; }
+/* Kopi Gao boost meter (missions/hype.js) under the speedometer */
+.vc-kopi { position: absolute; left: calc(var(--u) * 33); bottom: calc(var(--u) * 2.3); width: calc(var(--u) * 14); height: calc(var(--u) * .9); border-radius: 99em;
+  background: rgba(0,0,0,.55); box-shadow: 0 0 0 1px rgba(255,255,255,.25); pointer-events: none; }
+.vc-kopi .fill { height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, #7a4a2a, #e8a35c); }
+.vc-kopi .lbl { position: absolute; left: calc(100% + var(--u) * 1); top: 50%; transform: translateY(-50%); white-space: nowrap;
+  font: italic 700 calc(var(--u) * 1.8)/1 var(--f-hud); letter-spacing: .14em; text-transform: uppercase; color: #f2d3b0; text-shadow: 0 1px 2px #000; }
+.vc-touchmode .vc-kopi .key { display: none; }
 .vc-speedo small { font: italic 600 calc(var(--u) * 1.9)/1 var(--f-hud); letter-spacing: .2em; color: var(--cyan-hi); margin-left: .25em; }
 .vc-speedo .veh { display: block; font: italic 600 calc(var(--u) * 2)/1.4 var(--f-hud); letter-spacing: .12em; color: #d9d2ff; text-transform: uppercase; }
 
@@ -326,7 +335,8 @@
 .vc-fullmap .hdr .s { font: italic 600 calc(var(--u)*2)/1 var(--f-hud); letter-spacing: .3em; color: var(--cyan-hi); text-transform: uppercase; }
 @keyframes vc-fadein { from { opacity: 0; } }
 
-.vc-pause { position: absolute; inset: 0; background: rgba(6,2,16,.72); backdrop-filter: blur(6px) saturate(1.2); display: grid; grid-template-rows: auto 1fr; animation: vc-fadein .2s; }
+.vc-pause { position: absolute; inset: 0; background: rgba(6,2,16,.72); backdrop-filter: blur(6px) saturate(1.2); display: grid; grid-template-rows: auto auto 1fr; animation: vc-fadein .2s; }
+.vc-pause .top { grid-row: 1; } .vc-pause .quick { grid-row: 2; } .vc-pause .body { grid-row: 3; }
 .vc-pause .top { display: flex; align-items: center; gap: calc(var(--u)*3); padding: calc(var(--u)*2.6) calc(var(--u)*4) calc(var(--u)*1.6); }
 .vc-pause .brand { font: 400 calc(var(--u)*6.4)/0.9 var(--f-script); color: #ffd3ec; text-shadow: 0 0 .08em var(--pink), 0 0 .2em var(--pink); transform: rotate(-5deg); margin-right: calc(var(--u)*2); }
 .vc-pause .tabs { display: flex; gap: calc(var(--u)*.6); }
@@ -337,6 +347,8 @@
 .vc-pause .act { all: unset; cursor: pointer; font: italic 800 calc(var(--u)*2.6)/1 var(--f-hud); letter-spacing: .1em; text-transform: uppercase; padding: calc(var(--u)*1.1) calc(var(--u)*2.2); border-radius: 99em; border: 1px solid rgba(255,255,255,.3); color: #fff; }
 .vc-pause .act.resume { background: var(--cyan); color: #06121a; border-color: var(--cyan); box-shadow: 0 0 calc(var(--u)*2) rgba(47,230,255,.5); }
 .vc-pause .act:hover { filter: brightness(1.2); }
+.vc-pause .quick { display: flex; gap: calc(var(--u)*1.6); padding: 0 calc(var(--u)*4) calc(var(--u)*1.2); }
+.vc-pause .quick .act { background: rgba(255,255,255,.06); }
 .vc-pause .body { position: relative; margin: 0 calc(var(--u)*4) calc(var(--u)*4); border-radius: calc(var(--u)*1.6); overflow: hidden; border: 1px solid rgba(255,255,255,.14); background: rgba(10,5,24,.75); min-height: 0; }
 .vc-pause .pane { position: absolute; inset: 0; overflow: auto; padding: calc(var(--u)*3) calc(var(--u)*4); font: 500 calc(var(--u)*2.2)/1.5 var(--f-ui); }
 .vc-pause .pane.map { padding: 0; }
