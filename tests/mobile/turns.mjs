@@ -22,9 +22,10 @@ await page.evaluate(() => {
   const R = window.__turns = { frames: 0, carFrames: 0, lat: [], lon: [], jerkLat: [], jerkLon: [], yawRate: [], off: [], worst: [], pivot: 0, overSteer: 0, turns: [], overlap: 0, overlapPairs: new Set(), kinds: {}, red: 0, lateAmber: 0, hardStops: 0, stuck: new Set(), dist: 0, time: 0, active: 0, inView: 0 };
   const prev = new Map();
   const orig = T.update.bind(T);
-  T.update = dt => {
-    orig(dt);
-    if (!R.on || !(dt > 0)) return;
+  T.update = frameDt => {
+    orig(frameDt);
+    if (!R.on || !(frameDt > 0)) return;
+    const dt = frameDt;
     R.frames++; R.time += dt;
     const cars = T.cars.filter(c => c.state === 'drive'); R.active += cars.length;
     // cars the camera faces within 150 m (not occlusion-aware): what visible traffic density there is
@@ -34,14 +35,18 @@ await page.evaluate(() => {
     for (const c of cars) {
       seen.add(c.id);
       const p = prev.get(c.id), x = c.pos.x, z = c.pos.z, yaw = c.yaw;
-      if (!p) { prev.set(c.id, { x, z, yaw, n: 0, mode: c.mode, lane: c.lane, conn: c.conn }); continue; }
+      if (!p) { prev.set(c.id, { x, z, yaw, n: 0, mode: c.mode, lane: c.lane, conn: c.conn, dt: 0 }); continue; }
+      // a far car may be driven only every 2nd / 3rd frame (c.lag holds the time it is owed): measure over its own steps
+      p.dt += frameDt; if (c.lag > 0) continue;
+      const dt = p.dt; p.dt = 0;
       const vx = (x - p.x) / dt, vz = (z - p.z) / dt, v = Math.hypot(vx, vz), r = wrap(yaw - p.yaw) / dt;
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = -fz, rz = fx; // forward, right
       p.n++;
       if (p.n >= 3) {
         const ax = (vx - p.vx) / dt, az = (vz - p.vz) / dt, aLat = ax * rx + az * rz, aLon = ax * fx + az * fz;
         if (p.n >= 4) { R.jerkLat.push(Math.abs(aLat - p.aLat) / dt); R.jerkLon.push(Math.abs(aLon - p.aLon) / dt); }
-        R.lat.push(Math.abs(aLat)); R.lon.push(aLon); if (aLon < -15) R.hardStops++; // no tyre stops a car that hard R.yawRate.push(Math.abs(r)); R.carFrames++;
+        R.lat.push(Math.abs(aLat)); R.lon.push(aLon); R.yawRate.push(Math.abs(r)); R.carFrames++;
+        if (aLon < -15) R.hardStops++; // no tyre stops a car that hard
         p.aLat = aLat; p.aLon = aLon;
         // turning on the spot: yaw rate the car's own wheelbase can't produce at this speed (max lock ~0.6 rad)
         if (Math.abs(r) > 0.05 && Math.abs(r) > v * Math.tan(0.62) / c.spec.wheelBase * 1.15 + 0.02) { R.pivot++; if (R.worst.length < 400) R.worst.push(['pivot', +r.toFixed(2), +v.toFixed(2), +c.speed.toFixed(2), c.mode, +(c.steer || 0).toFixed(2), c.type]); }
