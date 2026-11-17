@@ -61,6 +61,12 @@ export function exclusionsForBuildings(list) {
   }
   return out;
 }
+/** A clearing (no trees) over a footprint the city builder skips: nothing stamps it off-limits to the tree planting,
+ * so its trees would stand through the landmark's roof. */
+export function footprintClearing(ring, margin = 1) {
+  const [x, z] = centroidOf(ring), out = offsetRing(ring, margin);
+  return { x, z, r: Math.max(...out.map(p => Math.hypot(p[0] - x, p[1] - z))), inside: (px, pz) => pointInRing(px, pz, out) };
+}
 /** Resample a closed ring to n points evenly spaced by arc length. */
 export function resampleRing(r, n) {
   const segs = []; let total = 0;
@@ -279,6 +285,16 @@ export function fixWinding(g) {
   return g;
 }
 
+/** Turn a non-indexed geometry inside out (faces and normals), e.g. walls seen from inside a void. */
+export function flipFaces(g) {
+  for (const at of Object.values(g.attributes)) {
+    const a = at.array, s = at.itemSize;
+    for (let t = 0; t < at.count; t += 3) for (let k = 0; k < s; k++) { const i = (t + 1) * s + k, j = (t + 2) * s + k; const v = a[i]; a[i] = a[j]; a[j] = v; }
+  }
+  const n = g.attributes.normal.array; for (let i = 0; i < n.length; i++) n[i] = -n[i];
+  return g;
+}
+
 /** Extrude a footprint ring (world x,z) between y0 and y1; walls get facade (perimeter metres, y). */
 export function extrudeFootprint(ring, y0, y1, { top = true, bottom = false } = {}) {
   const r = signedArea(ring) < 0 ? ring.slice().reverse() : ring.slice(); // ensure positive area (CCW in x,z => clockwise seen from above)
@@ -400,11 +416,12 @@ export function offsetRing(ring, d) {
   }
   return out;
 }
-/** Flat polygon (world ring) at height y, facing up (or down). */
-export function capGeometry(ring, y, down = false) {
-  const tris = THREE.ShapeUtils.triangulateShape(ring.map(p => new THREE.Vector2(p[0], p[1])), []);
+/** Flat polygon (world ring, optional hole rings) at height y, facing up (or down). */
+export function capGeometry(ring, y, down = false, holes = []) {
+  const v2 = r => r.map(p => new THREE.Vector2(p[0], p[1])), all = ring.concat(...holes);
+  const tris = THREE.ShapeUtils.triangulateShape(v2(ring), holes.map(v2));
   const pos = [];
-  for (const t of tris) for (const k of (down ? [t[0], t[2], t[1]] : t)) pos.push(ring[k][0], y, ring[k][1]);
+  for (const t of tris) for (const k of (down ? [t[0], t[2], t[1]] : t)) pos.push(all[k][0], y, all[k][1]);
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.computeVertexNormals();
   const nn = g.attributes.normal.array;
@@ -466,8 +483,10 @@ export function facadeMaterial(opts = {}) {
     warm: 0xffc27a, cool: 0xcfe4ff, litIntensity: 2.2, seed: 1, glassRough: 0.08, wallRough: 0.6, glassMetal: 0.3, wallMetal: 0.05,
     bands: 0, // horizontal spandrel band strength
     yMin: 0, groundLit: 0, wallGlow: 0, wallGlowColor: 0xfff1dc,
+    wallGlowY: [0, 1, 1], // floodlit from below: the wall glow full at y0, fading to the floor share by y1 (1: even)
     accent: 0, accentA: 0x3f7fbf, accentB: 0xe08a3c,
     curtains: 0.45, // share of lit rooms with the curtains drawn (dim)
+    vary: 1, // room-to-room variation of occupancy, brightness and glass tint (0: one even glow, as shop glazing)
   }, opts);
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.2 });
   mat.onBeforeCompile = sh => {
@@ -485,6 +504,8 @@ export function facadeMaterial(opts = {}) {
     sh.uniforms.uBands = { value: o.bands };
     sh.uniforms.uYMin = { value: o.yMin };
     sh.uniforms.uWallGlow = { value: new THREE.Color(o.wallGlowColor).multiplyScalar(o.wallGlow) };
+    sh.uniforms.uWallGlowY = { value: new THREE.Vector3(...o.wallGlowY) };
+    sh.uniforms.uVary = { value: o.vary };
     sh.uniforms.uAccent = { value: o.accent };
     sh.uniforms.uCurtains = { value: o.curtains };
     sh.uniforms.uAccA = { value: new THREE.Color(o.accentA) };
@@ -496,7 +517,7 @@ export function facadeMaterial(opts = {}) {
       .replace('#include <common>', `#include <common>
 varying vec2 vFacade;
 uniform float uNight, uLit, uLitI, uSeed, uBands, uYMin;
-uniform vec3 uWall, uGlass, uFrame, uWarm, uCool, uWallGlow, uAccA, uAccB; uniform float uAccent, uCurtains;
+uniform vec3 uWall, uGlass, uFrame, uWarm, uCool, uWallGlow, uWallGlowY, uAccA, uAccB; uniform float uAccent, uCurtains, uVary;
 uniform vec2 uCell; uniform vec4 uRough;
 ${GLSL_HASH}
 float lmFarOcc(vec2 id, float lit, float seed) {
@@ -523,7 +544,7 @@ float fWin, fFar, fFarAmp; vec2 fId, fF, fBlock;`)
   { float ah = lmHash(fId * 0.73 + 17.0 + uSeed); if (ah < uAccent) wall = mix(uAccA, uAccB, step(0.5, lmHash(fId + 5.0))) * grime; }
   float band = uBands * (1.0 - wy);
   wall = mix(wall, wall * 0.8, band);
-  float tint = 0.85 + 0.3 * mix(lmHash(fId + uSeed * 7.0), mix(0.5, lmHash(fBlock + uSeed * 7.0), fFarAmp), fFar);
+  float tint = 1.0 + 0.3 * uVary * (mix(lmHash(fId + uSeed * 7.0), mix(0.5, lmHash(fBlock + uSeed * 7.0), fFarAmp), fFar) - 0.5);
   diffuseColor.rgb *= mix(wall, uGlass * tint, fWin);
 }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(uRough.y, uRough.x, fWin);')
@@ -533,22 +554,23 @@ float fWin, fFar, fFarAmp; vec2 fId, fF, fBlock;`)
   // occupancy clusters by floor and by groups of rooms (whole floors dark, a corridor of lit suites), not salt-and-pepper;
   // many lit rooms have curtains drawn (dim, warm)
   float floorOcc = 0.55 + 0.9 * lmHash(vec2(fId.y, uSeed * 3.0));
-  float h = lmHash(fId * 1.37 + uSeed) / floorOcc;
+  float h = uVary * lmHash(fId * 1.37 + uSeed) / floorOcc;
   float on = step(h, uLit) * fWin * uNight;
   vec3 lc = mix(uWarm, uCool, step(0.72, lmHash(fId + 3.1 + uSeed)));
   float dh = lmHash(fId * 2.1 + 9.0);
-  float dim = dh < uCurtains ? 0.18 + 0.2 * dh : 0.55 + 0.45 * dh;
+  float dim = mix(0.8, dh < uCurtains ? 0.18 + 0.2 * dh : 0.55 + 0.45 * dh, uVary);
   // a room's light falls off toward its side walls and the ceiling line: soft panes, not solid lit rectangles
   float pane = (0.55 + 0.45 * smoothstep(0.0, 0.42, min(fF.x, 1.0 - fF.x))) * (0.75 + 0.25 * (1.0 - fF.y));
   vec3 cell = lc * on * uLitI * dim * pane;
   // far away: the mean of the above (no per-room hash sparkle), varied by floor and run of rooms
-  float occ = mix(uLit, lmFarOcc(fBlock, uLit, uSeed), fFarAmp);
+  float occ = mix(uLit, lmFarOcc(fBlock, uLit, uSeed), fFarAmp * uVary);
   cell = mix(cell, mix(uWarm, uCool, 0.28) * occ * uLitI * 0.62 * fWin * uNight, fFar);
   totalEmissiveRadiance += cell;
-  totalEmissiveRadiance += uWallGlow * (1.0 - fWin) * uNight;
+  float up = 1.0 - smoothstep(uWallGlowY.x, uWallGlowY.y, vFacade.y);
+  totalEmissiveRadiance += uWallGlow * (1.0 - fWin) * uNight * (uWallGlowY.z + (1.0 - uWallGlowY.z) * up * up);
 }`);
   };
-  mat.customProgramCacheKey = () => 'lmfacade4';
+  mat.customProgramCacheKey = () => 'lmfacade5';
   return mat;
 }
 
