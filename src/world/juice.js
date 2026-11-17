@@ -17,7 +17,7 @@ const _p = new THREE.Vector3(), _v = new THREE.Vector3(), _q = new THREE.Quatern
 export class Juice {
   constructor(game) {
     this.game = game;
-    this.slots = Array.from({ length: SLOTS }, () => ({ obj: null, ped: false, min: 99, rel: 0, seen: 0, touched: false }));
+    this.slots = Array.from({ length: SLOTS }, () => ({ obj: null, ped: false, min: 99, gap: 99, rel: 0, spd: 0, seen: 0, touched: false }));
     this.paid = new Map(); // car/pedestrian -> time paid: one pass pays once
     this.frame = 0; this.combo = 0; this.lastT = -99; this.impactT = -99;
     this.sparkT = 0; this.scrapeT = 0; this.slowT = 0;
@@ -54,34 +54,35 @@ export class Juice {
       if (dx * dx + dz * dz > 144) continue;
       const bx = -Math.sin(c.yaw), bz = -Math.cos(c.yaw), kv = c.kv;
       const gap = boxGap(cx, cz, ax, az, hw, hl, c.pos.x, c.pos.z, bx, bz, c.spec.width * 0.5, c.len * 0.5);
-      this.track(c, false, gap, kv ? Math.hypot(vx - kv.x, vz - kv.z) : v.speed);
+      this.track(c, false, gap, kv ? Math.hypot(vx - kv.x, vz - kv.z) : v.speed, v.speed);
     }
     for (const p of g.peds.peds) {
       if (p.state === 'knocked') continue;
       const dx = p.pos.x - cx, dz = p.pos.z - cz;
       if (dx * dx + dz * dz > 64) continue;
-      this.track(p, true, boxGap(cx, cz, ax, az, hw, hl, p.pos.x, p.pos.z, 1, 0, 0.3, 0.3), v.speed);
+      this.track(p, true, boxGap(cx, cz, ax, az, hw, hl, p.pos.x, p.pos.z, 1, 0, 0.3, 0.3), v.speed, v.speed);
     }
     // a pass is over once the other has dropped out of range (or opened the gap again): pay out the close ones
     for (const s of this.slots) {
       if (!s.obj) continue;
       if (s.seen === this.frame && !(s.min < (s.ped ? NEAR_PED : NEAR) && s.gap > 3)) continue;
-      const ok = !s.touched && s.min > 0.02 && s.min < (s.ped ? NEAR_PED : NEAR) && (s.ped || s.rel > MIN_REL) && now - this.impactT > 0.6 && !this.paid.has(s.obj);
+      const ok = !s.touched && s.min > 0.02 && s.min < (s.ped ? NEAR_PED : NEAR) && s.spd >= MIN_SPEED && (s.ped || s.rel > MIN_REL) &&
+        now - this.impactT > 0.6 && !this.paid.has(s.obj);
       if (ok) this.nearMiss(s, v, now);
       s.obj = null;
     }
     if (this.paid.size > 32) for (const [o, t] of this.paid) if (now - t > 20) this.paid.delete(o);
   }
 
-  // follow one car / pedestrian through the pass: the closest clearance and the closing speed at that moment
-  track(obj, ped, gap, rel) {
+  // follow one car / pedestrian through the pass: the closest clearance, and the closing and own speed at that moment
+  track(obj, ped, gap, rel, spd) {
     let free = null;
     for (const s of this.slots) {
-      if (s.obj === obj) { s.seen = this.frame; s.gap = gap; if (gap < s.min) { s.min = gap; s.rel = rel; } return; }
+      if (s.obj === obj) { s.seen = this.frame; s.gap = gap; if (gap < s.min) { s.min = gap; s.rel = rel; s.spd = spd; } return; }
       if (!s.obj && !free) free = s;
     }
     if (!free || gap > 2.5) return; // (only start following once it's close)
-    free.obj = obj; free.ped = ped; free.min = gap; free.gap = gap; free.rel = rel; free.seen = this.frame; free.touched = gap <= 0;
+    free.obj = obj; free.ped = ped; free.min = gap; free.gap = gap; free.rel = rel; free.spd = spd; free.seen = this.frame; free.touched = gap <= 0;
   }
   release() { for (const s of this.slots) s.obj = null; }
 
