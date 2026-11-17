@@ -65,6 +65,30 @@ const COMMON_VHEAD = /* glsl */`varying vec3 vWPos; varying vec3 vWN;`;
 const COMMON_VBODY = /* glsl */`vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal);`;
 
 // ------------------------------------------------------------------ facades
+// shophouse terraces: a long shophouse wall is a row of ~5.5 m units (the five-foot-way piers, signboards and window
+// bays follow the same grid), each painted its own pastel; a quarter keep the building's colour
+const SHOP_UNITS = /* glsl */`
+      vec3 shopPastel(float h) {
+        h = floor(h * 12.0);
+        if (h < 0.5) return vec3(0.392, 0.687, 0.485);
+        if (h < 1.5) return vec3(0.905, 0.468, 0.539);
+        if (h < 2.5) return vec3(0.922, 0.768, 0.356);
+        if (h < 3.5) return vec3(0.397, 0.672, 0.784);
+        if (h < 4.5) return vec3(0.930, 0.558, 0.347);
+        if (h < 5.5) return vec3(0.584, 0.468, 0.776);
+        if (h < 6.5) return vec3(0.807, 0.392, 0.202);
+        if (h < 7.5) return vec3(0.462, 0.745, 0.651);
+        if (h < 8.5) return vec3(0.947, 0.665, 0.386);
+        if (h < 9.5) return vec3(0.658, 0.745, 0.328);
+        if (h < 10.5) return vec3(0.342, 0.558, 0.807);
+        return vec3(0.863, 0.440, 0.356);
+      }`;
+const SHOP_UNIT_SETUP = /* glsl */`
+      bool terr = fStyle > 3.5 && fStyle < 4.5 && fFlag < 2.5 && wallLen > 8.0;
+      float unitN = max(1.0, floor(wallLen / 5.5 + 0.5)), unitW = wallLen / unitN;
+      float unitId = floor(vWall.x / unitW), unitU = vWall.x - unitId * unitW;
+      float unitH = hash12(vec2(unitId * 3.1 + 0.7, fSeed * 47.0));
+      if (terr && unitH < 0.75) wallCol = shopPastel(fract(unitH * 1.33 + fSeed * 5.0));`;
 // cheap variant for the half-res planar water reflection: wall colour, the window grid (filtered to its average where
 // windows are sub-pixel) and lit windows at night; no interior mapping, weathering, signs, trims or normal tilt
 const FACADE_REFLECTION_FRAG = /* glsl */`
@@ -72,7 +96,9 @@ const FACADE_REFLECTION_FRAG = /* glsl */`
       float fSeed = vF1.y; float fh = vF1.z; float fBase = vF1.w;
       float wallLen = vF2.x; float fTop = vF2.y;
       float fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
-      vec3 wallCol = diffuseColor.rgb, albedo = wallCol;
+      vec3 wallCol = diffuseColor.rgb;
+${SHOP_UNIT_SETUP}
+      vec3 albedo = wallCol;
       float fRough = 0.86, fMetal = 0.0;
       vec3 fEmis = vec3(0.0);
       if (fStyle < 11.5) {
@@ -127,7 +153,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
     uniforms: { ...COMMON_U(), uRec: FACADE_REC },
     vertexHead: COMMON_VHEAD + FACADE_VHEAD,
     vertexBody: COMMON_VBODY + FACADE_VBODY,
-    fragHead: COMMON_HEAD + `varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
+    fragHead: COMMON_HEAD + `varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;` + SHOP_UNITS,
     fragAfterMetal: FACADE_REFLECTION_FRAG,
     fragAfterEmissive: `totalEmissiveRadiance += fEmis;`,
   });
@@ -136,7 +162,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
     uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir, uRec: FACADE_REC },
     vertexHead: COMMON_VHEAD + FACADE_VHEAD,
     vertexBody: COMMON_VBODY + FACADE_VBODY,
-    fragHead: COMMON_HEAD + /* glsl */`
+    fragHead: COMMON_HEAD + SHOP_UNITS + /* glsl */`
       varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;
       uniform sampler2D uSigns; uniform sampler2D uInterior; uniform vec3 uSunDirF;
       // local clock time from the sun vector (inverse of sky.js sunDirection: late-October declination, lat 1.29 N)
@@ -186,9 +212,11 @@ export function createFacadeMaterial({ reflection = false } = {}) {
       float fAccent = mod(vF2.w, 16.0), fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
       // building use (tools/building-uses.mjs): 0 unknown, 1 retail, 2 health, 3 edu, 4 civic, 5 religious, 6 resi, 7 office, 8 hotel, 9 industrial, 10 parking
       float fUse = floor(vF2.w / 128.0 + 0.001);
-      bool shopUse = fUse < 1.5;   // only shops (and unknowns) get shopfronts and signboards
+      // only shops (and unknowns) get shopfronts and signboards; a shophouse tagged residential still trades downstairs
+      bool shopUse = fUse < 1.5 || (fStyle > 3.5 && fStyle < 4.5 && fUse > 5.5 && fUse < 6.5);
       float fy0 = vWall.y - fBase;
       vec3 wallCol = diffuseColor.rgb;
+${SHOP_UNIT_SETUP}
       vec3 albedo = wallCol;
       float fRough = 0.86, fMetal = 0.0;
       vec3 fEmis = vec3(0.0);
@@ -199,7 +227,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
       bool horiz = abs(N.y) > 0.7;
       float wallId = horiz ? 0.0 : floor(atan(N.z, N.x) * 2.0 + 10.0);
       bool special = fStyle > 11.5; // arcade soffit / columns / five-foot-way floor
-      if (special || fFlag > 1.5 && fFlag < 3.5) { fSpecOcc = 0.2; fAmbOcc = fStyle > 12.5 && fStyle < 13.5 ? 0.8 : 0.55; }
+      if (special || fFlag > 1.5 && fFlag < 3.5 || fFlag > 5.5) { fSpecOcc = 0.2; fAmbOcc = fStyle > 12.5 && fStyle < 13.5 ? 0.8 : 0.55; }
 
       if (!special) {
         // weathering: large scale tone, rain streaks, base dirt, tropical mould creeping up from the ground
@@ -212,7 +240,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         albedo = mix(albedo, albedo * vec3(0.6, 0.66, 0.55), mould * 0.55);
         albedo *= 1.0 - uWet * 0.28;
       } else if (fStyle < 12.5) {
-        // ---- arcade / void-deck ceiling: plaster with lamps (warm bulbs for shophouses, tubes for HDB)
+        // ---- arcade / void-deck ceiling: plaster with lamps (warm bulbs for shophouses, tubes for HDB and hawker centres)
         bool hdbS = fFlag > 2.5;
         float sp = hdbS ? 6.5 : 5.2;
         albedo = mix(wallCol, vec3(0.86, 0.85, 0.8), 0.6) * (0.85 + 0.15 * vnoise(vWall * 0.7));
@@ -224,7 +252,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * uNight * 0.45;
         fRough = 0.92;
       } else if (fStyle < 13.5) {
-        // ---- columns: shophouse piers wear a Peranakan tile dado, HDB pillars a painted base band
+        // ---- columns: shophouse piers wear a Peranakan tile dado, HDB / hawker-centre pillars a painted base band
         bool hdbP = fFlag > 2.5;
         float y = vWall.y;
         albedo = wallCol * (0.9 + 0.12 * vnoise(vec2(vWall.x * 2.0, y * 1.5) + fSeed));
@@ -281,7 +309,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         albedo = mix(albedo, hdbAccent(fAccent), aaBand(ex, 0.9, 1.25) * step(fBase + fh, vWall.y) * 0.85);
         float num = floor(1.0 + hash12(vec2(fSeed * 91.0, 3.0)) * 698.0);
         float nd = num < 9.5 ? 1.0 : (num < 99.5 ? 2.0 : 3.0);
-        float dH = clamp(wallLen * 0.16, 1.8, 3.0), dW = dH * 0.6;
+        float dH = clamp(wallLen * 0.2, 2.4, 4.2), dW = dH * 0.6;
         float lx = ((wallLen - vWall.x) - (wallLen - nd * dW) * 0.5) / dW, ly = (vWall.y - (fTop - 1.4 - dH)) / dH;
         if (lx >= 0.0 && lx < nd && ly >= 0.0 && ly < 1.0) {
           float di = floor(lx);
@@ -297,12 +325,14 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         float nCols = max(1.0, floor(wallLen / colW + 0.5));
         float cw = wallLen / nCols;
         vec2 cell = vec2(vWall.x / cw, fy0 / fh);
+        // terrace units: two or three window bays each (cell ids stay unique per unit)
+        if (terr) { cw = unitW / (2.0 + step(0.6, hash12(vec2(unitId * 1.9, fSeed * 23.0)))); cell.x = unitId * 4.0 + unitU / cw; }
         vec2 cid = floor(cell);
         vec2 cf = fract(cell);
         float nFloors = max(1.0, floor((fTop - fBase) / fh + 0.01));
         bool ground = cid.y < 0.5 && fBase < 1.0;
         bool shopFront = shop && shopUse && fFlag > 0.5 && fFlag < 1.5;     // facade above the five-foot-way
-        bool shopRecess = shop && shopUse && fFlag > 1.5 && fFlag < 2.5;    // shopfront behind the arcade
+        bool shopRecess = shop && shopUse && (fFlag > 1.5 && fFlag < 2.5 || fFlag > 5.5);   // shopfront behind the arcade (6: hawker stall)
         // glazed double-height lobby: offices, hotels, hospitals, condos, civic towers (and unknown towers over 60 m)
         bool lobby = ground && fStyle < 2.5 && fFlag < 0.5 && ((fUse > 1.5 && fUse < 8.5 && fUse != 3.0 && fUse != 5.0) || (fUse < 0.5 && fStyle < 1.5 && fTop >= 60.0));
         bool hdbCorr = hdb && fFlag > 3.5 && fFlag < 4.5;
@@ -311,6 +341,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         bool shopG = ground && shop && shopUse;
         float famH = hash12(vec2(cid.x * 3.7 + wallId * 1.9, fSeed * 53.0));
         float shopFam = famH < 0.24 ? 0.0 : famH < 0.42 ? 1.0 : famH < 0.52 ? 4.0 : famH < 0.64 ? 5.0 : famH < 0.8 ? 6.0 : 7.0;
+        if (fFlag > 5.5) shopFam = famH < 0.65 ? 1.0 : famH < 0.85 ? 5.0 : 0.0;   // hawker stalls: food and drinks
         bool shopOpen = false, glassFront = shopFam > 3.5 && shopFam != 6.0; // goldsmith, bakery, pharmacy: air-conditioned
         if (shopG) {
           float early = shopFam == 1.0 || shopFam == 5.0 ? 1.0 : 0.0;
@@ -336,14 +367,14 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         if (cell.y > nFloors - 0.02 || cell.y < 0.0) win = 0.0;
         if (hdbVoid) win *= step(hash12(vec2(cid.x, fSeed * 13.0)), 0.3); // a few open passages through the void deck
         // arched openings (civic windows, shophouse fronts that face no street)
-        if ((fStyle > 5.5 && fStyle < 6.5) || (ground && shop && !shopRecess)) {
+        if ((fStyle > 5.5 && fStyle < 6.5) || (ground && shop && !shopRecess) || (terr && !ground && unitH > 0.62 && cid.y < nFloors - 0.5)) {
           float archY = mix(lo.y, hi.y, 0.72);
           vec2 q = vec2((cf.x - 0.5) * cw, (cf.y - archY) * fh);
           float r = (hi.x - lo.x) * 0.5 * cw;
           float inArch = 1.0 - smoothstep(r - 0.05, r + 0.05, length(q));
           if (cf.y > archY) win *= inArch;
         }
-        vec2 fw = fwidth(cell);
+        vec2 fw = vec2(fwidth(vWall.x) / cw, fwidth(cell.y));   // (cell.x jumps between terrace units)
         float far = smoothstep(0.2, 0.6, max(fw.x, fw.y));
         float farLit = smoothstep(0.3, 1.1, max(fw.x, fw.y));
         float cover = (hi.x - lo.x) * (hi.y - lo.y);
@@ -375,6 +406,10 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           }
         } else if (hdb) {
           vec3 acc = hdbAccent(fAccent);
+          // two-tone repaint scheme: a pastel of the block's accent colour over one or two of every few bays, full height
+          float per = 3.0 + floor(fract(fSeed * 11.0) * 3.0);
+          float tone = step(mod(cid.x + floor(fract(fSeed * 19.0) * per), per), 0.5 + step(0.5, fract(fSeed * 29.0))) * step(1.0, cell.y);
+          vec3 pastel = mix(albedo, acc * 1.15 + 0.08, 0.4);
           if (ground) {
             // void deck back wall: tiled dado, lift doors, letterboxes
             albedo = mix(albedo * 0.9, vec3(0.8, 0.8, 0.76), aaBand(vWall.y, -1.0, 1.15) * 0.8);
@@ -385,6 +420,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             // common corridor: parapet wall with an accent coping, dark corridor behind, doors and gates
             float par = 1.0 - aaStep(0.42, cf.y);
             float corr = (1.0 - par) * (1.0 - aaStep(0.97, cf.y));
+            albedo = mix(albedo, pastel, tone * par);
             albedo = mix(albedo, acc, aaBand(cf.y, 0.37, 0.42) * 0.9);
             vec3 back = wallCol * 0.42;
             float door = aaBand(cf.x, 0.1, 0.36) * aaBand(cf.y, 0.42, 0.9);
@@ -397,6 +433,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
             fEmis += vec3(0.6, 0.65, 0.7) * uNight * 0.08 * corr;
           } else {
             // AC ledges / planter bands at every floor, stair core with breeze blocks
+            albedo = mix(albedo, pastel, tone);
             float ledge = 1.0 - aaStep(0.09, cf.y);
             albedo = mix(albedo, albedo * 1.08, ledge);
             albedo *= 1.0 - 0.28 * aaBand(cf.y, 0.09, 0.16) * (1.0 - far);
@@ -429,18 +466,27 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           }
         } else if (shop) {
           // pilasters at the party walls, moulded cornice at every floor, ventilation grilles over the windows
-          float ex = min(vWall.x, wallLen - vWall.x);
+          float ex = terr ? min(unitU, unitW - unitU) : min(vWall.x, wallLen - vWall.x);
           float pil = (1.0 - aaStep(0.38, ex)) * step(0.5, cell.y);
-          float pil2 = mod(cid.x, 2.0) < 0.5 && !shopFront ? (1.0 - aaStep(0.09, cf.x)) * step(0.5, cell.y) : 0.0;
+          float pil2 = mod(cid.x, 2.0) < 0.5 && !shopFront && !terr ? (1.0 - aaStep(0.09, cf.x)) * step(0.5, cell.y) : 0.0;
           vec3 trim = mix(vec3(0.9, 0.88, 0.82), wallCol * 1.15, 0.25);
           albedo = mix(albedo, trim, max(pil, pil2 * 0.75));
           albedo *= 1.0 - 0.25 * aaBand(ex, 0.38, 0.46) * step(0.5, cell.y);          // pilaster side shadow
+          // capitals: the pilaster steps out under each floor's cornice
+          float capM = (1.0 - aaStep(0.52, ex)) * step(0.5, cell.y) * (1.0 - far);
+          albedo = mix(albedo, trim * 1.05, aaBand(cf.y, 0.88, 0.95) * capM);
+          albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.86, 0.88) * capM;
           if (!ground) {
             float corn = 1.0 - aaStep(0.07, cf.y);
             albedo = mix(albedo, trim, corn * 0.85);
             albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.07, 0.11) * (1.0 - far);
             float vent = aaBand(cf.x, lo.x + 0.04, hi.x - 0.04) * aaBand(cf.y, hi.y + 0.03, hi.y + 0.1);
-            albedo = mix(albedo, albedo * (0.55 + 0.45 * aaPulse(vWall.x * 12.0 + 0.5, 0.5)), vent * (1.0 - far));
+            if (terr && unitH > 0.3 && unitH <= 0.62) {
+              // glazed fanlight over the shutters: dark glass in a painted frame, three glazing bars
+              float bars = max(aaPulse((cf.x - lo.x) / (hi.x - lo.x) * 4.0, 0.12), 1.0 - aaBand(cf.y, hi.y + 0.045, hi.y + 0.085));
+              albedo = mix(albedo, mix(vec3(0.04, 0.05, 0.055), trim, bars), vent * (1.0 - far));
+              fRough = mix(fRough, 0.15, vent * (1.0 - bars) * (1.0 - far));
+            } else albedo = mix(albedo, albedo * (0.55 + 0.45 * aaPulse(vWall.x * 12.0 + 0.5, 0.5)), vent * (1.0 - far));
           }
           float cornice = (cell.y > nFloors - 0.18) ? 1.0 : 0.0;
           albedo = mix(albedo, trim, cornice * 0.8);
@@ -567,7 +613,7 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           float wx = (cf.x - lo.x) / max(hi.x - lo.x, 0.01);
           if (shop && !ground && h < 0.75) {
             // louvred timber shutters: closed, or folded back to the jambs
-            vec3 sc = shutterCol(fract(fSeed * 7.0 + fAccent * 0.13));
+            vec3 sc = shutterCol(fract(fSeed * 7.0 + (terr ? unitH * 3.7 : fAccent * 0.13)));
             sc *= 0.62 + 0.38 * (1.0 - aaPulse(fy0 * 9.0, 0.42));
             sc *= 1.0 - 0.3 * aaBand(wx, 0.48, 0.52);
             float shut = h < 0.45 ? 1.0 : (1.0 - aaBand(wx, 0.22, 0.78));
@@ -1262,7 +1308,10 @@ float maskClass(vec4 v, float f, float lo) {
         vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
         vec3 dirt = mix(vec3(0.17, 0.12, 0.08), vec3(0.12, 0.13, 0.06), n1);
         col = mix(dirt, grass, smoothstep(0.3, 0.6, n1 + 0.25));
-        vec3 gcol = gc < 0.5 ? pitch : (gc < 0.8 ? grass * 0.75 : grass);
+        // (woods darker than lawn and a pitch's brighter turf fade across the filtered mask: switching per 2 m texel drew
+        // squares wherever a stray pitch or woods texel sits in a lawn)
+        vec3 lawn = grass * mix(0.75, 1.0, smoothstep(0.74, 0.97, g + edgeN * 1.5));
+        vec3 gcol = gc < 0.5 ? mix(pitch, lawn, smoothstep(0.42, 0.62, g + edgeN)) : lawn;
         col = mix(col, gcol, gv);
       }
       // paving channel

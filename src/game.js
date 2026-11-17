@@ -10,6 +10,7 @@ import { RoadNet } from './world/roadnet.js';
 import { Props } from './world/props.js';
 import { StreetProps } from './world/streetprops.js';
 import { StreetDetail } from './world/streetdetail.js';
+import { StreetFurniture } from './world/streetfurniture.js';
 import { NightGlow } from './world/nightglow.js';
 import { SafeSpots } from './world/safespot.js';
 import { TreeColliders } from './world/treecolliders.js';
@@ -298,7 +299,8 @@ export class Game {
     } catch (e) { console.warn('landmarks failed', e); }
     this.landmarks = landmarks;
     await this.mark('landmarks');
-    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], paint: landmarks?.paint || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
+    const clearings = (landmarks?.clearings || []).map(({ x, z, r }) => ({ x, z, r })); // (no street furniture on a landmark's plaza)
+    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], clearings, paint: landmarks?.paint || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
     console.log('city', JSON.stringify(stats));
     await this.mark('city built (worker gone)');
     await physP;
@@ -351,6 +353,7 @@ export class Game {
     this.streetDetail = new StreetDetail(this);
     await this.streetDetail.ready;
     await this.mark('streetDetail');
+    this.streetFurniture = new StreetFurniture(this);
     this.nightGlow = new NightGlow(this);
     await this.nightGlow.ready;
     await this.mark('nightGlow');
@@ -822,6 +825,7 @@ export class Game {
     this.props?.update(dt);
     this.streetProps?.update(dt);
     this.streetDetail?.update(dt);
+    this.streetFurniture?.update();
     this.nightGlow?.update();
     this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1, forceShow: this.showcase });
     this.updateAudio(dt);

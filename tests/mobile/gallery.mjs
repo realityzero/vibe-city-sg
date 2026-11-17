@@ -27,6 +27,12 @@ export const VIEWS = [
   ['clarke-quay-river', 20.5, [-520, 8, -300], [-460, 4, -380]],
   ['merlion-night', 20.5, [652, 7, 62], [611, 7, 22]],
   ['hdb-estate', 9, [-1200, 30, -900], [-1000, 15, -800]],
+  // (hdb-estate above looks at River Valley's condos; these are Bukit Merah's HDB blocks, playground and hawker centre)
+  ['hdb-blocks', 9, [-1760, 30, 10], [-1900, 10, -80]],
+  ['hdb-voiddeck', 11, [-1866, 1.7, -74], [-1882, 1.4, -94]],
+  ['playground', 11, [-1915, 6, -100], [-1897, 0, -72]],
+  ['hawker-centre', 11, [-2580, 3, 814], [-2559, 2.5, 790]],
+  ['hawker-maxwell', 11, [-422, 3, 722], [-462, 2.5, 742]],
   ['aerial-city', 15, [-200, 420, 900], [200, 0, 100]],
   ['junction-traffic', 12, [-95, 42, 92], [-133, 0, 54]],
   ['sidewalk-crowd', 12, [-382, 1.7, 412], [-350, 1.5, 385]],

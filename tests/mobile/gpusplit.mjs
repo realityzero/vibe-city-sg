@@ -33,6 +33,7 @@ const tests = [
   ['water', () => { __game.water.mesh.visible = false; }, () => { __game.water.mesh.visible = true; }],
   ['sky', () => { __game.sky.sky.visible = false; }, () => { __game.sky.sky.visible = true; }],
   ['street detail pools', () => { for (const p of __game.streetDetail.pools) p.mesh.visible = false; }, () => { for (const p of __game.streetDetail.pools) p.mesh.visible = true; }],
+  ['street furniture', () => { if (__game.streetFurniture) __game.streetFurniture.mesh.visible = false; }, () => { if (__game.streetFurniture) __game.streetFurniture.mesh.visible = true; }],
   ['traffic + peds', () => { const tr = __game.traffic.renderer; for (const T of tr.types.values()) T.pool.mesh.visible = false; __game.peds.crowd.mesh.visible = false; }, () => { const tr = __game.traffic.renderer; for (const T of tr.types.values()) T.pool.mesh.visible = true; __game.peds.crowd.mesh.visible = true; }],
 ];
 for (const [name, off, on] of tests) {
