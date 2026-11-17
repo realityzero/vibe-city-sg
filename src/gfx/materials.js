@@ -1218,9 +1218,11 @@ float maskClass(vec4 v, float f, float lo) {
       float n1 = fbm3(wp * 0.07);
       // vegetation channel: crisp, slightly irregular edges (the mask is only 2 m/px)
       float edgeN = (vnoise(wp * 0.9) - 0.5) * 0.12 + (vnoise(wp * 3.7) - 0.5) * 0.05;
-      // class codes from the unfiltered texels (see maskClass); coverage stays with the filtered, mip-mapped m
+      // class codes from the unfiltered texels (see maskClass); coverage stays with the filtered, mip-mapped m.
+      // Inside a uniform area (the mask doesn't change across the pixel quad) the filtered code is the class itself
       float gc = g, bc = b;
-      if (!outside) {
+      vec2 maskVar = fwidth(vec2(g, b));
+      if (!outside && max(maskVar.x, maskVar.y) > 1e-4) {
         ivec2 msz = textureSize(uMask, 0);
         vec2 tc = muv * vec2(msz) - 0.5;
         ivec2 t0 = clamp(ivec2(floor(tc)), ivec2(0), msz - 2);
