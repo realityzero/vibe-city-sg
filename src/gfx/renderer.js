@@ -7,10 +7,11 @@ import { N8AOPostPass } from 'n8ao';
 import { AutoExposurePass, ExposureEffect } from './autoexposure.js';
 import { FilmGradeEffect } from './filmgrade.js';
 import { U } from './globals.js';
-import { EffectComposer, RenderPass, EffectPass, Effect, GodRaysEffect, BlendFunction, BloomEffect, ToneMappingEffect, ToneMappingMode, SMAAEffect, SMAAPreset, VignetteEffect, BrightnessContrastEffect, HueSaturationEffect, KernelSize } from 'postprocessing';
+import { EffectComposer, RenderPass, EffectPass, GodRaysEffect, BlendFunction, BloomEffect, ToneMappingEffect, ToneMappingMode, SMAAEffect, SMAAPreset, FXAAEffect, VignetteEffect, BrightnessContrastEffect, HueSaturationEffect } from 'postprocessing';
 
 export const QUALITY = {
-  low: { pixelRatio: 0.75, shadows: 1024, shadowRadius: 110, reflections: false, bloom: true, smaa: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
+  // (low: no film grain — at a phone's ~4x upscale it reads as noise, not film)
+  low: { pixelRatio: 0.75, shadows: 1024, shadowRadius: 110, reflections: false, bloom: true, smaa: false, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
   medium: { pixelRatio: 1.0, shadows: 2048, shadowRadius: 150, reflections: true, bloom: true, smaa: true, ao: false, treeDist: 900, treeNear: 170, drawDist: 3500 },
   high: { pixelRatio: 1.25, shadows: 2048, shadowRadius: 170, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1300, treeNear: 230, drawDist: 5000 },
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
@@ -74,6 +75,10 @@ export class Renderer {
     // quarter — the same glow widths as a 7-level chain from full res, at a quarter of the pixel work
     this.bloom.luminancePass.resolution.scale = 0.5;
     { const mip = this.bloom.mipmapBlurPass, set = mip.setSize.bind(mip); mip.setSize = (w, h) => set(Math.ceil(w * 0.5), Math.ceil(h * 0.5)); }
+    // what feeds the bloom is capped (hue kept) at night: a sign or lamp a few pixels big but 10-20x over white
+    // spread into a blob of glow many times its size, worst at a phone's resolution
+    { const lm = this.bloom.luminanceMaterial; lm.uniforms.bloomMax = new THREE.Uniform(1e4);
+      lm.fragmentShader = 'uniform float bloomMax;\n' + lm.fragmentShader.replace('vec4 texel=texture2D(inputBuffer,vUv);', 'vec4 texel=texture2D(inputBuffer,vUv);texel.rgb*=min(1.0,bloomMax/max(max(texel.r,max(texel.g,texel.b)),1e-4));'); }
     const tm = { aces: ToneMappingMode.ACES_FILMIC, agx: ToneMappingMode.AGX, neutral: ToneMappingMode.NEUTRAL }[new URLSearchParams(location.search).get('tm')] ?? ToneMappingMode.ACES_FILMIC;
     this.tone = new ToneMappingEffect({ mode: tm });
     const film = !new URLSearchParams(location.search).has('nofilm');
@@ -98,8 +103,12 @@ export class Renderer {
     this.smaaPass = new EffectPass(camera, this.smaa);
     c.addPass(this.smaaPass);
     // the composer only draws to the screen from the last pass *added*: with SMAA off (low preset) every frame used to
-    // end in an off-screen buffer — a black game. This pass-through is the screen output whenever SMAA is off.
-    this.outPass = new EffectPass(camera, new Effect('passthrough', 'void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) { outputColor = inputColor; }'));
+    // end in an off-screen buffer — a black game. This pass is the screen output whenever SMAA is off: FXAA, the
+    // phone's only anti-aliasing. Its edge test runs on perceptual (sqrt) luma: the composer's buffers are linear,
+    // where the stock luminance() leaves most edges in shade and at night below its threshold.
+    const fxaa = new FXAAEffect();
+    fxaa.fragmentShader = 'float fxaaLuma(vec3 c) { return sqrt(max(luminance(c), 0.0)); }\n' + fxaa.fragmentShader.replaceAll('luminance(texture2D', 'fxaaLuma(texture2D').replace('luminance(inputColor.rgb)', 'fxaaLuma(inputColor.rgb)');
+    this.outPass = new EffectPass(camera, fxaa);
     c.addPass(this.outPass);
     this.applyQualityToPost();
     this.resize();
@@ -110,6 +119,7 @@ export class Renderer {
     this.smaaPass.enabled = this.q.smaa; this.outPass.enabled = !this.q.smaa;
     if (this.smaaPass.renderToScreen !== this.q.smaa) { this.smaaPass.renderToScreen = this.q.smaa; this.outPass.renderToScreen = !this.q.smaa; }
     if (this.ao) this.ao.enabled = !!this.q.ao && this.aoAllowed !== false;
+    this.film.uniforms.get('uGrain').value = this.q.grain === false ? 0 : this.film.grain;
     this.bloom.blendMode.opacity.value = this.q.bloom && !new URLSearchParams(location.search).has('nobloom') ? 1 : 0;
   }
 
@@ -202,7 +212,12 @@ export class Renderer {
   }
 
   render(dt) {
-    if (this.film) this.film.uniforms.get('uNight').value = U.night.value;
+    if (this.film) {
+      // golden-hour grade while the sun is within ~18 deg of the horizon (handing over to the night grade at dusk)
+      const sy = U.sunDir.value.y, fu = this.film.uniforms;
+      fu.get('uNight').value = U.night.value;
+      fu.get('uGolden').value = (1 - THREE.MathUtils.smoothstep(sy, 0.12, 0.32)) * THREE.MathUtils.smoothstep(sy, -0.1, 0.0) * (1 - U.rain.value);
+    }
     // daylight: a dark glass tower filling the frame may not push exposure so far that the sky turns to white paper
     // eye adaptation ceiling: daylight 1.4 (a dark tower filling the frame mustn't turn the sky to paper), more room in
     // the golden hour when the low sun leaves streets in shadow under a dimming sky, night 1.95 (night stays night)
@@ -214,6 +229,7 @@ export class Renderer {
       this.bloom.luminanceMaterial.threshold = THREE.MathUtils.lerp(0.6, 0.35, n);
       this.bloom.luminanceMaterial.smoothing = THREE.MathUtils.lerp(2.5, 1.2, n);
       this.bloom.intensity = (this._bloomI ?? 1) * THREE.MathUtils.lerp(0.2, 0.52, n);
+      this.bloom.luminanceMaterial.uniforms.bloomMax.value = THREE.MathUtils.lerp(1e4, 8, n);
     }
     if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
   }
