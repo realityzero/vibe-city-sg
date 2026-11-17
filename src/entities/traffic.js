@@ -16,6 +16,7 @@ const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const wrap = a => (a > Math.PI ? a - 2 * Math.PI : a < -Math.PI ? a + 2 * Math.PI : a); // for |a| < 3π
 const STEER_RATE = 1.4; // rad/s at the road wheels: a calm driver's hands
 const FAR = 140, FARTHER = 200; // m from the camera: beyond, cars are driven every 2nd / 3rd frame
+const MERGE = 12; // m: a car merging into one's lane counts as in front once this close to the merge (not from afar)
 const LOOK0 = 1, LOOKV = 0.35; // pure-pursuit distance from the rear axle: wheelbase + LOOK0 + LOOKV * speed (m)
 // indicator for a connector: + right, - left (U-turns go right: left-hand traffic)
 const turnSide = conn => (!conn || Math.abs(conn.turn) < 0.5 ? 0 : conn.turn > 0 ? 1 : -1);
@@ -160,7 +161,7 @@ export class Traffic {
         for (const o of this.net.nodes[car.lane.to].occ || []) {
           let d = 1e9;
           if (o.conn === car.nextConn || (o.fromLane === car.lane && o.cs < o.len + 4)) d = remain + o.cs - half - o.len / 2;
-          else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < rc) d = rc - ro - half - o.len / 2; }
+          else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < rc && ro < MERGE) d = rc - ro - half - o.len / 2; }
           if (d < gap) { gap = d; leaderSpeed = o.speed; }
         }
         // signals: stop for amber / red unless too close to stop smoothly — then the driver is committed and goes on
@@ -189,7 +190,7 @@ export class Traffic {
         if (o === car) continue;
         let d = 1e9;
         if ((o.conn === car.conn || (o.fromLane === car.fromLane && o.cs < o.len + 4)) && o.cs > car.cs) d = o.cs - car.cs - half - o.len / 2;
-        else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < remain) d = remain - ro - half - o.len / 2; }
+        else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < remain && ro < MERGE) d = remain - ro - half - o.len / 2; }
         if (d < gap) { gap = d; leaderSpeed = o.speed; }
       }
       for (const o of nl.cars) { if (o.mode !== 'lane') continue; const d = remain + (o.s - nl.s0) - half - o.len / 2; if (d < gap) { gap = d; leaderSpeed = o.speed; } }
