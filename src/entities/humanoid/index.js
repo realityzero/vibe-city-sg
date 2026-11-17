@@ -14,8 +14,9 @@
 //   const crowd = new Crowd(400, { lod: 'high' | 'low' }); scene.add(crowd.mesh);
 //   crowd.set(i, { x, y, z, yaw, anim: 'walk', speed: 1, phase: Math.random(), look: randomLook(seed, 'office_f') });
 //   crowd.setCount(n); crowd.update(dt);
-//   anims: idle walk run flee knocked idle_phone walk_phone sit sit_eat clap wave cheer talk (or CROWD_ANIM ids)
-//   variants for randomLook: office_m office_f auntie uncle tourist student male female (omit = random mix)
+//   anims: idle walk run flee knocked idle_phone walk_phone sit sit_eat clap wave cheer talk film argue (or CROWD_ANIM ids)
+//   variants for randomLook: office_m office_f auntie uncle tourist student male female delivery jogger (omit = random mix)
+//   props (look.acc bits, CROWD_ACC): umbrella / trolley (they pose the right arm while walking or standing), delivery box
 //
 // ORIENTATION: everyone faces -z at yaw 0 (facing vector = (-sin yaw, 0, -cos yaw)); feet at y = 0; right hand on +x.
 export { Humanoid, createHumanoid, getHeroMaterial } from './humanoid.js';
