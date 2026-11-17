@@ -57,6 +57,11 @@ export function buildStreetscape(ctx) {
     }
     return roadsClear(x, z, r);
   };
+  // ...and a walking strip along the facades (shop doors, lobbies) left clear
+  const offWalls = (x, z, d) => {
+    for (let k = 0; k < 8; k++) if (occAt(x + Math.cos(k * Math.PI / 4) * d, z + Math.sin(k * Math.PI / 4) * d) === 255) return false;
+    return true;
+  };
 
   // what is around a point: food stalls / shopfronts / stops
   const PG = 40, poiGrid = new Map();
@@ -98,14 +103,14 @@ export function buildStreetscape(ctx) {
       const n = 2 + Math.floor(hash(pz, px) * 3);
       for (let k = 0; k < n; k++) {
         const tx = px + ux * (k - (n - 1) / 2) * 2.5, tz = pz + uz * (k - (n - 1) / 2) * 2.5, hk = hash(tx, tz);
-        if (!free(tx, tz, 1.15)) continue;
+        if (!free(tx, tz, 1.15) || !offWalls(tx, tz, 2.8)) continue;
         put('kopitiam', tx, tz, yaw + hk, hk, 1.0, false);
         if (hk < 0.4) put('umbrella', tx, tz, hk * 6, hk * 2.5, 0, false);
       }
-      if (h < 0.06 && free(px + uz * 2.6, pz - ux * 2.6, 1.1)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
+      if (h < 0.06 && free(px + uz * 2.6, pz - ux * 2.6, 1.1) && offWalls(px + uz * 2.6, pz - ux * 2.6, 2.6)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
     } else if (h < (maskAt(px, pz, 2) >= 250 ? 0.11 : 0.06)) {
       const yaw = Math.round(hash(pz, x) * 4) * Math.PI / 2;
-      if (!free(px, pz, 1.2)) continue;
+      if (!free(px, pz, 1.2) || !offWalls(px, pz, 2.8)) continue;
       put('planter', px, pz, yaw, hash(px + 5, pz), 0.85, true);
       const bx = px + Math.sin(yaw) * 1.35, bz = pz + Math.cos(yaw) * 1.35;
       if (h < 0.06 && free(bx, bz, 0.9)) put('bench', bx, bz, yaw, 0, 0.8, true);

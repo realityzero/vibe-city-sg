@@ -591,7 +591,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         }
         // furniture in the bays: stone tables in the void deck, the hawker centre's tables all round
         // (bays meeting at a corner share it: one set there)
-        const spot = (x, z, kind) => { if (!colonnade.some((c, j) => j >= col0 && Math.hypot(c[0] - x, c[1] - z) < 2.6)) colonnade.push([x, z, Math.atan2(ux, uz), kind]); };
+        const spot = (x, z, kind) => {
+          for (let j = col0; j < colonnade.length; j++) if (Math.hypot(colonnade[j][0] - x, colonnade[j][1] - z) < 2.6) return;
+          colonnade.push([x, z, Math.atan2(ux, uz), kind]);
+        };
         if (!isShop && gBase < 0.5) for (let k = 1; k < nP; k++) {
           const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), d = recess.D[i] / 2;
           if (hawker) for (const o of len / (nP - 1) > 5.2 ? [-1.35, 1.35] : [0]) spot(p[0] + ux * (t + o) + inx * d, p[1] + uz * (t + o) + inz * d, 'kopitiam');
