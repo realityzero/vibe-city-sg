@@ -15,12 +15,13 @@ const KIND = Object.fromEntries(KINDS.map((k, i) => [k, i]));
 // ---------------------------------------------------------------- placement
 /**
  * ctx (from the city builder): city, M (meta), maskAt, occAt, occMark(x, z, r), roadGrid + RG, chunk(x, z) -> chunk,
- * excluded(x, z), clearings [{x, z, r}], setTag(name), and what the building loop collected: shopFronts, piers,
+ * exclusions (landmark footprints: rings of [x, z]), clearings (landmark plazas: {x, z, r}), pip(x, z, ring),
+ * setTag(name), and what the building loop collected: shopFronts, piers,
  * shopBacks, hdbBlocks, colonnade. Returns { pieces: Float32Array of (kind, x, y, z, yaw, h), obstacles: Float32Array
  * of (x, z, radius, solid), counts }.
  */
 export function buildStreetscape(ctx) {
-  const { city, M, maskAt, occAt, occMark, roadGrid, RG, excluded, clearings } = ctx;
+  const { city, M, maskAt, occAt, occMark, roadGrid, RG, pip } = ctx;
   const K = new Kit(), pieces = [], out = [], counts = {};
   const put = (kind, x, z, yaw, h, r, solid, y = 0) => {
     pieces.push(KIND[kind], x, y, z, yaw, h);
@@ -46,16 +47,35 @@ export function buildStreetscape(ctx) {
     }
     return true;
   };
-  const inClearing = (x, z, r) => clearings.some(c => (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2);
+  // landmark ground: their footprints (the city leaves those buildings out) and plazas, by 50 m cell
+  const ZC = 50, zones = new Map();
+  const zone = (x0, z0, x1, z1, item) => {
+    for (let gx = Math.floor(x0 / ZC); gx <= Math.floor(x1 / ZC); gx++) for (let gz = Math.floor(z0 / ZC); gz <= Math.floor(z1 / ZC); gz++) {
+      const k = gx * 100003 + gz; let a = zones.get(k); if (!a) zones.set(k, a = []); a.push(item);
+    }
+  };
+  for (const ring of ctx.exclusions) {
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (const p of ring) { x0 = Math.min(x0, p[0]); z0 = Math.min(z0, p[1]); x1 = Math.max(x1, p[0]); z1 = Math.max(z1, p[1]); }
+    zone(x0, z0, x1, z1, { ring });
+  }
+  for (const c of ctx.clearings) zone(c.x - c.r, c.z - c.r, c.x + c.r, c.z + c.r, c);
+  // within r of a landmark's plaza or inside its footprint
+  const landmark = (x, z, r) => {
+    for (let gx = Math.floor((x - r) / ZC); gx <= Math.floor((x + r) / ZC); gx++) for (let gz = Math.floor((z - r) / ZC); gz <= Math.floor((z + r) / ZC); gz++) {
+      const a = zones.get(gx * 100003 + gz); if (!a) continue;
+      for (const c of a) if (c.ring ? pip(x, z, c.ring) : (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2) return true;
+    }
+    return false;
+  };
   // free ground of radius r: land, nothing built or planted, no road, no landmark plaza
   const free = (x, z, r) => {
-    if (maskAt(x, z) < 200 || excluded(x, z) || inClearing(x, z, r)) return false;
-    if (occAt(x, z) >= 110) return false;
+    if (maskAt(x, z) < 200 || occAt(x, z) >= 110) return false;
     for (let k = 0; k < 8; k++) {
       const a = k * Math.PI / 4, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
       if (occAt(px, pz) >= 110 || maskAt(px, pz) < 200) return false;
     }
-    return roadsClear(x, z, r);
+    return roadsClear(x, z, r) && !landmark(x, z, r);
   };
   // ...and a walking strip along the facades (shop doors, lobbies) left clear
   const offWalls = (x, z, d) => {
@@ -63,54 +83,47 @@ export function buildStreetscape(ctx) {
     return true;
   };
 
-  // what is around a point: food stalls / shopfronts / stops
-  const PG = 40, poiGrid = new Map();
+  // what is around a point, rasterised at 8 m: 1 food (restaurants, cafes, food courts, bars) within 28 m,
+  // 2 a shopfront within 16 m
+  const NC = 8, NW = Math.ceil((M.xmax - M.xmin) / NC), NH = Math.ceil((M.zmax - M.zmin) / NC), around = new Uint8Array(NW * NH);
+  const stamp = (x, z, r, bit) => {
+    for (let j = Math.max(0, Math.floor((z - r - M.zmin) / NC)); j <= Math.min(NH - 1, Math.floor((z + r - M.zmin) / NC)); j++)
+      for (let i = Math.max(0, Math.floor((x - r - M.xmin) / NC)); i <= Math.min(NW - 1, Math.floor((x + r - M.xmin) / NC)); i++)
+        if ((M.xmin + (i + 0.5) * NC - x) ** 2 + (M.zmin + (j + 0.5) * NC - z) ** 2 < r * r) around[j * NW + i] |= bit;
+  };
   const FOOD = new Set(['food_court', 'restaurant', 'cafe', 'fast_food', 'marketplace', 'bar', 'pub']);
-  for (const p of city.pois) {
-    const kind = FOOD.has(p.k) ? 1 : p.k === 'bus_stop' || p.k === 'subway_entrance' ? 2 : 0; if (!kind) continue;
-    const key = Math.floor(p.x / PG) * 100003 + Math.floor(p.z / PG); let a = poiGrid.get(key); if (!a) poiGrid.set(key, a = []); a.push(p.x, p.z, kind);
-  }
-  const poiNear = (x, z, kind, r) => {
-    for (let gx = Math.floor((x - r) / PG); gx <= Math.floor((x + r) / PG); gx++) for (let gz = Math.floor((z - r) / PG); gz <= Math.floor((z + r) / PG); gz++) {
-      const a = poiGrid.get(gx * 100003 + gz); if (!a) continue;
-      for (let i = 0; i < a.length; i += 3) if (a[i + 2] === kind && (a[i] - x) ** 2 + (a[i + 1] - z) ** 2 < r * r) return true;
-    }
-    return false;
-  };
-  const shopGrid = new Map();
-  for (let i = 0; i < ctx.shopFronts.length; i += 2) { const x = ctx.shopFronts[i], z = ctx.shopFronts[i + 1], key = Math.floor(x / PG) * 100003 + Math.floor(z / PG); let a = shopGrid.get(key); if (!a) shopGrid.set(key, a = []); a.push(x, z); }
-  const shopNear = (x, z, r) => {
-    for (let gx = Math.floor((x - r) / PG); gx <= Math.floor((x + r) / PG); gx++) for (let gz = Math.floor((z - r) / PG); gz <= Math.floor((z + r) / PG); gz++) {
-      const a = shopGrid.get(gx * 100003 + gz); if (!a) continue;
-      for (let i = 0; i < a.length; i += 2) if ((a[i] - x) ** 2 + (a[i + 1] - z) ** 2 < r * r) return true;
-    }
-    return false;
-  };
+  for (const p of city.pois) if (FOOD.has(p.k)) stamp(p.x, p.z, 28, 1);
+  for (let i = 0; i < ctx.shopFronts.length; i += 2) stamp(ctx.shopFronts[i], ctx.shopFronts[i + 1], 16, 2);
+  const aroundAt = (x, z) => { const i = Math.floor((x - M.xmin) / NC), j = Math.floor((z - M.zmin) / NC); return i < 0 || j < 0 || i >= NW || j >= NH ? 0 : around[j * NW + i]; };
 
   // open paving: ground mask B 255 plaza, 220 sidewalk, 150 the apron round buildings (200 is a car park)
   const paved = (x, z) => { const b = maskAt(x, z, 2); return b >= 140 && (b < 190 || b >= 215); };
 
   // ---- open paving: eating out near food and shopfronts, planters and benches elsewhere
-  const S = 6.5;
-  for (let z = M.zmin + S / 2; z < M.zmax; z += S) for (let x = M.xmin + S / 2; x < M.xmax; x += S) {
-    const h = hash(x * 0.37, z * 0.53);
-    const px = x + (hash(x, z + 1.7) - 0.5) * S * 0.5, pz = z + (hash(x + 2.3, z) - 0.5) * S * 0.5;
+  // (an integer hash per cell: ~600k cells, a sine-based one cost more than everything placed)
+  const cellHash = (i, j, k) => { let v = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(k, 0x2545f491); v = Math.imul(v ^ (v >>> 15), 0x85ebca6b); v ^= v >>> 13; v = Math.imul(v, 0xc2b2ae35); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; };
+  const S = 6.5, NI = Math.floor((M.xmax - M.xmin) / S), NJ = Math.floor((M.zmax - M.zmin) / S);
+  for (let j = 0; j < NJ; j++) for (let i = 0; i < NI; i++) {
+    const h = cellHash(i, j, 1); if (h >= 0.3) continue; // (no cell above that gets anything)
+    const x = M.xmin + (i + 0.5) * S, z = M.zmin + (j + 0.5) * S;
+    const px = x + (cellHash(i, j, 2) - 0.5) * S * 0.5, pz = z + (cellHash(i, j, 3) - 0.5) * S * 0.5;
     if (!paved(px, pz)) continue;
-    const food = poiNear(px, pz, 1, 28), shops = shopNear(px, pz, 16);
-    if ((food || shops) && h < (food ? 0.5 : 0.3)) {
+    const a = aroundAt(px, pz), food = (a & 1) > 0, shops = (a & 2) > 0;
+    if ((food || shops) && h < (food ? 0.3 : 0.2)) {
       // a few tables in a loose row, some under an umbrella; now and then a pushcart beside them
+      if (occAt(px, pz) >= 110 || !roadsClear(px, pz, -2.6)) continue; // (every table of the row would be too close to a road)
       const yaw = hash(px, pz) * Math.PI, ux = Math.sin(yaw + Math.PI / 2), uz = Math.cos(yaw + Math.PI / 2);
       const n = 2 + Math.floor(hash(pz, px) * 3);
       for (let k = 0; k < n; k++) {
         const tx = px + ux * (k - (n - 1) / 2) * 2.5, tz = pz + uz * (k - (n - 1) / 2) * 2.5, hk = hash(tx, tz);
-        if (!free(tx, tz, 1.15) || !offWalls(tx, tz, 2.8)) continue;
+        if (!offWalls(tx, tz, 2.8) || !free(tx, tz, 1.15)) continue;
         put('kopitiam', tx, tz, yaw + hk, hk, 1.0, false);
         if (hk < 0.4) put('umbrella', tx, tz, hk * 6, hk * 2.5, 0, false);
       }
-      if (h < 0.06 && free(px + uz * 2.6, pz - ux * 2.6, 1.1) && offWalls(px + uz * 2.6, pz - ux * 2.6, 2.6)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
+      if (h < 0.06 && offWalls(px + uz * 2.6, pz - ux * 2.6, 2.6) && free(px + uz * 2.6, pz - ux * 2.6, 1.1)) put('cart', px + uz * 2.6, pz - ux * 2.6, yaw, h * 9, 1.0, true);
     } else if (h < (maskAt(px, pz, 2) >= 250 ? 0.11 : 0.06)) {
       const yaw = Math.round(hash(pz, x) * 4) * Math.PI / 2;
-      if (!free(px, pz, 1.2) || !offWalls(px, pz, 2.8)) continue;
+      if (!offWalls(px, pz, 2.8) || !free(px, pz, 1.2)) continue;
       put('planter', px, pz, yaw, hash(px + 5, pz), 0.85, true);
       const bx = px + Math.sin(yaw) * 1.35, bz = pz + Math.cos(yaw) * 1.35;
       if (h < 0.06 && free(bx, bz, 0.9)) put('bench', bx, bz, yaw, 0, 0.8, true);
@@ -149,7 +162,7 @@ export function buildStreetscape(ctx) {
     const L = Math.hypot(bx - ax, bz - az), n = Math.ceil(L / 1.5);
     for (let k = 0; k <= n; k++) {
       const x = ax + (bx - ax) * k / n, z = az + (bz - az) * k / n;
-      if (occAt(x, z) >= 110 || maskAt(x, z) < 200 || excluded(x, z) || !roadsClear(x, z, -3.5)) return false;
+      if (occAt(x, z) >= 110 || maskAt(x, z) < 200 || !roadsClear(x, z, -3.5) || landmark(x, z, 0)) return false;
     }
     return true;
   };
@@ -189,9 +202,9 @@ export function buildStreetscape(ctx) {
     const c = Math.cos(yaw), s = Math.sin(yaw);
     for (let a = -hx; a <= hx + 0.01; a += 2) for (let b = -hz; b <= hz + 0.01; b += 2) {
       const px = x + a * c + b * s, pz = z - a * s + b * c;
-      if (occAt(px, pz) >= 110 || maskAt(px, pz) < 200 || maskAt(px, pz, 2) === 200 || excluded(px, pz)) return false;
+      if (occAt(px, pz) >= 110 || maskAt(px, pz) < 200 || maskAt(px, pz, 2) === 200 || landmark(px, pz, 0)) return false;
     }
-    return !inClearing(x, z, Math.hypot(hx, hz)) && roadsClear(x, z, Math.hypot(hx, hz) - 2.4);
+    return roadsClear(x, z, Math.hypot(hx, hz) - 2.4);
   };
   const spot = (cx, cz, yaw, hx, hz) => {
     for (let r = 8; r < 130; r += 5) for (let k = 0, n = Math.ceil(r / 3); k < n; k++) {

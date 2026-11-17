@@ -1124,10 +1124,12 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   }
 
   // ================= STREET FURNITURE ================= (after the trees: it keeps clear of them)
+  const tFurn = performance.now();
   const furniture = buildStreetscape({
-    city, M, maskAt, occAt, roadGrid, RG, excluded, clearings, shopFronts, piers, shopBacks, hdbBlocks, colonnade,
+    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopBacks, hdbBlocks, colonnade,
     chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occStroke([[x, z], [x, z]], r, 115), setTag: t => { TAG = t; },
   });
+  furniture.counts.ms = Math.round(performance.now() - tFurn);
 
   // ================= OUTPUT =================
   progress(0.9, 'Uploading city to GPU');

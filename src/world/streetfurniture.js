@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { Kit, PIECE, VARIANTS, KINDS } from './streetpieces.js';
 
-const CELL = 64, NEAR = 150, FAR = 420, CAP = 1600;
+const CELL = 64, NEAR = 150, FAR = 420, CAP = 1000;
 const BIG = new Set([KINDS.indexOf('playground'), KINDS.indexOf('fitness')]);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), UP = new THREE.Vector3(0, 1, 0);
 
@@ -43,7 +43,9 @@ export class StreetFurniture {
     mesh.name = 'streetFurniture';
     for (const g of geos) { mesh.addGeometry(g); g.dispose(); }
     for (let i = 0; i < CAP; i++) mesh.setVisibleAt(mesh.addInstance(0), false);
-    mesh.frustumCulled = false; mesh.sortObjects = false; // (instances are culled one by one inside)
+    // no culling, per instance or as a whole: a few hundred small pieces near the camera cost the GPU less than
+    // testing each one against the frustum every pass costs the CPU
+    mesh.frustumCulled = false; mesh.perObjectFrustumCulled = false; mesh.sortObjects = false;
     mesh.castShadow = true; mesh.receiveShadow = true;
     game.scene.add(mesh);
     // pieces by grid cell
