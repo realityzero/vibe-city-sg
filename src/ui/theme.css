@@ -410,6 +410,15 @@
 .vc-stunt .row span { color: #d9d2ff; text-align: right; -webkit-text-stroke: calc(var(--u)*.3) #000; paint-order: stroke fill; }
 .vc-stunt .row b { color: #fff; text-align: left; font-weight: 800; -webkit-text-stroke: calc(var(--u)*.3) #000; paint-order: stroke fill; }
 .vc-stunt .rw { margin-top: calc(var(--u)*.8); font: italic 800 calc(var(--u) * 6)/1 var(--f-hud); color: var(--money); -webkit-text-stroke: calc(var(--u)*.5) #000; paint-order: stroke fill; }
+/* near-miss popup: pink HUD italic over the road, the cash in money green, springs in and floats off */
+.vc-shave { position: absolute; left: 50%; top: 23%; text-align: center; opacity: 0; pointer-events: none; z-index: 3; transform: translateX(-50%); }
+.vc-shave.go { animation: vc-shave 1.5s cubic-bezier(.2,.9,.25,1) both; }
+@keyframes vc-shave { 0% { opacity: 0; transform: translateX(-50%) scale(1.7); } 9% { opacity: 1; transform: translateX(-50%) scale(.96); } 16% { transform: translateX(-50%) scale(1); }
+  72% { opacity: 1; transform: translateX(-50%) translateY(-12%); } 100% { opacity: 0; transform: translateX(-50%) translateY(-45%); } }
+.vc-shave .t { font: italic 800 calc(var(--u) * 5.4)/1 var(--f-hud); letter-spacing: .05em; text-transform: uppercase; color: var(--pink-hi);
+  -webkit-text-stroke: calc(var(--u) * .5) #000; paint-order: stroke fill; text-shadow: 0 0 calc(var(--u) * 2) rgba(255,63,164,.6); }
+.vc-shave .c { margin-top: calc(var(--u) * .4); font: italic 800 calc(var(--u) * 4)/1 var(--f-hud); color: var(--money); letter-spacing: .03em; -webkit-text-stroke: calc(var(--u) * .45) #000; paint-order: stroke fill; }
+.vc-shave .x { margin-left: .35em; color: var(--cyan-hi); }
 
 /* slow-mo replay look */
 .vc-slowmo { position: absolute; inset: 0; opacity: 0; transition: opacity .45s; pointer-events: none; z-index: 2;

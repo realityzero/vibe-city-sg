@@ -1,4 +1,5 @@
-// Lightweight particle FX: explosions (fireball + smoke + debris sparks), tyre/engine smoke, nitro flames, boat spray, splashes.
+// Lightweight particle FX: explosions (fireball + smoke + debris sparks), tyre/engine smoke, nitro flames, scrape sparks,
+// boat spray, splashes.
 // Particles are camera-facing points sized in WORLD metres (converted with the projection + drawing-buffer height), they fade
 // by alpha over their life (not by darkening), and fade out when they drift close to the camera so a chase cam never sits
 // inside a smoke cloud.
@@ -84,7 +85,10 @@ export class FX {
     this.fire = new Pool(game.scene, 1500, true, { near: [0.6, 2.5], lit: false });
     this.smoke = new Pool(game.scene, 1500, false, { near: [1.5, 6] });
     this.water = new Pool(game.scene, 1500, false, { near: [0.8, 3] });
-    this.pools = [this.fire, this.smoke, this.water];
+    this.spark = new Pool(game.scene, 240, true, { near: [0.4, 1.5], lit: false }); // (same program as the fire)
+    // tyre smoke is pale and catches the headlights and street lamps: dimmed less at night than exhaust smoke
+    this.tyre = new Pool(game.scene, 500, false, { near: [1.2, 4.5], lit: false });
+    this.pools = [this.fire, this.smoke, this.water, this.spark, this.tyre];
     // tyre marks: ring buffer of dark quads laid on the road while skidding
     this.skidMax = 1400; this.skidN = 0;
     const sg = new THREE.PlaneGeometry(0.26, 1, 1, 1); sg.rotateX(-Math.PI / 2);
@@ -120,14 +124,22 @@ export class FX {
   // pale tyre smoke left behind on the road while sliding; vel = vehicle velocity (smoke inherits a little of it)
   tyreSmoke(p, vel, amount, scale = 1) {
     _v.set(vel.x * 0.15 + (Math.random() - 0.5) * 0.6, 0.35 + Math.random() * 0.4, vel.z * 0.15 + (Math.random() - 0.5) * 0.6);
-    const c = 0.62 + Math.random() * 0.1;
-    this.smoke.emit(p, _v, [c, c, c * 1.02], 1.1 + Math.random() * 0.7, 0.55 * scale, 1.2, 0.16 + 0.22 * amount);
+    const c = (0.62 + Math.random() * 0.1) * (1 - U.night.value * 0.5);
+    this.tyre.emit(p, _v, [c, c, c * 1.03], 1.2 + Math.random() * 0.8, 0.6 * scale, 1.3, 0.2 + 0.3 * amount);
   }
   // nitro / boost: short blue-orange exhaust flame + a wisp of smoke
   exhaustFlame(p, back, vel, scale = 1) {
     _v.copy(back).multiplyScalar(6 + Math.random() * 4).add(vel);
     this.fire.emit(p, _v, Math.random() < 0.5 ? [0.6, 1.2, 4] : [4, 1.6, 0.4], 0.12 + Math.random() * 0.08, 0.35 * scale, 0.5, 1);
     if (Math.random() < 0.25) { _v.copy(back).multiplyScalar(2).add(vel).multiplyScalar(0.3); _v.y += 0.4; this.smoke.emit(p, _v, [0.5, 0.5, 0.5], 0.8, 0.35 * scale, 1, 0.15); }
+  }
+  // bodywork scraping a wall or another car: hot sparks thrown back along `vel`, falling as they cool
+  sparks(p, vel, n) {
+    for (let i = 0; i < n; i++) {
+      _v.set(vel.x + (Math.random() - 0.5) * 5, 1 + Math.random() * 3.5, vel.z + (Math.random() - 0.5) * 5);
+      const hot = Math.random();
+      this.spark.emit(p, _v, [9, 3.2 + hot * 3, 0.6 + hot * 1.2], 0.2 + Math.random() * 0.3, 0.07 + Math.random() * 0.07, 0.1, 1);
+    }
   }
   // cooking smoke (hawker grills)
   grillSmoke(p) {
@@ -170,6 +182,8 @@ export class FX {
     this.fire.update(dt, 2, 2.2);
     this.smoke.update(dt, 0.5, 1.4);
     this.water.update(dt, -9.8, 0.6);
+    this.spark.update(dt, -9.8, 0.8);
+    this.tyre.update(dt, 0.5, 1.4);
     if (this.flashT > 0) { this.flashT -= dt; this.flash.intensity = Math.max(0, this.flashT / 0.6) * 4000; } else this.flash.intensity = 0;
   }
 }

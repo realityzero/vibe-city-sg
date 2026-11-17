@@ -151,6 +151,17 @@ export function createSfx(sys) {
       const v = ctx.createOscillator(); v.frequency.value = 11; const vg = gainNode(35); v.connect(vg); vg.connect(s.osc.frequency); v.start(t); v.stop(s.end);
       return n.end;
     },
+    // a car or a pedestrian flashing past the window (near miss): air torn open, falling away
+    whoosh(out, t) {
+      nz(out, t, 0.5, 0.42, { f0: 3400, f1: 520, q: 1.4, attack: 0.07 });
+      return nz(out, t + 0.02, 0.35, 0.18, { type: 'lowpass', f0: 900, f1: 260, attack: 0.05 }).end;
+    },
+    // bodywork grinding along a wall: gritty band of noise, chattering, with a metallic ring
+    scrape(out, t) {
+      const n = nz(out, t, 0.32, 0.32, { f0: 2300, f1: 1700, q: 3, attack: 0.01, hold: 0.12 });
+      am(n.gain, t, n.end, 31, 0.14);
+      return Math.max(n.end, metal(out, t, 0.05, 0.25, 1.6));
+    },
     pickup(out, t) { return bells(out, t, [84, 88, 91, 96], 0.055, 0.55); },
     money(out, t) { tone(out, 'square', 1975, 0, t, 0.08, 0.06, { lp: 4000 }); tone(out, 'square', 2637, 0, t + 0.07, 0.3, 0.06, { lp: 5000 }); return bells(out, t, [83, 88], 0.07, 0.5, { ratio: 3.01, index: 1, decay: 0.7 }); },
     checkpoint(out, t) {

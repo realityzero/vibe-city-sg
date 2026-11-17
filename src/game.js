@@ -31,6 +31,7 @@ import { Missions } from './missions/manager.js';
 import { Extras } from './missions/extras.js';
 import { Spawns } from './world/spawns.js';
 import { FX } from './world/fx.js';
+import { Juice } from './world/juice.js';
 import { Cheats, CHEATS } from './missions/cheats.js';
 import { Stunts } from './missions/stunts.js';
 import { Taxi } from './missions/taxi.js';
@@ -387,6 +388,7 @@ export class Game {
     this.missions = new Missions(this);
     this.extras = new Extras(this);
     this.fx = new FX(this);
+    this.juice = new Juice(this);
     await this.mark('missions, extras, fx');
     await brk();
     this.spawns = new Spawns(this);
@@ -797,6 +799,7 @@ export class Game {
       this.hype.update(simDt);
       this.updateVehicleFx(simDt);
       this.cleanupVehicles(simDt);
+      this.juice.update(simDt, dt);
       this.fx.update(simDt);
       // distance stat
       if (this._lastPos) this.progress.stats.distance += Math.min(50, this._lastPos.distanceTo(this.player.position)); else this._lastPos = new THREE.Vector3();
@@ -864,11 +867,13 @@ export class Game {
       if (v.skid > 0.45 && v.grounded && v.wheelPos) {
         for (const k of bike ? [2] : [2, 3]) { const w = v.wheelPos[k]; this.fx.skid(`${v.collider.handle}_${k}`, V.p.set(bike ? 0 : w[0], 0, w[1]).applyQuaternion(v.quaternion).add(v.position)); }
         // tyre smoke only for proper slides at speed; bikes smoke less (one small tyre)
-        const amt = (v.skid - 0.45) / 0.55, rate = (bike ? 7 : 16) * amt;
-        if (v.speed > 7 && Math.random() < dt * rate) {
-          const lv = v.body.linvel(); V.vel.set(lv.x, 0, lv.z);
-          const w = v.wheelPos[bike ? 2 : (Math.random() < 0.5 ? 2 : 3)];
-          this.fx.tyreSmoke(V.p.set(bike ? 0 : w[0], 0.25, w[1]).applyQuaternion(v.quaternion).add(v.position), V.vel, amt, scale);
+        const amt = (v.skid - 0.45) / 0.55, rate = (bike ? 8 : 22) * amt;
+        // (as many puffs as the frame's share of the rate: a slow phone frame doesn't thin the cloud into blobs)
+        const puffs = v.speed > 7 ? Math.floor(dt * rate + Math.random()) : 0;
+        if (puffs) { const lv = v.body.linvel(); V.vel.set(lv.x, 0, lv.z); }
+        for (let k = 0; k < puffs; k++) {
+          const w = v.wheelPos[bike ? 2 : (k + (Math.random() < 0.5 ? 0 : 1)) % 2 + 2];
+          this.fx.tyreSmoke(V.p.set(bike ? 0 : w[0], 0.25, w[1] + (Math.random() - 0.5) * 0.5).applyQuaternion(v.quaternion).add(v.position), V.vel, amt, scale);
         }
       }
       // visible wear: paint darkens as the car takes damage

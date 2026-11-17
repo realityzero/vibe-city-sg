@@ -83,6 +83,8 @@ export class UI {
     this.cheat = makeCheat(this);
     this._slowmo = el('div', 'vc-slowmo', '<i class="bar t"></i><i class="bar b"></i><span class="rec">● Replay</span>');
     this._fx.appendChild(this._slowmo);
+    this._shave = el('div', 'vc-shave', '<div class="t">Close Shave</div><div class="c"></div>');
+    this._fx.appendChild(this._shave);
 
     window.addEventListener('keydown', e => {
       if (e.__uiHandled || e.target?.closest?.('input, textarea, [contenteditable]')) return;
@@ -261,6 +263,12 @@ export class UI {
       set: v => { fill.style.width = `${Math.max(0, Math.min(1, v)) * 100}%`; },
       hide: () => r.classList.add('vc-hidden'),
     };
+  }
+
+  /** near-miss popup (world/juice.js): CLOSE SHAVE, the cash, and the chain multiplier from the second in a row */
+  closeShave(cash, combo = 1) {
+    this._shave.lastChild.innerHTML = `+${fmtMoney(cash)}${combo > 1 ? `<span class="x">×${combo}</span>` : ''}`;
+    restartClass(this._shave, 'go');
   }
 
   /** Replay look for stunt slow-motion: vignette, thin bars, blinking REPLAY tag. */
