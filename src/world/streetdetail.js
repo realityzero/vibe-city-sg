@@ -632,6 +632,9 @@ export class StreetDetail {
     this.signPlates = this.pool(signPlate, this.signMat, { cap: 160, radius: 170, uv: true, name: 'signplate' });
     const sq = new THREE.PlaneGeometry(0.6, 0.6);
     this.signSquares = this.pool(sq, this.signMat, { cap: 120, radius: 170, uv: true, name: 'signsquare' });
+    // a signalised crossing away from any junction (mid-block) gets the zig-zags of a zebra crossing too
+    const net = this.game.roadnet;
+    const atJunction = (x, z) => net.lanesNear(x, z, 30).some(l => { const n = net.nodes[l.to]; return n.degree >= 3 && Math.hypot(n.x - x, n.z - z) < n.r + 14; });
     let z = 0, bz = 0;
     for (const c of this.crossings) {
       const cdx = (c.bx - c.ax) / c.L, cdz = (c.bz - c.az) / c.L; // across the road
@@ -646,18 +649,19 @@ export class StreetDetail {
           const bx = c.mx - cdx * sgn * (hwR + 0.45) + rd.x * o * (cw + 0.5), bzz = c.mz - cdz * sgn * (hwR + 0.45) + rd.z * o * (cw + 0.5);
           if (!this.blocked(bx, bzz)) { this.bollards.add(bx, 0, bzz); bz++; }
         }
+        // LOOK RIGHT / LOOK LEFT painted at the kerb (zebra and signalised crossings alike); text reads from the kerb
+        // looking across: decal +z (text bottom) points back at the pedestrian
+        const tx = c.mx - cdx * sgn * (hwR - 0.9), tz = c.mz - cdz * sgn * (hwR - 0.9);
+        this.decals.add(tx, 0.095, tz, yawOf(-cdx * sgn, -cdz * sgn), Math.min(2.4, cw * 1.6), 1, 0.7, decUV(sgn > 0 ? DEC.lookRight : DEC.lookLeft));
         if (!c.signal) {
-          // amber Belisha beacons on black-and-white poles + LOOK RIGHT / LOOK LEFT painted at the kerb
+          // amber Belisha beacons on black-and-white poles
           const px = c.mx - cdx * sgn * (hwR + 0.6) + rd.x * (cw + 1.1), pz = c.mz - cdz * sgn * (hwR + 0.6) + rd.z * (cw + 1.1);
           this.beaconPoles.add(px, 0, pz); this.beaconGlobes.add(px, 0, pz);
-          const tx = c.mx - cdx * sgn * (hwR - 0.9), tz = c.mz - cdz * sgn * (hwR - 0.9);
-          // text reads from the kerb looking across: decal +z (text bottom) points back at the pedestrian
-          this.decals.add(tx, 0.095, tz, yawOf(-cdx * sgn, -cdz * sgn), Math.min(2.4, cw * 1.6), 1, 0.7, decUV(sgn > 0 ? DEC.lookRight : DEC.lookLeft));
           const sx = c.mx - cdx * sgn * (hwR + 0.9) - rd.x * sgn * (cw + 1.0), sz = c.mz - cdz * sgn * (hwR + 0.9) - rd.z * sgn * (cw + 1.0);
           if (!this.blocked(sx, sz)) { this.signPoles.add(sx, 0, sz); this.signSquares.add(sx, 2.75, sz, yawOf(-rd.x * sgn, -rd.z * sgn), 1, 1, 1, signUV(SIGN.ped)); }
         }
       }
-      if (c.signal) continue;
+      if (c.signal && atJunction(c.mx, c.mz)) continue;
       // zig-zags on both approaches, along both edges (+ centre line for two-way roads)
       const lanes = [-(hwR - 0.4), hwR - 0.4]; if (c.edge.lf > 0 && c.edge.lb > 0) lanes.push(0);
       const rx = -rd.z, rz = rd.x;
@@ -666,8 +670,8 @@ export class StreetDetail {
         const x = c.mx + rd.x * dirS * d + rx * o, zz = c.mz + rd.z * dirS * d + rz * o;
         this.decals.add(x, 0.095, zz, yawOf(rx, rz), 2.0, 1, 0.35, decUV(DEC.zigzag));
       }
-      // SLOW before each approach (in the lane, reading towards the driver)
-      for (const dirS of [-1, 1]) {
+      // SLOW before each approach of a zebra crossing (in the lane, reading towards the driver)
+      if (!c.signal) for (const dirS of [-1, 1]) {
         const d = cw + 18.5, x = c.mx + rd.x * dirS * d, zz = c.mz + rd.z * dirS * d;
         const lo = (dirS > 0 ? -1 : 1) * hwR * 0.5; // left-hand traffic: approach lane is on the driver's left
         this.decals.add(x + rx * lo * (c.edge.lb > 0 ? 1 : 0), 0.095, zz + rz * lo * (c.edge.lb > 0 ? 1 : 0), yawOf(rd.x * dirS, rd.z * dirS), 2.6, 1, 1.3, decUV(DEC.slow));
