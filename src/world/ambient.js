@@ -25,7 +25,7 @@ export class Ambient {
     const rv = game.city.data.river?.[0];
     if (rv && rv.length > 8) {
       const pts = []; for (let i = 0; i < rv.length; i += 2) pts.push([rv[i], WATER_LEVEL, rv[i + 1]]);
-      this.river = new Path(pts);
+      this.river = Path.fromPoints(pts);
       for (let i = 0; i < 4; i++) {
         let m; try { m = createVehicleModel('bumboat', { lod: 'high', beams: false }); } catch { break; }
         m.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
