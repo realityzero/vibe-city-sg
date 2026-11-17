@@ -221,7 +221,7 @@ export class Renderer {
     // daylight: a dark glass tower filling the frame may not push exposure so far that the sky turns to white paper
     // eye adaptation ceiling: daylight 1.4 (a dark tower filling the frame mustn't turn the sky to paper), more room in
     // the golden hour when the low sun leaves streets in shadow under a dimming sky, night 1.95 (night stays night)
-    if (this.autoExposure) { const golden = 1 - THREE.MathUtils.smoothstep(U.sunDir.value.y, 0.04, 0.28); this.autoExposure.maxE = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.4, 1.8, golden), 1.95, U.night.value); }
+    if (this.autoExposure) { const golden = 1 - THREE.MathUtils.smoothstep(U.sunDir.value.y, 0.04, 0.28); this.autoExposure.maxE = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.4, 2.3, golden), 1.95, U.night.value); }
     // physically-based bloom: no hard threshold (a thresholded sky around the sun bloomed into a disc with a coloured
     // rim); a small fraction of the blurred frame is added, so only genuinely bright things glow. Night = stronger.
     if (this.bloom) {

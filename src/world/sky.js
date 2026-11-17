@@ -331,7 +331,7 @@ export class SkySystem {
     const lowSun = (1 - THREE.MathUtils.smoothstep(sunY, 0.02, 0.32)) * day * (1 - this.rain);
     this.hemi.color.setRGB(THREE.MathUtils.lerp(0.45, 0.87, day), THREE.MathUtils.lerp(0.5, 0.92, day), THREE.MathUtils.lerp(0.85, 1.0, day)).lerp(this._hc.setRGB(0.6, 0.62, 1.0), lowSun * 0.6);
     this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.9, 0.42, day), THREE.MathUtils.lerp(0.55, 0.36, day), THREE.MathUtils.lerp(0.3, 0.28, day));
-    this.hemi.intensity = (0.05 + 0.55 * day * (1 - 0.4 * lowSun)) * (1 - this.rain * 0.3) + night * 0.09 + this.rain * 0.12 * day + this.lightning * 2.2;
+    this.hemi.intensity = (0.05 + 0.55 * day * (1 - 0.2 * lowSun)) * (1 - this.rain * 0.3) + night * 0.09 + this.rain * 0.12 * day + this.lightning * 2.2;
 
     // fog = haze: the horizon sky's colour (golden at sunset, blue at dusk, city glow at night, grey in rain), so
     // distant towers and the sea fade into the sky instead of into a darker band under it
