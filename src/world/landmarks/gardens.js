@@ -12,8 +12,9 @@ const GROVE = [
 // Golden / Silver garden supertrees (approximate positions south of the grove)
 const OUTLIERS = [[1745, 655, 28], [1770, 640, 25], [1758, 676, 26], [1555, 640, 27], [1580, 662, 25], [1540, 668, 26]];
 
+const LATTICE_TEX = 256;
 function latticeTexture() {
-  return canvasTexture(256, 256, (ctx, w, h) => {
+  return canvasTexture(LATTICE_TEX, LATTICE_TEX, (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h);
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 9; ctx.lineCap = 'round';
     for (let i = -4; i <= 8; i++) {
@@ -85,7 +86,15 @@ function mergeSimple(list) {
 // and its rim glows. Emission is tinted per instance (instanceColor) and fades with U.night; the shared uniforms below
 // are driven by update() (calmer between shows, vivid during Garden Rhapsody).
 const SHOW = { wash: { value: 0.25 }, dotI: { value: 2.0 }, dotDen: { value: 0.35 } };
-function showMaterial(params, glow, { dots = false, uplit = false } = {}) {
+// The lattice (lattice option) is shaped by its texture's alpha only (the steel keeps its colour). Up close it's a
+// cutout with a pixel-wide anti-aliased edge; as the bars' spacing nears a few pixels a hard cutout aliased into moire,
+// so the alpha hands over to the bars' average coverage (the mip-filtered alpha) and blends — hence transparent.
+const LATTICE_ALPHA = /* glsl */`
+  float latA = texture2D(map, vMapUv).a;
+  float lod = log2(max(fwidth(vMapUv.x), fwidth(vMapUv.y)) * ${LATTICE_TEX}.0 + 1e-6), fw = fwidth(latA) + 1e-4;
+  diffuseColor.a = mix(smoothstep(alphaTest - fw * 0.5, alphaTest + fw * 0.5, latA), latA, smoothstep(2.0, 3.5, lod));
+  if (diffuseColor.a < 0.004) discard;`;
+function showMaterial(params, glow, { dots = false, uplit = false, lattice = false } = {}) {
   const m = new THREE.MeshStandardMaterial(params);
   const uGlow = { value: glow };
   m.userData.glow = uGlow;
@@ -94,6 +103,7 @@ function showMaterial(params, glow, { dots = false, uplit = false } = {}) {
     if (uplit) sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying float vStY;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\nvStY = position.y / ${ST_H.toFixed(1)};`);
+    if (lattice) sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '').replace('#include <alphatest_fragment>', LATTICE_ALPHA);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\nuniform float uNight, uGlow, uWash, uDotI, uDotDen;${uplit ? '\nvarying float vStY;' : ''}`)
       .replace('#include <color_fragment>', '')
@@ -119,7 +129,7 @@ function showMaterial(params, glow, { dots = false, uplit = false } = {}) {
  totalEmissiveRadiance *= uNight;
 #endif`);
   };
-  m.customProgramCacheKey = () => 'lmshow3' + (dots ? 'd' : '') + (uplit ? 'u' : '');
+  m.customProgramCacheKey = () => 'lmshow3' + (dots ? 'd' : '') + (uplit ? 'u' : '') + (lattice ? 'l' : '');
   return m;
 }
 
@@ -128,7 +138,7 @@ export function buildGardens(city, quality) {
   const group = new THREE.Group(); group.name = 'GardensByTheBay';
   const lat = latticeTexture();
   const steelCol = 0x56393f; // weathered purple-brown steel
-  const latticeMat = showMaterial({ color: steelCol, roughness: 0.55, metalness: 0.5, map: lat, alphaMap: lat, alphaTest: 0.45, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: lat }, 1.0, { dots: true });
+  const latticeMat = showMaterial({ color: steelCol, roughness: 0.55, metalness: 0.5, map: lat, alphaTest: 0.45, transparent: true, side: THREE.DoubleSide, forceSinglePass: true, emissive: 0xffffff, emissiveMap: lat }, 1.0, { dots: true, lattice: true });
   const ribMat = showMaterial({ color: steelCol, roughness: 0.5, metalness: 0.55, emissive: 0xffffff }, 0.2);
   const rimMat = showMaterial({ color: 0x3d2a30, roughness: 0.5, metalness: 0.6, emissive: 0xffffff }, 3.6);
   const trunkMat = showMaterial({ map: foliageTexture(), roughness: 0.9, metalness: 0 }, 4.0, { uplit: true });

@@ -14,6 +14,53 @@ const HUB_Y = 90, RADIUS = 75, CAPS = 28;
 // clear the courtyard's edge above that.
 const TERMINAL = [[8352, 0, 5], [8351, 5, 9.5], [8350, 9.5, 14]], BOARD_Y = 7;
 
+const SPOKE_D = 0.18, SPOKE_MIN_PX = 1.0;
+/** Cables as camera-facing ribbons. An 18 cm spoke is under a pixel from anywhere but the boarding deck: as geometry it
+ * broke up into a dotted line (worst at a phone's resolution). The ribbon is drawn at least SPOKE_MIN_PX wide and only
+ * as opaque as the share of that width the cable really covers — what the pixel would average — so a far spoke reads
+ * as the faint continuous line it is. `cables`: [[a, b], ...] Vector3 end points; d: cable diameter (m). */
+function cableRibbons(cables, d) {
+  const pos = [], dir = [], side = [], idx = [], t = new THREE.Vector3();
+  for (const [a, b] of cables) {
+    const v = pos.length / 3;
+    t.subVectors(b, a).normalize();
+    for (const p of [a, b]) for (const s of [-1, 1]) { pos.push(p.x, p.y, p.z); dir.push(t.x, t.y, t.z); side.push(s); }
+    idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3); // (front-facing whatever the cable's direction: see the shader)
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(dir, 3)); // (replaced in the shader: the ribbon faces the camera)
+  g.setAttribute('cableDir', new THREE.Float32BufferAttribute(dir, 3));
+  g.setAttribute('cableSide', new THREE.Float32BufferAttribute(side, 1));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.5, metalness: 0.6, transparent: true, depthWrite: false });
+  const uPxH = { value: 1000 };
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uPxH = uPxH;
+    sh.vertexShader = 'attribute vec3 cableDir; attribute float cableSide; uniform float uPxH; varying float vCover;\n' + sh.vertexShader
+      .replace('#include <project_vertex>', `#include <project_vertex>
+      {
+        // metres per pixel at this depth, from the projection and the height of the target being drawn
+        float px = 2.0 * -mvPosition.z / (projectionMatrix[1][1] * uPxH), w = max(${d.toFixed(2)}, ${SPOKE_MIN_PX.toFixed(1)} * px);
+        vec3 along = normalize((modelViewMatrix * vec4(cableDir, 0.0)).xyz);
+        // (along, across, view ray) always form the same handedness, so every ribbon winds front-facing
+        mvPosition.xyz += normalize(cross(along, mvPosition.xyz)) * cableSide * w * 0.5;
+        gl_Position = projectionMatrix * mvPosition;
+        vCover = ${d.toFixed(2)} / w;
+        vNormal = normalize(-mvPosition.xyz); // a cylinder's average normal, seen from here
+      }`);
+    sh.fragmentShader = 'varying float vCover;\n' + sh.fragmentShader.replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\ndiffuseColor.a *= vCover;');
+  };
+  mat.customProgramCacheKey = () => 'flyer-cables-v1';
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.name = 'flyer-spokes';
+  // the render target being drawn (main or a post pass target) sets the pixel size
+  const size = new THREE.Vector2();
+  mesh.onBeforeRender = r => { const rt = r.getRenderTarget(); uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
+  return mesh;
+}
+
 /** walls facing into a courtyard ring (extrudeFootprint faces out) */
 function innerWalls(ring, y0, y1) {
   const g = extrudeFootprint(ring, y0, y1, { top: false });
@@ -111,11 +158,12 @@ export function buildFlyer(city, quality) {
     W.add(rimMat, strut(P(a0, RADIUS, 2.6), P(a0, RADIUS - 3.2, 0), 0.16, 4));
   }
   // cable spokes from both hub flanges
-  const nSp = quality === 'low' ? 24 : 48;
+  const nSp = quality === 'low' ? 24 : 48, spokes = [];
   for (const hz of [-11, 11]) for (let i = 0; i < nSp; i++) {
     const a = (i + (hz > 0 ? 0.5 : 0)) / nSp * Math.PI * 2;
-    W.add(M.steel, strut(new THREE.Vector3(Math.cos(a) * 2.5, Math.sin(a) * 2.5, hz), new THREE.Vector3(Math.cos(a) * (RADIUS - 3.4), Math.sin(a) * (RADIUS - 3.4), 0), 0.09, 3));
+    spokes.push([new THREE.Vector3(Math.cos(a) * 2.5, Math.sin(a) * 2.5, hz), new THREE.Vector3(Math.cos(a) * (RADIUS - 3.4), Math.sin(a) * (RADIUS - 3.4), 0)]);
   }
+  wheel.add(cableRibbons(spokes, SPOKE_D));
   const hub = new THREE.CylinderGeometry(4.2, 4.2, 24, 20); hub.rotateX(Math.PI / 2); W.add(white, hub);
   for (const hz of [-11, 11]) { const f = new THREE.CylinderGeometry(6, 6, 1.2, 24); f.rotateX(Math.PI / 2); f.translate(0, 0, hz); W.add(white, f); }
   // capsule mounts

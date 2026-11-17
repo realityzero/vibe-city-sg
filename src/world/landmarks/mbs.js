@@ -24,6 +24,8 @@ function skyParkHalfWidth(u) {
   return body;
 }
 
+// Beams are drawn as anti-aliased lines: the ribbon is a pixel wider than the beam on each side and every pixel takes
+// the share of it the beam covers. (A bare ribbon ~1.4 px wide put its profile between pixel centres: hairy, beaded.)
 const LASER_WIDTH = 0.45, LASER_MIN_PX = 1.4;
 /** n beams of length `len` (world space) drawn as one mesh: ribbons facing the camera, origin[i] / dir[i] set per frame */
 class Lasers {
@@ -49,21 +51,27 @@ class Lasers {
       vertexShader: /* glsl */`
         attribute vec3 beam; // beam index, distance along it (0..1), side of the ribbon (-1 / 1)
         uniform vec3 uOrigin[${n}], uDir[${n}]; uniform float uLen, uPxH;
-        varying float vFade, vAcross;
+        varying float vFade, vAcross, vHalf;
         void main() {
           int i = int(beam.x + 0.5);
           vec4 mv = viewMatrix * vec4(uOrigin[i] + uDir[i] * (beam.y * uLen), 1.0);
           vec3 across = normalize(cross((viewMatrix * vec4(uDir[i], 0.0)).xyz, mv.xyz));
           // at least LASER_MIN_PX wide: metres per pixel at this depth from the projection and the target height
-          float w = max(${LASER_WIDTH.toFixed(2)}, ${LASER_MIN_PX.toFixed(2)} * 2.0 * -mv.z / (projectionMatrix[1][1] * uPxH));
+          float px = 2.0 * -mv.z / (projectionMatrix[1][1] * uPxH);
+          float beamW = max(${LASER_WIDTH.toFixed(2)}, ${LASER_MIN_PX.toFixed(2)} * px), w = beamW + 2.0 * px;
           mv.xyz += across * beam.z * w * 0.5;
-          vFade = pow(1.0 - beam.y, 1.6); vAcross = beam.z;
+          vFade = pow(1.0 - beam.y, 1.6); vAcross = beam.z; vHalf = beamW / w;
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uColor; uniform float uOpacity;
-        varying float vFade, vAcross;
-        void main() { gl_FragColor = vec4(uColor * vFade * uOpacity * (1.0 - vAcross * vAcross), 1.0); }`,
+        varying float vFade, vAcross, vHalf;
+        void main() {
+          // the beam's coverage of this pixel (vAcross runs -1..1 across the ribbon, the beam is the middle +-vHalf),
+          // and a soft core (same total light as the old 1 - x^2 profile)
+          float cover = clamp((vHalf - abs(vAcross)) / fwidth(vAcross) + 0.5, 0.0, 1.0), x = min(abs(vAcross) / vHalf, 1.0);
+          gl_FragColor = vec4(uColor * vFade * uOpacity * cover * (1.0 - 0.5 * x * x) * 0.8, 1.0);
+        }`,
     });
     this.mesh = new THREE.Mesh(g, mat);
     this.mesh.name = 'mbs-lasers'; this.mesh.frustumCulled = false; this.mesh.visible = false;
