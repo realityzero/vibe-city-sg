@@ -7,6 +7,7 @@
 // squat on a damped spring; indicators blink before and through turns.
 import * as THREE from 'three';
 import { FILTER } from '../physics/physics.js';
+import { clearLine } from '../core/visibility.js';
 import { VEHICLE_SPECS, pickTrafficType, TrafficRenderer } from './vehicles/index.js';
 
 const _p = new THREE.Vector3(), _d = new THREE.Vector3(), _t = new THREE.Vector3(), _k = new THREE.Vector3(), _q = new THREE.Quaternion(), _qt = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -33,6 +34,7 @@ export class Traffic {
     this.enabled = true;
     this.clock = 0; // s of traffic time: junction entry order (first come, first through)
     this.frame = 0;
+    this.recycleT = 0;
     // the route ahead of the car being driven: up to 6 (path, from s, to s, speed limit or 0) segments, see _route()
     this._rp = new Array(6).fill(null); this._ra = new Float64Array(6); this._rb = new Float64Array(6); this._rv = new Float64Array(6); this._rn = 0;
     game.physics.onStep(h => this.fixedStep(h));
@@ -241,8 +243,16 @@ export class Traffic {
       let active = 0; for (const c of this.cars) if (c.state === 'drive') active++;
       // after a teleport / at start, seed the area immediately (nobody is watching yet)
       const seeding = this.recenter > 0 || active < this.target * 0.35;
+      // a full quota with cars far behind the camera: let one go now and then, so the next appears where it's seen
+      if (!seeding && active >= this.target && (this.recycleT -= 0.08) <= 0) {
+        this.recycleT = 1.5;
+        let far = null, fd = 140;
+        for (const c of this.cars) { if (c.state !== 'drive' || c.keep) continue; const d = Math.hypot(c.pos.x - pp.x, c.pos.z - pp.z); if (d > fd && !this.inView(c.pos, 0)) { far = c; fd = d; } }
+        if (far) { this.despawn(far); active--; }
+      }
       if (active < this.target) {
         const lanes = net.lanesNear(pp.x, pp.z, this.radius).filter(l => l.cls <= 5 && l.s1 - l.s0 > 20 && !l.closed);
+        let rays = 1; // sight test (two ray casts) for one in-view spot per tick at most
         // prefer bigger roads: they carry more traffic
         for (let k = 0; k < (seeding ? 30 : 6) && lanes.length; k++) {
           const l = lanes[Math.floor(Math.random() * lanes.length)];
@@ -252,7 +262,12 @@ export class Traffic {
           const d = Math.hypot(_p.x - pp.x, _p.z - pp.z);
           if (d < (seeding ? 25 : 60) || d > this.radius) continue;
           if (l.cars.some(o => Math.abs(o.s - s) < 14)) continue;
-          if (!seeding && d < 180 && this.inView(_p)) continue;
+          if (!seeding) {
+            // ahead of the camera rather than behind it; within 180 m in view only where a building hides the spot
+            const seen = this.inView(_p, 0);
+            if (!seen && Math.random() < 0.5) continue;
+            if (seen && d < 180 && this.inView(_p) && (!rays-- || clearLine(this.game, cam, _k.set(_p.x, _p.y + 1.2, _p.z)))) continue;
+          }
           this.spawnAt(l, s);
           if (!seeding) break;
         }
@@ -279,9 +294,9 @@ export class Traffic {
     this.renderer.update(dt);
   }
 
-  inView(p) {
+  inView(p, cos = 0.45) {
     const cam = this.game.camera; _d.subVectors(p, cam.position); const f = this._f || (this._f = new THREE.Vector3()); cam.getWorldDirection(f);
-    return _d.normalize().dot(f) > 0.45;
+    return _d.normalize().dot(f) > cos;
   }
 
   /** the route ahead of car c as segments (path, from s, to s, lane speed or 0): where it is, then two junctions on */
