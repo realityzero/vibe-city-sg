@@ -605,6 +605,7 @@ export function materials() {
     roofGrey: new THREE.MeshStandardMaterial({ color: 0x5e6266, roughness: 0.6, metalness: 0.4 }),
     gold: new THREE.MeshStandardMaterial({ color: 0xd8a83c, roughness: 0.25, metalness: 1.0 }),
     foliage: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.0, vertexColors: true, side: THREE.DoubleSide }),
+    foliageSolid: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.0, vertexColors: true }), // closed crowns: one side
     planter: new THREE.MeshStandardMaterial({ color: 0x4b7a32, roughness: 0.92 }),
     patina: new THREE.MeshStandardMaterial({ color: 0x5f9a86, roughness: 0.55, metalness: 0.35 }),
     pool: new THREE.MeshStandardMaterial({ color: 0x1d8fb6, roughness: 0.05, metalness: 0.3, emissive: 0x0a4a66, emissiveIntensity: 0.25 }),
