@@ -9,6 +9,7 @@ import { buildEsplanade } from './esplanade.js';
 import { buildMerlion } from './merlion.js';
 import { buildHelix } from './helix.js';
 import { buildHeritage } from './heritage.js';
+import { buildFullerton } from './fullerton.js';
 import { buildSkyline } from './skyline.js';
 import { buildCivic } from './civic.js';
 import { nextTask } from '../../core/nextTask.js';
@@ -22,6 +23,7 @@ const BUILDERS = [
   ['merlion', buildMerlion],
   ['helix', buildHelix],
   ['heritage', buildHeritage],
+  ['fullerton', buildFullerton],
   ['skyline', buildSkyline],
   ['civic', buildCivic],
 ];
