@@ -10,6 +10,8 @@ const ALL = {
   lite: `const w = g.water, m = w.reflections; w.setReflections('lite'); return () => w.setReflections(m);`,
   full25: `const w = g.water, r = w.reflections, s = w.resScale; w.setReflections(true); w.resScale = 0.25; w.resize(g.R.width, g.R.height); return () => { w.resScale = s; w.resize(g.R.width, g.R.height); w.setReflections(r); };`,
   current: `return () => {};`,
+  // the water's far-field (height field) sun shadow swapped for a fade of the shadow map's
+  'water-nohf': `const u = g.R.renderer.properties.get(g.water.material).uniforms, o = u.uHFOn; u.uHFOn = { value: 0 }; return () => { u.uHFOn = o; };`,
   // lite as built once, then never re-rendered: the cost of shading the water with it
   frozen: `const w = g.water, m = w.reflections; w.setReflections('lite'); w.renderReflection(g.R.renderer, g.scene, g.camera); w._draw = () => {}; return () => { delete w._draw; w.setReflections(m); };`,
 };

@@ -6,6 +6,7 @@ import { U } from '../gfx/globals.js';
 import { NOISE } from '../gfx/shaderlib.js';
 import { WATER_LEVEL } from '../core/constants.js';
 import { REFL } from '../gfx/materials.js';
+import { HF, HF_GLSL } from '../gfx/heightfield.js';
 
 export const REFLECT_LAYER = 2;
 // lite reflection: frames per rebuild, parts each city batch is dealt as, frustum widening (tangent scale)
@@ -23,23 +24,30 @@ export class Water {
     this.uniforms = {
       uRefl: { value: this.rt.texture }, uTexMatrix: { value: this.texMatrix }, uUseRefl: { value: reflections ? 1 : 0 }, uCheap: { value: reflections === true ? 0 : 1 },
       uTime: U.time, uNight: U.night, uRain: U.rain, uSunDir: U.sunDir, uSunCol: U.sunColor, uFogCol: U.fogColor,
+      uHF: HF.tex, uHFRect: HF.rect, uHFOn: HF.on, uHFShadowC: HF.shadowCenter, uHFShadowR: HF.shadowR,
     };
-    const mat = new THREE.MeshStandardMaterial({ color: 0x082022, roughness: 0.05, metalness: 0.0, envMapIntensity: reflections ? 0.0 : 1.0 });
+    // body colour: the bay and the river are a murky teal-jade, not the cobalt of an open sea
+    const mat = new THREE.MeshStandardMaterial({ color: 0x163c33, roughness: 0.05, metalness: 0.0, envMapIntensity: reflections ? 0.0 : 1.0 });
     mat.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms);
       shader.vertexShader = `varying vec3 vWPos; varying vec4 vRC; uniform mat4 uTexMatrix;\n` + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed,1.0)).xyz; vRC = uTexMatrix * vec4(vWPos, 1.0);`);
       shader.fragmentShader = `varying vec3 vWPos; varying vec4 vRC; uniform sampler2D uRefl; uniform float uUseRefl; uniform float uCheap; uniform vec3 uFogCol; uniform float uTime; uniform float uNight; uniform float uRain; uniform vec3 uSunDir; uniform vec3 uSunCol;
 ${NOISE}
+${HF_GLSL}
+// a swell of k rad/m fades out as its crests close in on a pixel apart (pw: metres per pixel) — sampled coarser, the
+// distant bay shows rings of moiré — and costs nothing once gone
+vec2 swell(vec2 p, vec2 d, float k, float w, float a, float t, float pw) {
+  float f = 1.0 - smoothstep(0.6, 1.6, pw * k);
+  return f > 0.0 ? d * cos(dot(p, d) * k + t * w) * a * f : vec2(0.0);
+}
 // phones (lite or no planar reflection): five analytic swells and one noise octave near the camera instead of twelve
 // noise lookups — the env-map reflection of fine per-pixel chop at a 4x upscale was sparkle and dark speckle
-vec2 waveGradCheap(vec2 p, float t, float camD) {
-  vec2 g = vec2(0.0);
-  vec2 d1 = normalize(vec2(1.0, 0.35)), d2 = normalize(vec2(-0.4, 1.0)), d3 = normalize(vec2(0.8, -0.7)), d4 = normalize(vec2(-0.95, -0.3)), d5 = normalize(vec2(0.2, -1.0));
-  g += d1 * cos(dot(p, d1) * 0.55 + t * 1.3) * 0.055;
-  g += d2 * cos(dot(p, d2) * 0.9 + t * 1.9) * 0.04;
-  g += d3 * cos(dot(p, d3) * 1.7 + t * 2.6) * 0.03;
-  g += d4 * cos(dot(p, d4) * 2.6 + t * 3.2) * 0.02;
-  g += d5 * cos(dot(p, d5) * 3.7 + t * 3.8) * 0.014;
+vec2 waveGradCheap(vec2 p, float t, float camD, float pw) {
+  vec2 g = swell(p, normalize(vec2(1.0, 0.35)), 0.55, 1.3, 0.055, t, pw);
+  g += swell(p, normalize(vec2(-0.4, 1.0)), 0.9, 1.9, 0.04, t, pw);
+  g += swell(p, normalize(vec2(0.8, -0.7)), 1.7, 2.6, 0.03, t, pw);
+  g += swell(p, normalize(vec2(-0.95, -0.3)), 2.6, 3.2, 0.02, t, pw);
+  g += swell(p, normalize(vec2(0.2, -1.0)), 3.7, 3.8, 0.014, t, pw);
   if (camD < 120.0) {
     float e = 0.2; vec2 q = p * 0.9 + vec2(t * 0.35, t * 0.22);
     float n0 = vnoise(q), nx = vnoise(q + vec2(e, 0.0)), nz = vnoise(q + vec2(0.0, e));
@@ -71,7 +79,8 @@ vec2 waveGrad(vec2 p, float t) {
           if (uCheap > 0.5) {
             // calm and stable: the waves flatten sooner with distance and the surface turns satin (a blurrier env
             // sample) instead of resolving ripples smaller than a pixel into sparkle
-            grad = waveGradCheap(vWPos.xz, uTime, camD) * mix(0.55, 0.05, smoothstep(25.0, 450.0, camD));
+            vec2 fw = fwidth(vWPos.xz);
+            grad = waveGradCheap(vWPos.xz, uTime, camD, max(fw.x, fw.y)) * mix(0.55, 0.05, smoothstep(25.0, 450.0, camD));
             nVar = length(fwidth(grad));
             roughnessFactor = clamp(0.07 + nVar * 2.0 + smoothstep(40.0, 600.0, camD) * 0.16 + uNight * 0.06 + uRain * 0.1, 0.0, 0.5);
           } else {
@@ -80,7 +89,15 @@ vec2 waveGrad(vec2 p, float t) {
             roughnessFactor = clamp(roughnessFactor + nVar * 3.0 + smoothstep(150.0, 1500.0, camD) * 0.08 + uNight * 0.08, 0.0, 0.5);
           }
           vec3 wn = normalize(vec3(-grad.x, 1.0, -grad.y));
-          normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);`)
+          normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
+          // the shadow map ends at its box (sky.js): beyond it the city height field's far sun shadow takes over, as on
+          // land (materials.js) — no hard-edged rectangle of tower shadow on the bay; without one the map's fades out
+          float wFar = smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(vWPos.xz - uHFShadowC.xz));
+          float wSun = 1.0, wMapFade = uHFOn > 0.5 ? 0.0 : wFar;
+          if (uHFOn > 0.5 && wFar > 0.0) wSun = mix(1.0, hfSunVis(vWPos, vec3(0.0, 1.0, 0.0), uSunDir), wFar);`)
+        .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin
+          .replace('getDirectionalLightInfo( directionalLight, directLight );', 'getDirectionalLightInfo( directionalLight, directLight ); directLight.color *= wSun;')
+          .replace(/\? (getShadow\( directionalShadowMap\[ i \][^;]*?\)) : 1\.0;/, '? mix($1, 1.0, wMapFade) : 1.0;'))
         // phones without a planar reflection (this frame): the env map's low band is the stand-in skyline glass towers
         // mirror (dark blocks), which turned the whole bay navy-black at grazing angles. The bay reflects the open sky
         // just above it instead, and toward the horizon the haze the far shore stands in (golden at sunset, city glow)
@@ -123,10 +140,10 @@ vec2 waveGrad(vec2 p, float t) {
             }
             // subsurface-ish scattering on wave faces lit by the sun
             float sss = pow(clamp(1.0 - cosT, 0.0, 1.0), 2.0) * max(uSunDir.y, 0.0);
-            totalEmissiveRadiance += vec3(0.01, 0.05, 0.045) * sss * length(uSunCol) * 0.25;
+            totalEmissiveRadiance += vec3(0.012, 0.055, 0.04) * sss * length(uSunCol) * 0.25;
           }`);
     };
-    mat.customProgramCacheKey = () => 'water-v4';
+    mat.customProgramCacheKey = () => 'water-v5';
     this.material = mat;
     REFL.tex.value = this.rt.texture; REFL.mat.value = this.texMatrix; REFL.on.value = reflections === true ? 1 : 0;
     const geo = new THREE.PlaneGeometry(size, size, 1, 1);

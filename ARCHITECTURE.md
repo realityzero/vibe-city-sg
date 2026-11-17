@@ -75,7 +75,7 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
 - **Height field** (`gfx/heightfield.js`): the static city rendered once from straight above into a 2.5 m/px height
   texture at load. City materials (`patch()` in materials.js) ray-march it toward the sun beyond the shadow map's box
   (far-field shadows to ~0.9 km) and sample it for street-canyon sky occlusion; tree impostors take the sun term per
-  vertex. `?nohf` disables it.
+  vertex, the water its far-field sun shadow (no hard-edged shadow-map box on the bay). `?nohf` disables it.
 - **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude. Its
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the
