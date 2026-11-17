@@ -27,6 +27,23 @@ export function buildEsplanade(city, quality) {
   // the glazing under the shades: warm grey (a dark mirror read navy blue under the phone's sky light)
   const glassMat = nightGlowMaterial(0xffc98a, 0.85, { base: 0x5a6266, rough: 0.25, metal: 0.55 });
   const shadeMat = new THREE.MeshStandardMaterial({ color: 0xb9ad98, roughness: 0.38, metalness: 0.85, side: THREE.DoubleSide });
+  // specular anti-aliasing: a ~3 m shade a few pixels across or less puts each pixel on whichever facet it hits, and
+  // the facets mirror sun and sky in different directions — the far domes sparkled. As a shade shrinks below ~3 px its
+  // facets shade with the shade's average instead: the dome's normal (local +Y), roughened by the facets' spread.
+  const uPxH = { value: 1000 };
+  shadeMat.onBeforeCompile = sh => {
+    sh.uniforms.uPxH = uPxH;
+    sh.vertexShader = 'uniform float uPxH; varying float vShadeAvg;\n' + sh.vertexShader.replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+      {
+        // the shade's size in pixels: ~3 m at its depth, through the projection, on the target being drawn
+        vec4 c = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float px = 3.0 * projectionMatrix[1][1] / max(-c.z, 1.0) * 0.5 * uPxH;
+        vShadeAvg = 1.0 - smoothstep(1.0, 3.0, px);
+        objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), vShadeAvg));
+      }`);
+    sh.fragmentShader = 'varying float vShadeAvg;\n' + sh.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.62, vShadeAvg);');
+  };
+  shadeMat.customProgramCacheKey = () => 'esplanade-shade-aa1';
   // spike: a shallow triangular pyramid; base in XZ plane, apex +Y
   const spike = (() => {
     const s = 1.25, h = 1.15;
@@ -81,6 +98,7 @@ export function buildEsplanade(city, quality) {
   });
   inst.instanceMatrix.needsUpdate = true; inst.computeBoundingSphere();
   inst.castShadow = true; inst.receiveShadow = true;
+  { const size = new THREE.Vector2(); inst.onBeforeRender = r => { const rt = r.getRenderTarget(); uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; }; }
   {
     const M = materials(), stageMat = nightGlowMaterial(0xffe2b8, 0.25, { base: 0xd9d4ca, rough: 0.7 });
     const deck = new THREE.CylinderGeometry(1, 1, STAGE.h, 40, 1, false, Math.PI / 2, Math.PI); // the half toward the seats
