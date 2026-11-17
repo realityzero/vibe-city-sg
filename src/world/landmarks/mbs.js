@@ -87,7 +87,7 @@ export function buildMBS(city, quality) {
   const roofMetal = new THREE.MeshStandardMaterial({ color: 0xe4e6e6, roughness: 0.45, metalness: 0.35 });
   const roofGlass = new THREE.MeshStandardMaterial({ color: 0x9fb3ba, roughness: 0.1, metalness: 0.7 });
   // retail / expo glazing: tall panes, nearly all lit at night (not an office grid of lit and dark rooms)
-  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [4.5, 5.5], frame: [0.03, 0.06, 0.04], lit: 0.97, seed: 11, warm: 0xfff0d0, litIntensity: 1.4, curtains: 0.05 });
+  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [4.5, 5.5], frame: [0.03, 0.06, 0.04], lit: 0.97, seed: 11, warm: 0xffeccc, cool: 0xfff4e0, litIntensity: 1.0, curtains: 0.05 });
   const pavilionMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.5 });
 
   const F = frameMatrix(ORIGIN[0], ORIGIN[1], AX[0], AX[1]);
