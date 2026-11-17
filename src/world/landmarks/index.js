@@ -12,6 +12,7 @@ import { buildHeritage } from './heritage.js';
 import { buildFullerton } from './fullerton.js';
 import { buildClarkeQuay } from './clarkequay.js';
 import { buildSkyline } from './skyline.js';
+import { buildRaffles } from './raffles.js';
 import { buildCivic } from './civic.js';
 import { nextTask } from '../../core/nextTask.js';
 
@@ -27,6 +28,7 @@ const BUILDERS = [
   ['fullerton', buildFullerton],
   ['clarkequay', buildClarkeQuay],
   ['skyline', buildSkyline],
+  ['raffles', buildRaffles],
   ['civic', buildCivic],
 ];
 
