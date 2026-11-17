@@ -25,10 +25,11 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   - style ids: glass 0, office 1, resi 2, hdb 3, shophouse 4, lowrise 5, civic 6, parking 7, canopy 8, industrial 9, station 10
   - road: `{p:[...], c:class(0 motorway..5 residential,7 service,8 pedestrian,9 footway), w:width, lf?, lb? lanes fwd/back, o?:oneway, b?:bridge, y?:[elev per vertex], cv?:covered, n?:name, x?:crossing}`
   - bridge decks (`tools/bridge-decks.mjs`): spans that meet are one structure whatever their OSM `layer`; each wants a
-    deck height (a named bridge's real one — Benjamin Sheares 27 m, Merdeka, Esplanade, Bayfront, the Helix — a low arch
-    over water, else 6.8 m a layer) and comes down only at the structure's free ends. Ground ways leaving a span mid-way
-    (slip roads, stairs, short gaps between spans) and the approaches of flyovers too short to climb are lifted and split
-    (the raised part becomes a bridge way). Grades ≤ 6 % on roads (stair-steep on footbridges), 40 m sag curves, rounded
+    deck height (a named bridge's real one — Benjamin Sheares 27 m, Merdeka, Esplanade, Bayfront, the Helix; 6.8 m a
+    layer over a road; else a low arch over the river, a canal or a drain) and comes down only at the structure's free
+    ends. Ground ways leaving a span mid-way (slip roads, stairs, short gaps between spans) and the approaches of flyovers
+    too short to climb (through an interchange's junctions if need be, never the road crossed) are lifted and split (the
+    raised part becomes a bridge way). Grades ≤ 6 % on roads (stair-steep on footbridges), 40 m sag curves, rounded
     crests. The build fails (`validateBridges`) on a deck that dips to the ground between raised spans, steps where two
     meet, or climbs steeper than its grade.
 - `ground.png` — 2 m/px RGBA mask over the bbox. R: 255 land / 128 pond / 0 water. G: vegetation (255 park/grass, 180 woods, 100 pitch). B: paving (255 plaza, 220 sidewalk, 200 parking, 150 building apron).
