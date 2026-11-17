@@ -77,11 +77,48 @@ export class Props {
     this.lampMesh.castShadow = false; // thin poles: their shadows cost far more than they're worth
     for (const m of [this.lampMesh, this.headMesh]) { m.count = 0; m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); game.scene.add(m); }
     this.headMesh.layers.enable(REFLECT_LAYER); // glowing heads show (as streaks) in wet roads and the bay
+    // a soft corona round each lit head (the humid night air scatters it): camera-facing quads on the heads' own
+    // instance matrices. Never smaller than a few pixels — a far head stays a dim point of light, it doesn't sparkle
+    this.corona = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
+      uniforms: { uNight: U.night, uPxH: { value: 600 } },
+      vertexShader: /* glsl */`
+        uniform float uPxH; varying vec2 vQ; varying float vI;
+        void main() {
+          vec4 c = viewMatrix * modelMatrix * instanceMatrix * vec4(0.0, 8.95, -2.1, 1.0);
+          float px = -c.z * 2.0 / (projectionMatrix[1][1] * uPxH); // metres per pixel
+          float size = max(2.6, px * 5.0);
+          vI = (2.6 / size) * (2.6 / size) * (1.0 - smoothstep(900.0, 1700.0, -c.z));
+          vQ = position.xy * 2.0;
+          gl_Position = projectionMatrix * (c + vec4(position.xy * size, 0.0, 0.0));
+        }`,
+      fragmentShader: /* glsl */`
+        uniform float uNight; varying vec2 vQ; varying float vI;
+        void main() {
+          float r2 = dot(vQ, vQ);
+          float f = exp(-r2 * 6.0) * 0.22 + exp(-r2 * 140.0) * 1.2;
+          gl_FragColor = vec4(vec3(1.0, 0.88, 0.72) * f * (1.0 - smoothstep(0.6, 1.0, r2)) * vI * smoothstep(0.2, 0.6, uNight), 1.0);
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    }), 1);
+    this.corona.instanceMatrix = this.headMesh.instanceMatrix; // (one buffer: the heads' matrices)
+    this.corona.count = 0; this.corona.frustumCulled = false; this.corona.renderOrder = 1.5; this.corona.name = 'lampCorona';
+    game.scene.add(this.corona);
     this.lampAt = new THREE.Vector3(1e9, 0, 0); this.lampNight = -1;
     // street-light map: every lamp head (arm reaches 2.1 m over the road), plus brighter junction lighting
     this.light = new LightMap(city.meta);
     for (const l of lamps) this.light.add(l.x - Math.sin(l.yaw) * 2.1, l.z - Math.cos(l.yaw) * 2.1, 9, 1);
     for (const n of net.nodes) if (n.degree >= 3 && n.maxHalfW >= 5) this.light.add(n.x, n.z, 12, n.signal ? 0.5 : 0.3);
+    // back lanes and pedestrian streets have no pole lamps but wall-mounted lights over doors: a lower, softer glow
+    // every 16 m, so a lane between shophouses reads at night instead of falling to black
+    for (const r of city.data.roads) {
+      if ((r.c !== 7 && r.c !== 8) || r.b) continue;
+      let acc = 8;
+      for (let i = 0; i + 3 < r.p.length; i += 2) {
+        const ax = r.p[i], az = r.p[i + 1], dx = r.p[i + 2] - ax, dz = r.p[i + 3] - az, l = Math.hypot(dx, dz);
+        for (; acc < l; acc += 16) this.light.add(ax + dx * acc / l, az + dz * acc / l, 5, 0.35);
+        acc -= l;
+      }
+    }
 
     // traffic lights at signalised junctions, SG style: a kerb pole at the stop line with a black three-aspect head
     // (visors, backplate) facing the approaching traffic and a red/green-man pedestrian head facing across the road;
@@ -182,6 +219,7 @@ export class Props {
     const sets = [[this.lampMesh, np], [this.headMesh, nh], [this.tlPole, near.length], [this.tlPed, near.length], [this.tlArm, na], [this.tlHead, heads.length],
       ...this.tlLamps.map(L => [L.m, heads.length]), ...this.tlPedLamps.map(L => [L.m, near.length])];
     for (const [m, n] of sets) { m.count = n; const a = m.instanceMatrix; a.clearUpdateRanges(); a.addUpdateRange(0, Math.max(16, n * 16)); a.needsUpdate = true; }
+    this.corona.count = night ? nh : 0; this.corona.visible = night;
     this.tlT = 0; // recolour the new set right away
     this.lampAt.copy(cam); this.lampNight = night;
   }
@@ -189,6 +227,7 @@ export class Props {
   update(dt) {
     const night = U.night.value;
     this.headMat.emissiveIntensity = night * 5;
+    this.corona.material.uniforms.uPxH.value = this.game.R.height || 600;
     const cam = this.game.camera.position;
     const lit = night > 0.2;
     if (Math.hypot(cam.x - this.lampAt.x, cam.z - this.lampAt.z) > 40 || lit !== this.lampNight) this.refreshLamps(cam, lit);

@@ -80,9 +80,14 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the
   sea plane and the farthest towers dissolve into the horizon at every time of day.
-- Golden hour / dusk live in the sky shader (warm dome, sun-side glow, Belt of Venus, twilight dome after sunset),
-  `SkySystem.update` (sun colour temperature, weaker blue-violet fill) and `FilmGradeEffect` (`uGolden`, `uNight`).
-  Night shop light on the pavements: `world/nightglow.js` (additive instanced ground decals, no lights).
+- Golden hour / dusk live in the sky shader (warm dome, apricot low-sky haze, sun-side glow and glare, Belt of Venus,
+  twilight dome after sunset; the environment capture adds a copper flare toward the low sun, so glass facing it
+  glints), `SkySystem.update` (sun colour temperature, peach fill and warm bounce, a little more haze) and
+  `FilmGradeEffect` (`uGolden` warms the white balance of lit tones, `uNight` the teal/magenta neon grade).
+  Night light is emissive only, no lights: `world/nightglow.js` (shop light pools on the pavements and neon on the shop
+  fronts — framed signboards, blade signs, eave lines — instanced near the camera, thick in the nightlife quarters),
+  street-lamp coronas (`Props`), and the baked street-light map, which lights roads, pavements, people, cars and the
+  facades' lower floors.
 - Budget at High, 1800x1125 on an M2: ~5-8 ms GPU for reflection + main render, 450-580 draw calls (incl. shadow and
   reflection passes), 2.5-3.3M triangles. `node tests/perf.mjs` drives Claudia's autopilot route Tanjong Pagar -> Marina
   Bay; `tests/gpuframe.mjs` measures per-feature render cost (interleaved A/B), `tests/gpuprof.mjs` per-draw GPU time,

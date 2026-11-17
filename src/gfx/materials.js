@@ -159,12 +159,14 @@ export function createFacadeMaterial({ reflection = false } = {}) {
   });
   return patch(mat, {
     key: 'facade-v4', specMul: 1.35,
-    uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir, uRec: FACADE_REC },
+    uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir, uRec: FACADE_REC,
+      uLamp: STREET.lamp, uLampOrigin: STREET.lampOrigin, uLampSize: STREET.lampSize, uStreetGlow: STREET.glow },
     vertexHead: COMMON_VHEAD + FACADE_VHEAD,
     vertexBody: COMMON_VBODY + FACADE_VBODY,
     fragHead: COMMON_HEAD + SHOP_UNITS + /* glsl */`
       varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;
       uniform sampler2D uSigns; uniform sampler2D uInterior; uniform vec3 uSunDirF;
+      uniform sampler2D uLamp; uniform vec2 uLampOrigin; uniform vec2 uLampSize; uniform float uStreetGlow;
       // local clock time from the sun vector (inverse of sky.js sunDirection: late-October declination, lat 1.29 N)
       float localHour() {
         const float sD = -0.19937, cD = 0.97992, sL = 0.022512, cL = 0.99975;
@@ -391,7 +393,8 @@ ${SHOP_UNIT_SETUP}
         float zone = floor(cid.x / 5.0);
         float hf = hash12(vec2(cid.y * 1.37 + zone * 17.3, fSeed * 61.0 + wallId));
         bool floorOn = hf < litFrac * 1.08;
-        bool lit = resi || ground ? h2 < litFrac : (floorOn ? h2 < 0.9 : h2 < 0.04);
+        // (stray desks on dark floors only after dusk: lit against a sunlit tower they read as specks of noise)
+        bool lit = resi || ground ? h2 < litFrac : (floorOn ? h2 < 0.9 : h2 < 0.04 * uNight);
 
         // ---- non-window wall details per style
         if (fStyle < 0.5) {
@@ -538,7 +541,7 @@ ${SHOP_UNIT_SETUP}
           vec3 lampCol = resi ? (hdb && h > 0.5 ? vec3(0.8, 0.9, 1.0) : mix(vec3(1.0, 0.62, 0.32), vec3(1.0, 0.8, 0.55), h))
                               : (warmF < 0.25 + 0.25 * fract(fSeed * 3.3) ? vec3(1.0, 0.78, 0.52) : mix(vec3(0.74, 0.85, 1.0), vec3(0.88, 0.94, 1.0), warmF));
           // per-window on/off up close; fades to the floor/zone average where windows are sub-pixel (no sparkle)
-          float floorLit = resi || ground ? step(hash12(vec2(cid.y, fSeed * 61.0 + wallId)), min(1.0, litFrac * 1.15)) * 0.75 + litFrac * 0.25 : (floorOn ? 0.85 : 0.04);
+          float floorLit = resi || ground ? step(hash12(vec2(cid.y, fSeed * 61.0 + wallId)), min(1.0, litFrac * 1.15)) * 0.75 + litFrac * 0.25 : (floorOn ? 0.85 : 0.04 * uNight);
           float litAmt = mix(lit ? 1.0 : 0.0, floorLit, farLit);
           float lampI = litAmt * (resi ? 1.2 : 0.72) * mix(0.75 + 0.5 * h, 0.55, farLit);
           float dayI = 0.07 * (1.0 - uNight);
@@ -758,7 +761,13 @@ ${SHOP_UNIT_SETUP}
     `,
     fragAfterNormal: `normal = normalize(normal + fNTilt);`,
     fragAfterIbl: `radiance *= fSpecOcc; iblIrradiance *= fAmbOcc;`,
-    fragAfterEmissive: `totalEmissiveRadiance += fEmis;`,
+    // street lamps light the lower floors facing them, from the same baked lamp map as the ground (sampled a little out
+    // in the street): at night the walls of a lamp-lit street read as lit, a back lane's as dim — not both as black
+    fragAfterEmissive: `totalEmissiveRadiance += fEmis;
+      if (uNight > 0.02 && vWPos.y < 12.0 && !horiz) {
+        float le = texture2D(uLamp, (vWPos.xz + N.xz * 2.0 - uLampOrigin) / uLampSize).r; le = le * le * 4.0; le = le / (1.0 + 0.45 * le);
+        totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.92, 0.8) * le * 0.38 * (1.0 - smoothstep(4.0, 12.0, vWPos.y)) * uNight * uStreetGlow;
+      }`,
   });
 }
 
