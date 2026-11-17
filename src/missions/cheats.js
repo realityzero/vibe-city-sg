@@ -75,7 +75,7 @@ export class Cheats {
       case 'COMEFLYWITHME': this.toggle(code); g.physics.world.gravity = { x: 0, y: this.active.has(code) ? -3.2 : -9.81, z: 0 }; break;
       case 'ALOVELYDAY': g.weather.force(0); setTimeout(() => (g.weather.forced = null), 120000); break;
       case 'CATSANDDOGS': g.weather.force(1); setTimeout(() => (g.weather.forced = null), 120000); break;
-      case 'HAZESEASON': this.toggle(code); g.sky.fogBase = this.active.has(code) ? 0.0016 : 0.0002; break;
+      case 'HAZESEASON': this.toggle(code); g.sky.fogBase = this.active.has(code) ? 0.0016 : g.sky.fogClear; break;
       case 'LIFEISPASSINGMEBY': this.toggle(code); g.timeScale = this.active.has(code) ? 1 / 6 : 1 / 60; break;
       case 'BIGBANG': this.bigBang(); break;
       case 'GREENLIGHT': this.toggle(code); g.roadnet.allGreen = this.active.has(code); break;

@@ -63,7 +63,13 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   texture at load. City materials (`patch()` in materials.js) ray-march it toward the sun beyond the shadow map's box
   (far-field shadows to ~0.9 km) and sample it for street-canyon sky occlusion; tree impostors take the sun term per
   vertex. `?nohf` disables it.
-- **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude.
+- **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude. Its
+  colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
+  env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the
+  sea plane and the farthest towers dissolve into the horizon at every time of day.
+- Golden hour / dusk live in the sky shader (warm dome, sun-side glow, Belt of Venus, twilight dome after sunset),
+  `SkySystem.update` (sun colour temperature, weaker blue-violet fill) and `FilmGradeEffect` (`uGolden`, `uNight`).
+  Night shop light on the pavements: `world/nightglow.js` (additive instanced ground decals, no lights).
 - Budget at High, 1800x1125 on an M2: ~5-8 ms GPU for reflection + main render, 450-580 draw calls (incl. shadow and
   reflection passes), 2.5-3.3M triangles. `node tests/perf.mjs` drives Claudia's autopilot route Tanjong Pagar -> Marina
   Bay; `tests/gpuframe.mjs` measures per-feature render cost (interleaved A/B), `tests/gpuprof.mjs` per-draw GPU time,
@@ -157,8 +163,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   `Input.stick` (walk / steer + pedals), a one-finger drag adds to `Input.mouse.dx/dy`, a pinch to `mouse.wheel`
   (camera `zoom`). `.vc-touchmode` moves the radar top-left and the bottom-right HUD flashes and phone out of the
   thumbs' way. `tests/scratch/touch.mjs [WxH]` drives it with real CDP multi-touch on an emulated phone/tablet.
-- Post: the composer only draws to the screen from the last pass *added*, so `Renderer.outPass` (a pass-through
-  EffectPass after SMAA) is the output whenever SMAA is off — without it the Low preset rendered black.
+- Post: the composer only draws to the screen from the last pass *added*, so `Renderer.outPass` (FXAA on sqrt luma,
+  after SMAA) is the output whenever SMAA is off — without it the Low preset rendered black. Low has no film grain.
 - Footbridges (`StreetDetail.buildBridges`) pick, per end, the stair direction whose flight and foot are clear of
   walls, tree trunks and traffic lanes, and leave gaps in the deck parapet at the landings.
   `tests/scratch/bridgewalk.mjs` walks over every bridge, `bridgeexits.mjs` checks each stair foot floods out to a sidewalk.

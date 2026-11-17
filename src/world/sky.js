@@ -19,6 +19,7 @@ export function sunDirection(hours, out = new THREE.Vector3()) {
 
 const EXTRA_HEAD = /* glsl */`
 uniform float uNight; uniform float uRain; uniform float uEnv; uniform vec3 uMoonDir; uniform float uTimeS; uniform float uRainbow; uniform float uSkyGain; uniform vec4 uBolt;
+uniform vec3 uFogCol; uniform float uCapture;
 float h21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 `;
 const EXTRA_TAIL = /* glsl */`
@@ -47,6 +48,36 @@ const EXTRA_TAIL = /* glsl */`
     float awaySun = 1.0 - smoothstep(0.55, 0.95, dot(direction, vSunDirection));
     float k = lowSky * awaySun * (1.0 - uNight) * (1.0 - uRain * 0.7);
     texColor *= mix(vec3(1.0), vec3(0.74, 0.82, 0.95), k);
+  }
+  // ---- golden hour and dusk. Preetham alone keeps a deep, saturated blue dome until the sun touches the horizon,
+  // then goes black within minutes. A low sun warms and softens the dome (a longer path through the humid air), lays
+  // a gold-to-orange glow along its side of the horizon and the rose Belt of Venus along the other; once it has set,
+  // a deep blue twilight dome (dimming ~4x per 5 deg of sun depression) with an ember band where it went down.
+  float sunSide = 0.0;
+  if (vSunDirection.y < 0.34 && vSunDirection.y > -0.3) { // (the same for every pixel: no cost by day or at night)
+    float se = vSunDirection.y, up = max(direction.y, 0.0);
+    float azS = dot(normalize(direction.xz + vec2(1e-5)), normalize(vSunDirection.xz + vec2(1e-5)));
+    float gold = smoothstep(0.34, 0.04, se) * smoothstep(-0.07, 0.0, se) * (1.0 - uRain);
+    sunSide = pow(azS * 0.5 + 0.5, 3.0) * exp(-up * 4.0) * gold;
+    float lum = dot(texColor, vec3(0.3, 0.45, 0.25));
+    texColor = mix(texColor, lum * vec3(1.2, 0.95, 0.86), gold * (0.75 - 0.4 * smoothstep(0.0, 0.7, up)));
+    vec3 glowTint = mix(vec3(2.0, 0.78, 0.3), vec3(1.7, 1.02, 0.5), smoothstep(-0.02, 0.2, se));
+    texColor *= mix(vec3(1.0), glowTint, sunSide);
+    float belt = pow(max(-azS, 0.0), 1.5) * smoothstep(0.0, 0.05, up) * exp(-up * 7.0) * gold;
+    texColor *= mix(vec3(1.0), vec3(1.4, 0.92, 1.05), belt);
+    float depth = max(-se, 0.0);
+    float tw = smoothstep(0.03, -0.01, se) * (1.0 - uRain * 0.6);
+    float Z = 0.12 * exp(-depth * 16.0) * tw;
+    vec3 dome = vec3(0.15, 0.28, 0.85) * mix(1.7, 1.0, smoothstep(0.0, 0.45, up)) + vec3(0.12, 0.05, 0.12) * (1.0 - smoothstep(0.0, 0.2, up));
+    vec3 ember = vec3(1.0, 0.4, 0.14) * pow(azS * 0.5 + 0.5, 4.0) * exp(-up * (7.0 + depth * 50.0)) * 3.0;
+    texColor += (dome + ember) * Z;
+    sunSide = max(sunSide, pow(azS * 0.5 + 0.5, 4.0) * exp(-up * 6.0) * tw * smoothstep(-0.16, -0.02, se));
+  }
+  // the horizon dissolves into the haze the city is fogged with (uFogCol: this sky's own colour a little higher up,
+  // averaged around the horizon), so there is no line where the sea plane or the farthest towers end
+  if (uCapture < 0.5 && direction.y < 0.1) {
+    float hb = 1.0 - smoothstep(-0.02, 0.1, direction.y); hb *= hb;
+    texColor = mix(texColor, uFogCol, hb * (1.0 - 0.7 * sunSide));
   }
   // rain: overcast grey
   float lum = dot(texColor, vec3(0.3, 0.59, 0.11));
@@ -100,6 +131,8 @@ const EXTRA_TAIL = /* glsl */`
   // half-float safety: a single NaN/Inf texel poisons the PMREM and the bloom chain
   if (any(isnan(texColor)) || any(isinf(texColor))) texColor = vec3(0.0);
   texColor = min(texColor, vec3(6.0e4));
+  // haze capture (SkySystem.captureHaze): log2-encoded into an 8-bit target, 2^-12..2^4
+  if (uCapture > 0.5) texColor = clamp((log2(max(texColor, vec3(2.5e-4))) + 12.0) / 16.0, 0.0, 1.0);
 `;
 
 // Tropical sky: fair-weather cumulus (billowy cells, sun-lit tops, flat grey bases, self-shadowing via a 2-tap march
@@ -139,6 +172,9 @@ const CLOUDS = /* glsl */`
         // rain: heavy grey overcast
         cloudColor = mix( cloudColor, vec3( dot( cloudColor, vec3( 0.33 ) ) ) * 0.55, clamp( ( cov - 0.6 ) * 2.0, 0.0, 1.0 ) );
         cloudColor *= max( dayFactor, 0.035 );
+        // low sun: the cumulus deck catches the light longer than the ground — peach to rose, brighter than the sky
+        float cGold = smoothstep( 0.3, 0.05, vSunDirection.y ) * smoothstep( -0.1, 0.0, vSunDirection.y );
+        if ( cGold > 0.0 ) cloudColor = mix( cloudColor, vec3( 1.0, 0.52, 0.4 ) * dot( texColor, vec3( 0.3, 0.45, 0.25 ) ) * ( 1.2 + 1.6 * light * ( 1.0 - core * 0.4 ) ), cGold * 0.85 );
         // at night the cloud deck is lit from below by the city (orange-grey), thick bases glow most
         cloudColor += vec3( 0.019, 0.0128, 0.0105 ) * ( 1.0 - dayFactor ) * ( 0.55 + core * 0.6 ) * ( 1.0 + cov );
         float horizon = smoothstep( -0.01, 0.06, direction.y );
@@ -176,6 +212,7 @@ export class SkySystem {
       const m = sky.material;
       m.uniforms.uNight = U.night; m.uniforms.uRain = U.rain; m.uniforms.uEnv = { value: env ? 1 : 0 };
       m.uniforms.uMoonDir = { value: this.moon }; m.uniforms.uTimeS = U.time; m.uniforms.uRainbow = this.rainbowU; m.uniforms.uSkyGain = this.skyGainU; m.uniforms.uBolt = this.boltU;
+      m.uniforms.uFogCol = U.fogColor; m.uniforms.uCapture = { value: 0 };
       // swap the stock single-layer cloud sheet for tropical cumulus + cirrus (see CLOUDS)
       let fs = m.fragmentShader;
       const c0 = fs.indexOf('// Clouds'), c1 = fs.indexOf('gl_FragColor = vec4( texColor, 1.0 );');
@@ -213,7 +250,9 @@ export class SkySystem {
     this.hemi = new THREE.HemisphereLight(0xbfd9ff, 0x4a4a40, 0.5);
     scene.add(this.hemi);
     scene.fog = new THREE.FogExp2(0xbcc8d6, 0.00045);
-    this.fogBase = 0.0002;
+    this.fogClear = 0.00025; this.fogBase = this.fogClear; // (HAZESEASON raises it)
+    // haze colour = the sky's own colour around the horizon (captureHaze), eased toward each new capture
+    this.haze = new THREE.Color(0.42, 0.5, 0.62); this.hazeTarget = this.haze.clone(); this._hc = new THREE.Color(); this._hazeSnap = true; this._hazeId = 0;
     this.exposure = 1;
     this._c = new THREE.Color();
   }
@@ -258,10 +297,12 @@ export class SkySystem {
     const ld = useSun ? this.sun : this.moon;
     const elev = Math.max(0.0, ld.y);
     if (useSun) {
-      const warm = THREE.MathUtils.smoothstep(sunY, -0.02, 0.35);
-      this._c.setRGB(1.0, 0.5 + 0.44 * warm, 0.28 + 0.6 * warm);
+      // colour temperature through the afternoon: ~5800 K high up, ~4000 K at 10 deg, ~2600 K at 3 deg (a long
+      // path through humid air); the low sun also loses some strength, so golden hour is warm, not noon-bright
+      const warm = THREE.MathUtils.smoothstep(sunY, -0.02, 0.4);
+      this._c.setRGB(1.0, 0.36 + 0.58 * warm, 0.12 + 0.76 * warm);
       this.dir.color.copy(this._c);
-      this.dir.intensity = 5.2 * THREE.MathUtils.smoothstep(sunY, -0.03, 0.12) * (1 - this.rain * 0.85);
+      this.dir.intensity = 5.2 * THREE.MathUtils.smoothstep(sunY, -0.03, 0.1) * THREE.MathUtils.lerp(0.72, 1, THREE.MathUtils.smoothstep(sunY, 0.05, 0.4)) * (1 - this.rain * 0.85);
     } else {
       this.dir.color.setRGB(0.55, 0.65, 1.0);
       this.dir.intensity = 0.13 * THREE.MathUtils.smoothstep(this.moon.y, 0.0, 0.2) * (1 - this.rain * 0.9);
@@ -286,16 +327,16 @@ export class SkySystem {
     // hemisphere / ambient
     const day = 1 - night;
     // day: blue sky / warm ground bounce; night: sodium-orange urban glow from below, dim blue above
-    this.hemi.color.setRGB(THREE.MathUtils.lerp(0.45, 0.87, day), THREE.MathUtils.lerp(0.5, 0.92, day), THREE.MathUtils.lerp(0.85, 1.0, day));
+    // a low sun: the sky fill weakens and turns blue-violet against the warm sun (golden-hour contrast, not noon light)
+    const lowSun = (1 - THREE.MathUtils.smoothstep(sunY, 0.02, 0.32)) * day * (1 - this.rain);
+    this.hemi.color.setRGB(THREE.MathUtils.lerp(0.45, 0.87, day), THREE.MathUtils.lerp(0.5, 0.92, day), THREE.MathUtils.lerp(0.85, 1.0, day)).lerp(this._hc.setRGB(0.6, 0.62, 1.0), lowSun * 0.6);
     this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.9, 0.42, day), THREE.MathUtils.lerp(0.55, 0.36, day), THREE.MathUtils.lerp(0.3, 0.28, day));
-    this.hemi.intensity = (0.05 + 0.55 * day) * (1 - this.rain * 0.3) + night * 0.09 + this.rain * 0.12 * day + this.lightning * 2.2;
+    this.hemi.intensity = (0.05 + 0.55 * day * (1 - 0.2 * lowSun)) * (1 - this.rain * 0.3) + night * 0.09 + this.rain * 0.12 * day + this.lightning * 2.2;
 
-    // fog colour approximates horizon radiance
-    const sunset = Math.exp(-Math.pow((sunY - 0.05) / 0.12, 2));
-    const C = this._fc || (this._fc = { set: new THREE.Color(0.85, 0.55, 0.38), night: new THREE.Color(0.018, 0.02, 0.032), grey: new THREE.Color(), fog: new THREE.Color() });
-    const fog = C.fog.setRGB(0.42, 0.5, 0.62).lerp(C.set, sunset * 0.8).lerp(C.night, night);
-    const grey = C.grey.setRGB(0.3, 0.32, 0.35).multiplyScalar(day * 0.8 + 0.06);
-    fog.lerp(grey, this.rain * 0.85);
+    // fog = haze: the horizon sky's colour (golden at sunset, blue at dusk, city glow at night, grey in rain), so
+    // distant towers and the sea fade into the sky instead of into a darker band under it
+    this.haze.lerp(this.hazeTarget, Math.min(1, dt * 0.6));
+    const fog = this.haze;
     this.scene.fog.color.copy(fog);
     this.scene.fog.density = this.fogBase * (1 + this.rain * 2.5);
     U.fogColor.value.copy(fog); U.fogDensity.value = this.scene.fog.density;
@@ -331,12 +372,48 @@ export class SkySystem {
     const eu = this.envSky.material.uniforms;
     eu.sunPosition.value.copy(this.sun).multiplyScalar(450000);
     eu.cloudCoverage.value = 0.38 + this.rain * 0.6; eu.cloudDensity.value = 0.5 + this.rain * 0.5; eu.turbidity.value = this.turbBase + this.rain * 6; eu.rayleigh.value = this.rayleighBase;
+    if (Math.abs(this.time - this.lastEnvTime) > 0.5 || Math.abs(this.rain - this.lastEnvRain) > 0.3) this._hazeSnap = true; // a jump, not the clock
     this.lastEnvTime = this.time; this.lastEnvRain = this.rain;
+    this.captureHaze();
     const prevFog = this.scene.fog;
     const rt = this.pmrem.fromScene(this.envScene, 0, 1, 30000, { size: 128 });
     if (this.envRT) this.envRT.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;
     this.scene.fog = prevFog;
+  }
+
+  // The haze colour: the sky (without lightning or rainbow) at 6.5 deg elevation in 8 directions, rendered one
+  // pixel each into an 8x1 target (log-encoded, see EXTRA_TAIL) and read back asynchronously — no GPU stall. By day
+  // it is paled and warmed a little: humid tropical air scatters white, not Rayleigh blue.
+  captureHaze() {
+    const r = this.renderer;
+    const rt = this._hazeRT || (this._hazeRT = new THREE.WebGLRenderTarget(8, 1, { type: THREE.UnsignedByteType, colorSpace: THREE.LinearSRGBColorSpace, depthBuffer: false }));
+    const cam = this._hazeCam || (this._hazeCam = new THREE.PerspectiveCamera(1, 1, 1, 30000));
+    const u = this.envSky.material.uniforms, bolt = this.boltU.value.z, rainbow = this.rainbowU.value, prevRT = r.getRenderTarget(), autoClear = r.autoClear;
+    u.uEnv.value = 0; u.uCapture.value = 1; this.boltU.value.z = 0; this.rainbowU.value = 0; r.autoClear = false;
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      cam.lookAt(Math.cos(a), 0.114, Math.sin(a)); cam.updateMatrixWorld();
+      rt.viewport.set(i, 0, 1, 1); r.setRenderTarget(rt); r.render(this.envScene, cam);
+    }
+    u.uEnv.value = 1; u.uCapture.value = 0; this.boltU.value.z = bolt; this.rainbowU.value = rainbow; r.autoClear = autoClear;
+    r.setRenderTarget(prevRT);
+    const id = ++this._hazeId, px = new Uint8Array(32), sunY = this.sun.y, sunAz = Math.atan2(this.sun.z, this.sun.x);
+    r.readRenderTargetPixelsAsync(rt, 0, 0, 8, 1, px).then(() => {
+      if (id !== this._hazeId) return; // a newer capture is on its way
+      // weighted geometric mean (of the log-encoded texels), the sun's side counting least: a sunset glow belongs to
+      // its own patch of sky (the sky shader keeps it there), not to haze all round the horizon
+      const c = [0, 0, 0]; let ws = 0;
+      for (let i = 0; i < 8; i++) {
+        const w = 1 - 0.7 * Math.max(0, Math.cos(i * Math.PI / 4 - sunAz)); ws += w;
+        for (let k = 0; k < 3; k++) c[k] += px[i * 4 + k] * w;
+      }
+      for (let k = 0; k < 3; k++) c[k] /= ws;
+      const T = this.hazeTarget.setRGB(...c.map(v => 2 ** (v / 255 * 16 - 12)));
+      const l = 0.2126 * T.r + 0.7152 * T.g + 0.0722 * T.b, pale = 0.65 * THREE.MathUtils.smoothstep(sunY, 0.12, 0.4);
+      T.lerp(this._hc.setRGB(l * 1.08, l, l * 0.86), pale);
+      if (this._hazeSnap) { this.haze.copy(T); this._hazeSnap = false; }
+    }).catch(() => { }); // (a lost readback keeps the last haze colour; the next env refresh tries again)
   }
 }
