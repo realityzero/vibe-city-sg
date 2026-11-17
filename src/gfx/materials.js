@@ -212,7 +212,8 @@ export function createFacadeMaterial({ reflection = false } = {}) {
       float fAccent = mod(vF2.w, 16.0), fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
       // building use (tools/building-uses.mjs): 0 unknown, 1 retail, 2 health, 3 edu, 4 civic, 5 religious, 6 resi, 7 office, 8 hotel, 9 industrial, 10 parking
       float fUse = floor(vF2.w / 128.0 + 0.001);
-      bool shopUse = fUse < 1.5;   // only shops (and unknowns) get shopfronts and signboards
+      // only shops (and unknowns) get shopfronts and signboards; a shophouse tagged residential still trades downstairs
+      bool shopUse = fUse < 1.5 || (fStyle > 3.5 && fStyle < 4.5 && fUse > 5.5 && fUse < 6.5);
       float fy0 = vWall.y - fBase;
       vec3 wallCol = diffuseColor.rgb;
 ${SHOP_UNIT_SETUP}
@@ -471,12 +472,21 @@ ${SHOP_UNIT_SETUP}
           vec3 trim = mix(vec3(0.9, 0.88, 0.82), wallCol * 1.15, 0.25);
           albedo = mix(albedo, trim, max(pil, pil2 * 0.75));
           albedo *= 1.0 - 0.25 * aaBand(ex, 0.38, 0.46) * step(0.5, cell.y);          // pilaster side shadow
+          // capitals: the pilaster steps out under each floor's cornice
+          float capM = (1.0 - aaStep(0.52, ex)) * step(0.5, cell.y) * (1.0 - far);
+          albedo = mix(albedo, trim * 1.05, aaBand(cf.y, 0.88, 0.95) * capM);
+          albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.86, 0.88) * capM;
           if (!ground) {
             float corn = 1.0 - aaStep(0.07, cf.y);
             albedo = mix(albedo, trim, corn * 0.85);
             albedo *= 1.0 - 0.3 * aaBand(cf.y, 0.07, 0.11) * (1.0 - far);
             float vent = aaBand(cf.x, lo.x + 0.04, hi.x - 0.04) * aaBand(cf.y, hi.y + 0.03, hi.y + 0.1);
-            albedo = mix(albedo, albedo * (0.55 + 0.45 * aaPulse(vWall.x * 12.0 + 0.5, 0.5)), vent * (1.0 - far));
+            if (terr && unitH > 0.3 && unitH <= 0.62) {
+              // glazed fanlight over the shutters: dark glass in a painted frame, three glazing bars
+              float bars = max(aaPulse((cf.x - lo.x) / (hi.x - lo.x) * 4.0, 0.12), 1.0 - aaBand(cf.y, hi.y + 0.045, hi.y + 0.085));
+              albedo = mix(albedo, mix(vec3(0.04, 0.05, 0.055), trim, bars), vent * (1.0 - far));
+              fRough = mix(fRough, 0.15, vent * (1.0 - bars) * (1.0 - far));
+            } else albedo = mix(albedo, albedo * (0.55 + 0.45 * aaPulse(vWall.x * 12.0 + 0.5, 0.5)), vent * (1.0 - far));
           }
           float cornice = (cell.y > nFloors - 0.18) ? 1.0 : 0.0;
           albedo = mix(albedo, trim, cornice * 0.8);
@@ -1298,7 +1308,8 @@ float maskClass(vec4 v, float f, float lo) {
         vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
         vec3 dirt = mix(vec3(0.17, 0.12, 0.08), vec3(0.12, 0.13, 0.06), n1);
         col = mix(dirt, grass, smoothstep(0.3, 0.6, n1 + 0.25));
-        vec3 gcol = gc < 0.5 ? pitch : (gc < 0.8 ? grass * 0.75 : grass);
+        // (woods darker than lawn, faded across the filtered mask: a per-texel switch drew 2 m squares on lawns)
+        vec3 gcol = gc < 0.5 ? pitch : grass * mix(0.75, 1.0, smoothstep(0.74, 0.97, g + edgeN * 1.5));
         col = mix(col, gcol, gv);
       }
       // paving channel
