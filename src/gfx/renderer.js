@@ -34,10 +34,10 @@ vec4 sharpen(const in vec4 c) {
 `;
 
 export const QUALITY = {
-  // low (every phone): 0.85 x CSS pixels (iPhone 12 landscape: ~717x331), paid for by the narrower horizontal FOV on
-  // wide phones (CameraRig) and refined by dynamic resolution; sharpened on output against the browser's ~3.5x upscale;
-  // no film grain (at that upscale it reads as noise, not film)
-  low: { pixelRatio: 0.85, shadows: 1024, shadowRadius: 110, reflections: false, bloom: true, smaa: false, sharpen: 0.9, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
+  // low (every phone): 0.8 x CSS pixels (iPhone 12 landscape: ~675x312), paid for by the narrower horizontal FOV on
+  // wide phones (CameraRig) and refined by dynamic resolution; sharpened on output against the browser's ~3.75x
+  // upscale; no film grain (at that upscale it reads as noise, not film)
+  low: { pixelRatio: 0.8, shadows: 1024, shadowRadius: 110, reflections: false, bloom: true, smaa: false, sharpen: 0.9, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
   medium: { pixelRatio: 1.0, shadows: 2048, shadowRadius: 150, reflections: true, bloom: true, smaa: true, ao: false, treeDist: 900, treeNear: 170, drawDist: 3500 },
   high: { pixelRatio: 1.25, shadows: 2048, shadowRadius: 170, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1300, treeNear: 230, drawDist: 5000 },
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
@@ -132,7 +132,7 @@ export class Renderer {
     // end in an off-screen buffer — a black game. This pass is the screen output whenever SMAA is off: FXAA, the
     // phone's only anti-aliasing. Its edge test runs on perceptual (sqrt) luma: the composer's buffers are linear,
     // where the stock luminance() leaves most edges in shade and at night below its threshold.
-    // Pixels FXAA leaves alone (no edge) are sharpened instead: the phone's frame is upscaled ~3.5x by the browser, a
+    // Pixels FXAA leaves alone (no edge) are sharpened instead: the phone's frame is upscaled ~3.75x by the browser, a
     // bilinear stretch that softens everything (see SHARPEN_GLSL).
     const fxaa = new FXAAEffect();
     fxaa.fragmentShader = 'float fxaaLuma(vec3 c) { return sqrt(max(luminance(c), 0.0)); }\n' + fxaa.fragmentShader.replaceAll('luminance(texture2D', 'fxaaLuma(texture2D').replace('luminance(inputColor.rgb)', 'fxaaLuma(inputColor.rgb)')

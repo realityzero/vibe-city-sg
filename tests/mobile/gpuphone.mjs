@@ -1,4 +1,4 @@
-// GPU time per frame at the iPhone 12's render settings (Low preset, 844x390 @3x -> ~717x331 internal), measured on
+// GPU time per frame at the iPhone 12's render settings (Low preset, 844x390 @3x -> ~675x312 internal), measured on
 // this Mac's GPU with timer queries (Chromium/ANGLE-Metal) at fixed resolution, over a scripted drive and a few
 // still views. A14 GPU ≈ M2 GPU / 4.5: budget for 60 fps on the phone ≈ 16.7 / 4.5 ≈ 3.7 ms here.
 import { launch } from './lib.mjs';

@@ -123,8 +123,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   emits for what nothing collides with (pitched roofs, gables, arcade / void-deck ceilings, covered walkways):
   `FILTER.sightRay` sees them, driving and walking don't.
 - Radar tiles: 12 cached during play, 40 while the full-screen map is open (trimmed when it closes).
-- Image on a phone: Low renders at 0.85 x CSS pixels (iPhone 12 landscape ~717x331) and the browser stretches it
-  ~3.5x. The FXAA output pass sharpens what FXAA leaves alone (FSR 1's RCAS, `SHARPEN_GLSL` in renderer.js). Wide
+- Image on a phone: Low renders at 0.8 x CSS pixels (iPhone 12 landscape ~675x312) and the browser stretches it
+  ~3.75x. The FXAA output pass sharpens what FXAA leaves alone (FSR 1's RCAS, `SHARPEN_GLSL` in renderer.js). Wide
   phones see no more across than a 16:9 screen (`camera.zoom` from `CameraRig`; FOVs stay vertical — read
   `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels. Geometry thinner than a pixel is
   pre-filtered rather than left to alias: a ribbon at least a pixel wide with opacity = true coverage (Flyer spokes),
