@@ -1,11 +1,12 @@
 // Scene gallery for judging the look of the game: fixed camera views (landmarks, streets, junctions, bridges) at three
 // times of day, on the phone profile (Low preset, iPhone 12 landscape) and/or desktop High, traffic and crowds live.
 //   node tests/mobile/gallery.mjs --out /tmp/vc-gallery/run1 [--url http://127.0.0.1:4173/] [--sets phone,desktop]
-//                                 [--only merlion,bridge-east]
+//                                 [--only merlion,bridge-east] [--t 12,21 (re-shoot the views at these hours: name@12)]
+//                                 [--engine webkit]
 import { launch } from './lib.mjs';
 import fs from 'fs';
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
-const OUT = arg('out', '/tmp/vc-gallery/run'), URL0 = arg('url', 'http://127.0.0.1:4173/'), SETS = arg('sets', 'phone,desktop').split(','), ONLY = arg('only', '');
+const ENGINE = arg('engine', 'chromium'), OUT = arg('out', '/tmp/vc-gallery/run'), URL0 = arg('url', 'http://127.0.0.1:4173/'), SETS = arg('sets', 'phone,desktop').split(','), ONLY = arg('only', '');
 fs.mkdirSync(OUT, { recursive: true });
 
 // [name, time, camera position, look-at, hud?]  (hud: third-person gameplay with the HUD, camera from the game itself)
@@ -37,7 +38,7 @@ export const VIEWS = [
 
 async function shoot(set, list) {
   const phone = set === 'phone';
-  const h = await launch('chromium', { exclusive: false, device: phone ? undefined : { viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 } });
+  const h = await launch(ENGINE, { exclusive: false, device: phone ? undefined : { viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 } });
   const errs = []; h.page.on('pageerror', e => errs.push(e.message));
   let loadedT = null;
   for (const [name, t, pos, look, hud] of list) {
@@ -60,6 +61,8 @@ async function shoot(set, list) {
   if (errs.length) console.log(set, 'page errors:', errs.slice(0, 3));
   await h.browser.close();
 }
-const list = VIEWS.filter(v => !ONLY || ONLY.split(',').includes(v[0])).sort((a, b) => a[1] - b[1]);
+const TIMES = arg('t', '') ? arg('t').split(',').map(Number) : null;
+const list = VIEWS.filter(v => !ONLY || ONLY.split(',').includes(v[0]))
+  .flatMap(v => TIMES ? TIMES.map(t => [`${v[0]}@${t}`, t, ...v.slice(2)]) : [v]).sort((a, b) => a[1] - b[1]);
 for (const set of SETS) await shoot(set, list);
 console.log(`${list.length * SETS.length} shots → ${OUT}`);
