@@ -296,7 +296,7 @@ export class Game {
     } catch (e) { console.warn('landmarks failed', e); }
     this.landmarks = landmarks;
     await this.mark('landmarks');
-    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
+    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], paint: landmarks?.paint || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
     console.log('city', JSON.stringify(stats));
     await this.mark('city built (worker gone)');
     await physP;

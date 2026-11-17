@@ -72,7 +72,7 @@ export class City {
   }
   isWater(x, z) { return this.maskAt(x, z) < 160; }
 
-  build({ exclusions = [], onProgress }) {
+  build({ exclusions = [], paint = [], onProgress }) {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL('./worker/cityBuilder.worker.js', import.meta.url), { type: 'module' });
       worker.onmessage = e => {
@@ -89,7 +89,7 @@ export class City {
         }
       };
       worker.onerror = e => reject(e);
-      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
+      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, paint, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
     });
   }
 
