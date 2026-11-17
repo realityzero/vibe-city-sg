@@ -55,6 +55,10 @@ export class UI {
     this.phone = new Phone(game, this);
     this._mtitle = el('div', 'vc-mtitle', '<div class="t"></div><div class="s"></div>'); this._fx.appendChild(this._mtitle);
     this._lbTop = el('div', 'vc-lb top'); this._lbBot = el('div', 'vc-lb bot'); this._fx.append(this._lbTop, this._lbBot);
+    this._card = el('div', 'vc-titlecard', '<div class="k">Grand Theft Auto</div><div class="t">Vibe City</div><div class="s">Singapore</div><div class="c">1°17′N 103°51′E · 2026</div>');
+    this._skipEl = el('div', 'vc-skiphint', '<kbd>Enter</kbd> skip');
+    this._fx.append(this._card, this._skipEl);
+    this.skippable = false; // a skippable sequence is on (touch shows its ▶▶ button, the keyboard a hint)
     this._choiceLayer = layer('vc-layer-choice');
     // menus
     this.map = new FullMap(this.root, () => this.radar.map);
@@ -226,6 +230,9 @@ export class UI {
     if (on && !this._lbHud) { this._lbHud = true; this._hudWas = this.hud.visible; this.hud.setVisible(false); }
     else if (!on && this._lbHud) { this._lbHud = false; this.hud.setVisible(this._hudWas !== false); }
   }
+  /** the cold open's title card (Vibe City in pink neon script) */
+  titleCard(on) { this._card.classList.toggle('vc-show', !!on); }
+  setSkippable(on) { this.skippable = !!on; this._skipEl.classList.toggle('vc-show', !!on); }
   fade(toBlack, ms = 600) {
     this._fadeEl.style.transitionDuration = `${ms}ms`;
     this._fadeEl.style.opacity = toBlack ? 1 : 0;

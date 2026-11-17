@@ -1,5 +1,7 @@
 [{"waitFor":"window.__game?.worldReady","timeout":60000},
 {"spam":"Enter","until":"[...__game.missions.markers].length > 0","timeout":90000},
+{"eval":"const p=__game.player; if (p.vehicle) { p.vehicle.body.setLinvel({x:0,y:0,z:0}, true); p.exitVehicle(true); } 'on foot'"},
+{"wait":500},
 {"eval":"const m=[...__game.missions.markers][0]; __game.debugTp(m.m.position.x+1, m.m.position.z, 0); 'tp ' + m.m.position.x.toFixed(0) + ',' + m.m.position.z.toFixed(0)"},
 {"wait":3000},{"shot":"ken1"},
 {"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"shot":"ken2"},{"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"press":"Enter"},{"wait":900},{"shot":"ken3"},

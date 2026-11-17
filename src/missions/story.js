@@ -4,6 +4,7 @@ import { PathDriver } from '../entities/aiDriver.js';
 import { Fireworks } from '../world/fireworks.js';
 import { clearLine, spotFree } from '../core/visibility.js';
 import { tanDealLines } from './vodyn.js';
+import { coldOpen } from './coldopen.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const fmt = n => 'S$' + Math.round(n).toLocaleString('en-SG');
@@ -94,6 +95,81 @@ function clearShot(g, f) {
 }
 async function shot(c, f, opts) { const s = clearShot(c.game, f); c.cam(s.pos, s.look, opts); }
 
+// ---- mission 1 pieces shared by the cold open and the retry from the capsule hotel
+function kenCall(c) {
+  return c.phone('Ken Rosenberg', [
+    { speaker: 'Ken', text: 'Tommy! Tommy, you landed! Welcome to Singapore — the only city where <b>chewing gum</b> has a criminal record!' },
+    { speaker: 'Tommy', text: 'Ken. Why am I here?' },
+    { speaker: 'Ken', text: 'Sonny Forelli. He wants his money back, Tommy. All of it. Plus interest. Plus — and I quote — "vibes".' },
+    { speaker: 'Tommy', text: 'I don\'t have Sonny\'s money.' },
+    { speaker: 'Ken', text: 'Nobody HAS money anymore, Tommy! You <b>raise</b> money! Meet me at <b>Lau Pa Sat</b>. Big octagon, clock tower, satay. You\'re buying.' },
+  ]);
+}
+// onboarding tips alongside the objective: [seconds, keyboard wording, touch wording]
+function tips(c, list) {
+  const g = c.game;
+  for (const [t, keys, touch] of list) setTimeout(() => { if (!c.aborted && g.missions.active?.ctx === c) g.ui.hint(keys, touch, 8500); }, t * 1000);
+}
+// the cold open hands Tommy the wheel on Esplanade Drive, with Lau Pa Sat's marker and route already up
+async function lionCityDrive(c, meet) {
+  await coldOpen(c, meet);
+  const arrive = c.reach(meet, { radius: 3.5, onFoot: true });
+  arrive.catch(() => { }); // (awaited below: an abort during the call rejects both)
+  await c.say([{ speaker: 'Tommy', text: 'Thirty-one degrees at sunset. Even the air here has a <i>KPI</i>.' }]);
+  await c.wait(1.5); // (the district name has the corner the phone rings in)
+  await kenCall(c);
+  c.objective('Drive to <b>Lau Pa Sat</b> to meet Ken. Follow the <b>GPS route</b> on the radar.');
+  tips(c, [
+    [8, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. Pink markers start missions. <b>II</b> pauses the game.'],
+    [20, 'Hold <b>B</b> for a <b>Kopi Gao</b> boost. Near misses at speed pay cash.', 'Hold <b>KOPI</b> for a <b>Kopi Gao</b> boost. Near misses at speed pay cash.'],
+    [34, 'At Lau Pa Sat press <b>F</b> to get out. By any other car, <b>F</b> "borrows" it. In Singapore that\'s a fine. Everything here is a fine.',
+      'At Lau Pa Sat tap <b>EXIT</b> to get out. By any other car, <b>ENTER</b> "borrows" it. In Singapore that\'s a fine. Everything here is a fine.'],
+  ]);
+  await arrive;
+  return meetKen(c, meet);
+}
+// Lau Pa Sat: Ken explains vibe coding
+async function meetKen(c, meet) {
+  const g = c.game;
+  const st1 = stage(g, meet);
+  const kenPos = st1.beside(1.7);
+  const ken = c.npc('ken', kenPos, 0, 'talk');
+  await c.cutscene(async () => {
+    const T = st1.pos.clone();
+    c.teleport(T, Math.atan2(-(kenPos.x - T.x), -(kenPos.z - T.z)));
+    ken.face(T);
+    g.player.setAnim('idle');
+    await shot(c, two(T, kenPos, 4.5), { snap: true, fov: 42 });
+    await c.say([
+      { speaker: 'Ken', text: 'Tommy! Over here! Try the satay — no wait, I\'m allergic to peanuts, sit downwind.' },
+      { speaker: 'Tommy', text: 'Talk, Ken.' },
+    ]);
+    await shot(c, over(T, kenPos), { lerp: 3, fov: 38 });
+    await c.say([
+      { speaker: 'Ken', text: 'Okay. Okay. 1986: you sell product, you launder it through a print shop, an ice cream factory, a car showroom...' },
+      { speaker: 'Tommy', text: 'I remember, Ken. I was there.' },
+      { speaker: 'Ken', text: '2026: you build an <b>"AI-native platform"</b>, investors give YOU the money, and it\'s all <em>legal</em>. They call it a seed round!' },
+    ]);
+    await shot(c, over(kenPos, T), { lerp: 3, fov: 38 });
+    await c.say([
+      { speaker: 'Tommy', text: 'I don\'t know how to code.' },
+      { speaker: 'Ken', text: 'Nobody codes anymore! That\'s the beauty! You just... <i>vibe</i>. You tell the AI what you want and it writes the code.' },
+      { speaker: 'Ken', text: 'Half the founders in this city can\'t spell JavaScript. One of them is worth four hundred million.' },
+      { speaker: 'Tommy', text: 'And the catch?' },
+    ]);
+    await shot(c, two(T, kenPos, 3.8, 1.5), { lerp: 2, fov: 40 });
+    await c.say([
+      { speaker: 'Ken', text: 'The catch is the AI does exactly what you tell it. Including the stupid stuff. So — don\'t say stupid stuff.' },
+      { speaker: 'Ken', text: 'Here. Five grand from my CPF. Don\'t tell my wife. Get a desk at <b>WeHustle</b> on <b>Duxton Road</b>.' },
+      { speaker: 'Tommy', text: 'Sonny gets paid, Ken. Then I\'m done.' },
+      { speaker: 'Ken', text: 'That\'s what everybody says before their Series B.' },
+    ]);
+  });
+  ken.setAnim('wave');
+  g.missions.weatherLocked = false;
+  return { reward: 5000 };
+}
+
 export const STORY = [
   // ------------------------------------------------------------------ 1
   {
@@ -101,8 +177,11 @@ export const STORY = [
     retry: { pos: LOC.capsule, hint: 'Retry: head back to the <b>capsule hotel</b> in Chinatown.' },
     async run(c, S) {
       const g = c.game;
-      c.setTime(18.1);
       g.missions.weatherLocked = true; g.missions.weatherTarget = 0;
+      const meet = stage(g, LOC.laupasat).pos;
+      // the first time: a cold open — dusk on the bay, and Tommy already at the wheel (a retry starts at the capsule)
+      if (!g.missions.failedOnce?.has('lion_city')) return lionCityDrive(c, meet);
+      c.setTime(18.1);
       const st0 = stage(g, LOC.capsule);
       const start = st0.pos;
       const info = { toRoad: st0.road, dir: st0.along };
@@ -124,57 +203,15 @@ export const STORY = [
           { speaker: 'Tommy', text: 'Thirty-one degrees at sunset. Even the air here has a <i>KPI</i>.' },
         ]);
       });
-      await c.phone('Ken Rosenberg', [
-        { speaker: 'Ken', text: 'Tommy! Tommy, you landed! Welcome to Singapore — the only city where <b>chewing gum</b> has a criminal record!' },
-        { speaker: 'Tommy', text: 'Ken. Why am I here?' },
-        { speaker: 'Ken', text: 'Sonny Forelli. He wants his money back, Tommy. All of it. Plus interest. Plus — and I quote — "vibes".' },
-        { speaker: 'Tommy', text: 'I don\'t have Sonny\'s money.' },
-        { speaker: 'Ken', text: 'Nobody HAS money anymore, Tommy! You <b>raise</b> money! Meet me at <b>Lau Pa Sat</b>. Big octagon, clock tower, satay. You\'re buying.' },
-      ]);
+      await kenCall(c);
       c.objective('Go to <b>Lau Pa Sat</b> to meet Ken. Follow the <b>GPS route</b> on the radar.');
-      // onboarding tips run alongside the objective
-      const tips = [[1.5, '<b>W A S D</b> to move, <b>mouse</b> to look (click the screen to lock it). Hold <b>Shift</b> to sprint.'], [10, 'Press <b>F</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.'], [20, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.']];
-      for (const [t, msg] of tips) setTimeout(() => { if (!c.aborted && g.missions.active?.ctx === c) c.help(msg, 8500); }, t * 1000);
-      const meet = stage(g, LOC.laupasat).pos;
+      tips(c, [
+        [1.5, '<b>W A S D</b> to move, <b>mouse</b> to look (click the screen to lock it). Hold <b>Shift</b> to sprint.', 'Move with your <b>left thumb</b>, drag anywhere else to look. Hold <b>RUN</b> to sprint.'],
+        [10, 'Press <b>F</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.', 'Tap <b>ENTER</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.'],
+        [20, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. Pink markers start missions. <b>II</b> pauses the game.'],
+      ]);
       await c.reach(meet, { radius: 3.5, onFoot: true });
-      // cutscene with Ken
-      const st1 = stage(g, meet);
-      const kenPos = st1.beside(1.7);
-      const ken = c.npc('ken', kenPos, 0, 'talk');
-      await c.cutscene(async () => {
-        const T = st1.pos.clone();
-        c.teleport(T, Math.atan2(-(kenPos.x - T.x), -(kenPos.z - T.z)));
-        ken.face(T);
-        g.player.setAnim('idle');
-        await shot(c, two(T, kenPos, 4.5), { snap: true, fov: 42 });
-        await c.say([
-          { speaker: 'Ken', text: 'Tommy! Over here! Try the satay — no wait, I\'m allergic to peanuts, sit downwind.' },
-          { speaker: 'Tommy', text: 'Talk, Ken.' },
-        ]);
-        await shot(c, over(T, kenPos), { lerp: 3, fov: 38 });
-        await c.say([
-          { speaker: 'Ken', text: 'Okay. Okay. 1986: you sell product, you launder it through a print shop, an ice cream factory, a car showroom...' },
-          { speaker: 'Tommy', text: 'I remember, Ken. I was there.' },
-          { speaker: 'Ken', text: '2026: you build an <b>"AI-native platform"</b>, investors give YOU the money, and it\'s all <em>legal</em>. They call it a seed round!' },
-        ]);
-        await shot(c, over(kenPos, T), { lerp: 3, fov: 38 });
-        await c.say([
-          { speaker: 'Tommy', text: 'I don\'t know how to code.' },
-          { speaker: 'Ken', text: 'Nobody codes anymore! That\'s the beauty! You just... <i>vibe</i>. You tell the AI what you want and it writes the code.' },
-          { speaker: 'Ken', text: 'Half the founders in this city can\'t spell JavaScript. One of them is worth four hundred million.' },
-          { speaker: 'Tommy', text: 'And the catch?' },
-        ]);
-        await shot(c, two(T, kenPos, 3.8, 1.5), { lerp: 2, fov: 40 });
-        await c.say([
-          { speaker: 'Ken', text: 'The catch is the AI does exactly what you tell it. Including the stupid stuff. So — don\'t say stupid stuff.' },
-          { speaker: 'Ken', text: 'Here. Five grand from my CPF. Don\'t tell my wife. Get a desk at <b>WeHustle</b> on <b>Duxton Road</b>.' },
-          { speaker: 'Tommy', text: 'Sonny gets paid, Ken. Then I\'m done.' },
-          { speaker: 'Ken', text: 'That\'s what everybody says before their Series B.' },
-        ]);
-      });
-      ken.setAnim('wave');
-      g.missions.weatherLocked = false;
-      return { reward: 5000 };
+      return meetKen(c, meet);
     },
   },
   // ------------------------------------------------------------------ 2

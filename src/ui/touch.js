@@ -193,7 +193,7 @@ export class TouchControls {
     const ctl = play && p.controlsEnabled && g.input.enabled;
     const mode = v ? (v.isAircraft || v.spec.kind === 'drone' ? 'air' : v.isBoat ? 'boat' : 'car') : p?.swimming ? 'swim' : 'foot';
     if (mode !== this.mode) { this.releaseAll(); this.mode = mode; this.buildCluster(mode); this.root.dataset.mode = mode; }
-    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub ? 'sub' : ''}`;
+    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub || g.ui.skippable ? 'sub' : ''}`;
     if (flags !== this.flags) {
       if (this.flags.includes('ctl') && !ctl) this.releaseAll();
       this.flags = flags;

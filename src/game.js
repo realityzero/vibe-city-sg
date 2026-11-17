@@ -823,7 +823,7 @@ export class Game {
     this.streetProps?.update(dt);
     this.streetDetail?.update(dt);
     this.nightGlow?.update();
-    this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1 });
+    this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1, forceShow: this.showcase });
     this.updateAudio(dt);
     this.updateHud(dt);
     // minigames cover the screen: keep the GPU idle except for an occasional refresh
