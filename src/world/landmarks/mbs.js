@@ -2,7 +2,7 @@
 // and the rippling podium roofs. Positions derived from the OSM footprints of the towers / SkyPark.
 import {
   THREE, U, Bucket, materials, facadeMaterial, nightGlowMaterial, extrudeProfile, frameMatrix, rng, smooth, lerp,
-  ringOf, exclusionsForBuildings, signedArea, fixWinding,
+  ringOf, exclusionsForBuildings, signedArea, fixWinding, extrudeFootprint, capGeometry,
 } from './common.js';
 
 // local frame: +x = along the tower line (NNE), +z = east (towards Gardens by the Bay)
@@ -86,7 +86,8 @@ export function buildMBS(city, quality) {
   const bandGlow = nightGlowMaterial(0xfff4e6, 0.35, { base: 0xe9ebec, rough: 0.4, metal: 0.35 });
   const roofMetal = new THREE.MeshStandardMaterial({ color: 0xe4e6e6, roughness: 0.45, metalness: 0.35 });
   const roofGlass = new THREE.MeshStandardMaterial({ color: 0x9fb3ba, roughness: 0.1, metalness: 0.7 });
-  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [3.0, 4.5], frame: [0.04, 0.1, 0.05], lit: 0.8, seed: 11, warm: 0xfff0d0, litIntensity: 1.8 });
+  // retail / expo glazing: tall panes, nearly all lit at night (not an office grid of lit and dark rooms)
+  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [4.5, 5.5], frame: [0.03, 0.06, 0.04], lit: 0.97, seed: 11, warm: 0xfff0d0, litIntensity: 1.4, curtains: 0.05 });
   const pavilionMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.5 });
 
   const F = frameMatrix(ORIGIN[0], ORIGIN[1], AX[0], AX[1]);
@@ -213,9 +214,20 @@ export function buildMBS(city, quality) {
     const tr = trunkGeo.clone(); tr.translate(u, DECK + 1.2, a); B.add(M.deck, tr, F);
   }
 
-  // ---- podium wave roofs (replace the OSM skillion strips 7063..7095)
+  // ---- podium: the Shoppes / Expo blocks (OSM 7323-7325, drawn by the city as 25 m office slabs) rebuilt as glazed
+  // 16.5 m podiums under the four rippling wave roofs that replace the OSM skillion strips 7053..7095
   const byId = new Map(city.buildings.map(b => [b.id, b]));
-  const groups = [[7063, 7068], [7069, 7082], [7083, 7095]];
+  const PODIUM = [7323, 7324, 7325], PODIUM_H = 16.5;
+  const podiumColliders = [];
+  for (const id of PODIUM) {
+    const b = byId.get(id); if (!b) continue;
+    const r = ringOf(b);
+    B.add(podGlass, extrudeFootprint(r, 0, PODIUM_H, { top: false }));
+    B.add(roofMetal, capGeometry(r, PODIUM_H));
+    const g = extrudeFootprint(r, 0, PODIUM_H);
+    podiumColliders.push({ type: 'trimesh', vertices: new Float32Array(g.attributes.position.array), indices: new Uint32Array([...Array(g.attributes.position.count).keys()]) });
+  }
+  const groups = [[7053, 7062], [7063, 7068], [7069, 7082], [7083, 7095]];
   const waveIds = [];
   const pcaOf = b => {
     const r = ringOf(b); let cx = 0, cz = 0; for (const p of r) { cx += p[0]; cz += p[1]; } cx /= r.length; cz /= r.length;
@@ -276,13 +288,14 @@ export function buildMBS(city, quality) {
       if (u2 < 0) for (let i = 0; i < n2.length; i++) n2[i] = -n2[i];
       B.add(roofGlass, sg);
     }
-    // glazed walls under the highest edge (t = 1) and along the first/last strips
+    // glazed walls under the highest edge (t = 1) and along the first/last strips, a clerestory over the podium roof
+    // along the lowest edge
     const wall = [], wallF = [];
-    const addWall = (pts) => {
+    const addWall = (pts, y0 = 0) => {
       let s = 0;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1]; const l = Math.hypot(b[0] - a[0], b[2] - a[2]);
-        const q = [[a[0], 0, a[2], s], [b[0], 0, b[2], s + l], [b[0], b[1], b[2], s + l], [a[0], a[1], a[2], s]];
+        const q = [[a[0], y0, a[2], s], [b[0], y0, b[2], s + l], [b[0], b[1], b[2], s + l], [a[0], a[1], a[2], s]];
         for (const k of [0, 1, 2, 0, 2, 3]) { wall.push(q[k][0], q[k][1], q[k][2]); wallF.push(q[k][3], q[k][1]); }
         s += l;
       }
@@ -290,6 +303,7 @@ export function buildMBS(city, quality) {
     addWall(rows.map(r => P(r, 1)));
     addWall([...Array(cols + 1).keys()].map(c => P(rows[0], c / cols)));
     addWall([...Array(cols + 1).keys()].map(c => P(rows[rows.length - 1], c / cols)));
+    addWall(rows.map(r => P(r, 0)), PODIUM_H);
     const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wall, 3)); wg.setAttribute('facade', new THREE.Float32BufferAttribute(wallF, 2));
     wg.computeVertexNormals();
     // double-sided feel: duplicate reversed
@@ -321,7 +335,7 @@ export function buildMBS(city, quality) {
   group.add(beams);
 
   // colliders: legs as boxes (curved leg approximated by stacked boxes), crown/skypark
-  const colliders = [];
+  const colliders = [...podiumColliders];
   const yaw = Math.atan2(-AX[1], AX[0]);
   const toWorld = (u, y, a) => new THREE.Vector3(u, y, a).applyMatrix4(F);
   for (const uc of TOWERS) {
@@ -334,7 +348,7 @@ export function buildMBS(city, quality) {
   }
   { const c = toWorld(-25, (TOP + DECK) / 2, 0); colliders.push({ type: 'box', center: [c.x, c.y, c.z], half: [171, (DECK - TOP) / 2 + 0.5, 19], yaw }); }
 
-  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
+  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831, ...PODIUM].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
   const sky = toWorld(110, DECK + 1, 0), lobby = toWorld(-50, 0, -30), base = toWorld(-50, 0, 0);
   const pois = [
     { id: 'mbs', name: 'Marina Bay Sands', x: base.x, y: 0, z: base.z },

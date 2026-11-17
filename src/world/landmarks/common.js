@@ -467,6 +467,7 @@ export function facadeMaterial(opts = {}) {
     bands: 0, // horizontal spandrel band strength
     yMin: 0, groundLit: 0, wallGlow: 0, wallGlowColor: 0xfff1dc,
     accent: 0, accentA: 0x3f7fbf, accentB: 0xe08a3c,
+    curtains: 0.45, // share of lit rooms with the curtains drawn (dim)
   }, opts);
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.2 });
   mat.onBeforeCompile = sh => {
@@ -485,6 +486,7 @@ export function facadeMaterial(opts = {}) {
     sh.uniforms.uYMin = { value: o.yMin };
     sh.uniforms.uWallGlow = { value: new THREE.Color(o.wallGlowColor).multiplyScalar(o.wallGlow) };
     sh.uniforms.uAccent = { value: o.accent };
+    sh.uniforms.uCurtains = { value: o.curtains };
     sh.uniforms.uAccA = { value: new THREE.Color(o.accentA) };
     sh.uniforms.uAccB = { value: new THREE.Color(o.accentB) };
     sh.vertexShader = sh.vertexShader
@@ -494,10 +496,15 @@ export function facadeMaterial(opts = {}) {
       .replace('#include <common>', `#include <common>
 varying vec2 vFacade;
 uniform float uNight, uLit, uLitI, uSeed, uBands, uYMin;
-uniform vec3 uWall, uGlass, uFrame, uWarm, uCool, uWallGlow, uAccA, uAccB; uniform float uAccent;
+uniform vec3 uWall, uGlass, uFrame, uWarm, uCool, uWallGlow, uAccA, uAccB; uniform float uAccent, uCurtains;
 uniform vec2 uCell; uniform vec4 uRough;
 ${GLSL_HASH}
-float fWin, fFar; vec2 fId, fF;`)
+float lmFarOcc(vec2 id, float lit, float seed) {
+  // a block's share of lit rooms: as the near occupancy, by floor and by room, mean lit
+  float floorOcc = 0.55 + 0.9 * lmHash(vec2(id.y, seed * 3.0));
+  return step(lmHash(id * 1.37 + seed) / floorOcc, lit) * (0.4 + 1.2 * lmHash(id * 2.1 + 9.0));
+}
+float fWin, fFar, fFarAmp; vec2 fId, fF, fBlock;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 {
   vec2 c = vFacade / uCell; fId = floor(c); vec2 f = fract(c); fF = f;
@@ -508,12 +515,15 @@ float fWin, fFar; vec2 fId, fF;`)
   // cells smaller than a pixel: blend to the average window coverage instead of aliasing into sparkle
   fFar = smoothstep(0.3, 0.9, max(fwidth(c.x), fwidth(c.y)));
   fWin = mix(fWin, (1.0 - 2.0 * uFrame.x) * (1.0 - uFrame.y - uFrame.z) * step(uYMin, vFacade.y), fFar);
+  // ...but keep some of the building's variation, per floor and per run of four rooms, at a lower contrast that fades
+  // out once whole floors shrink well under a pixel (where it would shimmer)
+  fBlock = floor(c / vec2(4.0, 1.0)); fFarAmp = 0.6 * (1.0 - smoothstep(1.0, 2.5, fwidth(c.y)));
   float grime = 0.92 + 0.08 * lmHash(floor(vFacade * vec2(0.5, 0.25)) + uSeed);
   vec3 wall = uWall * grime;
   { float ah = lmHash(fId * 0.73 + 17.0 + uSeed); if (ah < uAccent) wall = mix(uAccA, uAccB, step(0.5, lmHash(fId + 5.0))) * grime; }
   float band = uBands * (1.0 - wy);
   wall = mix(wall, wall * 0.8, band);
-  float tint = 0.85 + 0.3 * lmHash(fId + uSeed * 7.0);
+  float tint = 0.85 + 0.3 * mix(lmHash(fId + uSeed * 7.0), mix(0.5, lmHash(fBlock + uSeed * 7.0), fFarAmp), fFar);
   diffuseColor.rgb *= mix(wall, uGlass * tint, fWin);
 }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(uRough.y, uRough.x, fWin);')
@@ -527,17 +537,18 @@ float fWin, fFar; vec2 fId, fF;`)
   float on = step(h, uLit) * fWin * uNight;
   vec3 lc = mix(uWarm, uCool, step(0.72, lmHash(fId + 3.1 + uSeed)));
   float dh = lmHash(fId * 2.1 + 9.0);
-  float dim = dh < 0.45 ? 0.18 + 0.2 * dh : 0.55 + 0.45 * dh;
+  float dim = dh < uCurtains ? 0.18 + 0.2 * dh : 0.55 + 0.45 * dh;
   // a room's light falls off toward its side walls and the ceiling line: soft panes, not solid lit rectangles
   float pane = (0.55 + 0.45 * smoothstep(0.0, 0.42, min(fF.x, 1.0 - fF.x))) * (0.75 + 0.25 * (1.0 - fF.y));
   vec3 cell = lc * on * uLitI * dim * pane;
-  // far away: the mean of the above (no per-room hash sparkle)
-  cell = mix(cell, mix(uWarm, uCool, 0.28) * uLit * uLitI * 0.62 * fWin * uNight, fFar);
+  // far away: the mean of the above (no per-room hash sparkle), varied by floor and run of rooms
+  float occ = mix(uLit, lmFarOcc(fBlock, uLit, uSeed), fFarAmp);
+  cell = mix(cell, mix(uWarm, uCool, 0.28) * occ * uLitI * 0.62 * fWin * uNight, fFar);
   totalEmissiveRadiance += cell;
   totalEmissiveRadiance += uWallGlow * (1.0 - fWin) * uNight;
 }`);
   };
-  mat.customProgramCacheKey = () => 'lmfacade3';
+  mat.customProgramCacheKey = () => 'lmfacade4';
   return mat;
 }
 
