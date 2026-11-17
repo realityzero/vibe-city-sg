@@ -297,17 +297,17 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
       }
     }
   };
+  const occDisc = (x, z, rad, val) => {
+    const ci = (x - M.xmin) / res - 0.5, cj = (z - M.zmin) / res - 0.5, rr = rad / res;
+    for (let j = Math.max(0, Math.floor(cj - rr)); j <= Math.min(mask.h - 1, Math.ceil(cj + rr)); j++)
+      for (let i = Math.max(0, Math.floor(ci - rr)); i <= Math.min(mask.w - 1, Math.ceil(ci + rr)); i++)
+        if ((i - ci) ** 2 + (j - cj) ** 2 <= rr * rr) occ[j * mask.w + i] = Math.max(occ[j * mask.w + i], val);
+  };
   const occStroke = (pts, rad, val) => {
     for (let s = 0; s + 1 < pts.length; s++) {
       const [ax, az] = pts[s], [bx, bz] = pts[s + 1];
       const len = Math.hypot(bx - ax, bz - az); const n = Math.max(1, Math.ceil(len / res));
-      for (let k = 0; k <= n; k++) {
-        const x = ax + (bx - ax) * k / n, z = az + (bz - az) * k / n;
-        const ci = (x - M.xmin) / res - 0.5, cj = (z - M.zmin) / res - 0.5, rr = rad / res;
-        for (let j = Math.max(0, Math.floor(cj - rr)); j <= Math.min(mask.h - 1, Math.ceil(cj + rr)); j++)
-          for (let i = Math.max(0, Math.floor(ci - rr)); i <= Math.min(mask.w - 1, Math.ceil(ci + rr)); i++)
-            if ((i - ci) ** 2 + (j - cj) ** 2 <= rr * rr) occ[j * mask.w + i] = Math.max(occ[j * mask.w + i], val);
-      }
+      for (let k = 0; k <= n; k++) occDisc(ax + (bx - ax) * k / n, az + (bz - az) * k / n, rad, val);
     }
   };
   const occAt = (x, z) => { const i = Math.round((x - M.xmin) / res - 0.5), j = Math.round((z - M.zmin) / res - 0.5); if (i < 0 || j < 0 || i >= mask.w || j >= mask.h) return 255; return occ[j * mask.w + i]; };
@@ -1127,7 +1127,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const tFurn = performance.now();
   const furniture = buildStreetscape({
     city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopBacks, hdbBlocks, colonnade,
-    chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occStroke([[x, z], [x, z]], r, 115), setTag: t => { TAG = t; },
+    chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occDisc(x, z, r, 115), setTag: t => { TAG = t; },
   });
   furniture.counts.ms = Math.round(performance.now() - tFurn);
 
