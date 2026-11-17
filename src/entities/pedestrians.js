@@ -417,7 +417,7 @@ export class Pedestrians {
       for (let k = 0, n = this.seeding ? 24 : 3; k < n && ambient < target && this.peds.length < this.max - 6; k++) {
         const r = Math.random();
         if (r < 0.3 && standing < target * 0.45) { const c = this.spawnCluster(); ambient += c; standing += c; }
-        else if (r < 0.45) { const c = this.spawnPlaza(); ambient += c; if (c > 1) standing += c; }
+        else if (r < 0.55) { const c = this.spawnPlaza(); ambient += c; if (c > 1) standing += c; }
         else if (this.spawnWalker()) ambient++;
       }
     }
