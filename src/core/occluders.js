@@ -23,7 +23,7 @@ export class Occluders {
    *   which anything thin in view is cut
    */
   update(dt, cam, f, look, groundY, halfW, behind, nearField) {
-    const g = this.game, q = this.q, camera = g.camera, vfov = camera.fov * Math.PI / 180, aspect = camera.aspect;
+    const g = this.game, q = this.q, camera = g.camera, vfov = camera.getEffectiveFOV() * Math.PI / 180, aspect = camera.aspect;
     const sx = look.x - cam.x, sz = look.z - cam.z, sL2 = sx * sx + sz * sz;
     const subj = sx * f.x + (look.y - cam.y) * f.y + sz * f.z;
     // the screen's bottom edge looks down at a = pitch + half the vertical FOV: the plane must stay short of where that

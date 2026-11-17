@@ -7,6 +7,7 @@ import { Occluders } from './occluders.js';
 const _t = new THREE.Vector3(), _d = new THREE.Vector3(), _c = new THREE.Vector3(), _f = new THREE.Vector3(), _q = new THREE.Quaternion();
 // frame-rate independent exponential smoothing factor (same feel at 60 Hz, 120 Hz and with dt jitter)
 const ease = (k, dt) => 1 - Math.exp(-k * dt);
+const MAX_ASPECT = 16 / 9; // phones: the horizontal field of view is capped at what this aspect would show
 
 export class CameraRig {
   constructor(game, camera) {
@@ -29,8 +30,15 @@ export class CameraRig {
     this.fovKick = 0; this.fovKickOut = 0; // degrees: a quick widen that springs back (near misses)
     this.blend = null; // { off, quat, t, dur }: a cutscene's last shot, handing over to the follow view
     this.occluders = new Occluders(game);
-    // phone-sized screens: the chase view sits further back and higher, or the car fills half the screen
-    const fit = () => { this.compact = Math.min(innerWidth, innerHeight) < 520; };
+    // phone-sized screens: the chase view sits further back and higher, or the car fills half the screen. A wide phone
+    // in landscape (19.5:9) also sees no more across than a 16:9 screen: every FOV here is vertical, and at 62 deg a
+    // 2.16:1 screen spans ~105 deg horizontally (~118 at speed) — small subjects, stretched edges. camera.zoom narrows
+    // whatever FOV is set (follow view, cutscenes, photo mode); camera.getEffectiveFOV() is the vertical FOV seen.
+    const fit = () => {
+      this.compact = Math.min(innerWidth, innerHeight) < 520;
+      camera.zoom = this.compact ? Math.max(1, innerWidth / innerHeight / MAX_ASPECT) : 1;
+      camera.updateProjectionMatrix();
+    };
     fit(); addEventListener('resize', fit);
   }
 
