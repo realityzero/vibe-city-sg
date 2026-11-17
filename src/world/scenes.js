@@ -18,7 +18,7 @@ export class Scenes {
     const poi = id => L.find(p => p.id === id);
     this.buildSatay();
     const merlion = poi('merlion');
-    if (merlion) this.list.push({ id: 'merlion', c: new THREE.Vector3(merlion.x, 0, merlion.z), window: [7, 23], gen: () => this.ring(merlion, 9, 22, 22, ['idle_phone', 'idle_phone', 'wave', 'idle', 'cheer'], 'tourist') });
+    if (merlion) this.list.push({ id: 'merlion', c: new THREE.Vector3(merlion.x, 0, merlion.z), window: [7, 23], gen: () => this.ring(merlion, 9, 22, 22, ['film', 'film', 'idle_phone', 'wave', 'idle', 'cheer'], 'tourist') });
     const st = poi('supertrees');
     if (st) {
       const show = t => inWindow(t, 19.6, 20.08) || inWindow(t, 20.6, 21.08);
@@ -107,7 +107,7 @@ export class Scenes {
 
   // ---------------------------------------------------------------- runtime
   update(dt) {
-    const g = this.game, t = g.sky.time, P = g.player.position, peds = g.peds;
+    const g = this.game, t = g.sky.time, peds = g.peds, P = peds.viewer; // around the camera, like the rest of the crowd
     for (const s of this.list) {
       const timeOk = s.when ? s.when(t) : inWindow(t, s.window[0], s.window[1]);
       const near = Math.hypot(P.x - s.c.x, P.z - s.c.z) < 220;

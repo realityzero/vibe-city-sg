@@ -7,16 +7,19 @@ import { MeshBuilder } from './builder.js';
 import { makeRest, makeShape, headRadius, headPoint, HEAD_C, HAIR_STYLES, hairShellRadius, EYE_DIR } from './body.js';
 import { getAtlas, cellRect, PATTERN_LIST } from './atlas.js';
 import { mulberry, SKIN, HAIR } from './presets.js';
+import { U } from '../../gfx/globals.js';
 
-// crowd joints
-const J = { hips: 0, torso: 1, head: 2, uaL: 3, laL: 4, uaR: 5, laR: 6, ulL: 7, llL: 8, ulR: 9, llR: 10, ftL: 11, ftR: 12 };
+// crowd joints (root: carried props that stay level, e.g. a shopping trolley)
+const J = { hips: 0, torso: 1, head: 2, uaL: 3, laL: 4, uaR: 5, laR: 6, ulL: 7, llL: 8, ulR: 9, llR: 10, ftL: 11, ftR: 12, root: 13 };
 // colour parts
-const P = { skin: 0, torso: 1, arm: 2, leg: 3, hair: 4, shoe: 5, dark: 7, acc: 8, lips: 9, brow: 10, bottom: 12, acc2: 13, white: 14 };
+const P = { skin: 0, torso: 1, arm: 2, leg: 3, hair: 4, shoe: 5, dark: 7, acc: 8, lips: 9, brow: 10, bottom: 12, acc2: 13, white: 14, screen: 15 };
 // optional pieces
 export const CROWD_HAIR = { short: 1, long: 2, bob: 3, bun: 4, bald: 5 };
-export const CROWD_ACC = { backpack: 1 << 1, bag: 1 << 2, cap: 1 << 3, visor: 1 << 4, lanyard: 1 << 5, glasses: 1 << 7 };
-export const CROWD_ANIM = { idle: 0, walk: 1, run: 2, flee: 3, knocked: 4, idle_phone: 5, walk_phone: 6, sit: 7, sit_eat: 8, clap: 9, wave: 10, cheer: 11, talk: 12 };
-const PIECE = { always: 0, skirt: 6, backpack: 7, bag: 8, cap: 9, visor: 10, lanyard: 11, phone: 12, glasses: 13 };
+export const CROWD_ACC = { backpack: 1 << 1, bag: 1 << 2, cap: 1 << 3, visor: 1 << 4, lanyard: 1 << 5, glasses: 1 << 7, umbrella: 1 << 8, trolley: 1 << 9, box: 1 << 10 };
+export const CROWD_ANIM = { idle: 0, walk: 1, run: 2, flee: 3, knocked: 4, idle_phone: 5, walk_phone: 6, sit: 7, sit_eat: 8, clap: 9, wave: 10, cheer: 11, talk: 12, film: 13, argue: 14 };
+const PIECE = { always: 0, skirt: 6, backpack: 7, bag: 8, cap: 9, visor: 10, lanyard: 11, phone: 12, glasses: 13, screen: 14, umbrella: 15, trolley: 16, box: 17 };
+// held props pose the right arm (shader: crowdPose); the umbrella is modelled for exactly that pose
+const UMBRELLA_ARM = { fwd: 0.2, elbow: 1.9 }, UMBRELLA_LEAN = 0.1; // shaft tilted slightly back, canopy over the head
 
 const wrapU = u => u - Math.floor(u);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -119,11 +122,35 @@ function buildCrowdGeometry(lod = 'high') {
     b.pathTube(pts, 0.005, 3, true, () => D(J.torso, P.acc2, { piece: PIECE.lanyard }));
     b.geometry(new THREE.BoxGeometry(0.056, 0.086, 0.004), new THREE.Matrix4().makeTranslation(0, 1.205, -0.142), () => D(J.torso, P.white, { piece: PIECE.lanyard }));
   }
-  // phone in the right hand (shown for phone anims)
+  // phone in the right hand (shown for phone anims), its screen lit
   {
     const hd = rest.handR;
     b.geometry(new THREE.BoxGeometry(0.012, 0.15, 0.075), new THREE.Matrix4().makeTranslation(hd[0] - 0.022, 0.82, hd[2] - 0.035), () => D(J.laR, P.dark, { piece: PIECE.phone }));
+    b.geometry(new THREE.BoxGeometry(0.002, 0.13, 0.064), new THREE.Matrix4().makeTranslation(hd[0] - 0.029, 0.82, hd[2] - 0.035), () => D(J.laR, P.screen, { piece: PIECE.screen }));
   }
+  // umbrella in the right hand: built in the arm's rest frame so the held pose stands it upright over the head
+  {
+    const hd = rest.handR, seg = lo ? 8 : 12;
+    const m = new THREE.Matrix4().makeTranslation(hd[0], hd[1] - 0.075, hd[2]).multiply(new THREE.Matrix4().makeRotationX(UMBRELLA_LEAN - UMBRELLA_ARM.fwd - UMBRELLA_ARM.elbow));
+    const at = (geo, x, y, z) => geo.applyMatrix4(new THREE.Matrix4().makeTranslation(x, y, z));
+    const put = (geo, part) => b.geometry(geo, m, () => D(J.laR, part, { piece: PIECE.umbrella }));
+    put(at(new THREE.CylinderGeometry(0.009, 0.009, 0.86, 5, 1, true), 0, 0.37, 0), P.dark);
+    put(at(new THREE.CylinderGeometry(0.02, 0.5, 0.17, seg, 1, true), 0, 0.73, 0), P.acc2);
+    put(at(new THREE.CylinderGeometry(0.5, 0.02, 0.17, seg, 1, true).scale(1, 0.3, 1), 0, 0.62, 0), P.acc2); // underside
+    put(at(new THREE.CylinderGeometry(0.004, 0.012, 0.07, 4), 0, 0.84, 0), P.dark);
+  }
+  // shopping trolley pulled behind on the right (root joint: the wheels stay on the ground)
+  {
+    const seg = lo ? 6 : 10, axle = [0.215, 0.075, 0.7]; // handle ends up in the hand of the pulling pose
+    const tilt = new THREE.Matrix4().makeTranslation(...axle).multiply(new THREE.Matrix4().makeRotationX(-0.54));
+    const T = (geo, part, x, y, z, mm = tilt) => b.geometry(geo.applyMatrix4(new THREE.Matrix4().makeTranslation(x, y, z)), mm, () => D(J.root, part, { piece: PIECE.trolley }));
+    T(new THREE.BoxGeometry(0.3, 0.44, 0.2), P.acc2, 0, 0.32, 0.03);
+    T(new THREE.CylinderGeometry(0.008, 0.008, 0.8, 4), P.dark, 0, 0.5, -0.09);
+    T(new THREE.CylinderGeometry(0.014, 0.014, 0.16, 5).rotateZ(Math.PI / 2), P.dark, 0, 0.91, -0.09);
+    for (const s of [-1, 1]) T(new THREE.CylinderGeometry(0.075, 0.075, 0.035, seg).rotateZ(Math.PI / 2), P.dark, s * 0.17, 0, 0, new THREE.Matrix4().makeTranslation(...axle));
+  }
+  // insulated food-delivery box on the back
+  b.geometry(new THREE.BoxGeometry(0.4, 0.38, 0.34), new THREE.Matrix4().makeTranslation(0, 1.2, 0.33), () => D(J.torso, P.acc, { piece: PIECE.box }));
   // glasses
   for (const s of [-1, 1]) {
     const e = headPoint(EYE_DIR(s));
@@ -199,7 +226,7 @@ void crSit(inout CPose P) {
   crArm(P, -1., 0.55, 0.1, 1.2, 0.); crArm(P, 1., 0.55, 0.1, 1.2, 0.);
 }
 void crPhone(inout CPose P) { crArm(P, 1., 0.3, 0.02, 1.5, 0.); P.uaR.y = 0.55; P.head.x -= 0.42; P.head.y += 0.1; }
-CPose crowdPose(int anim, float t, float ph0, float spd, float seed) {
+CPose crowdPose(int anim, float t, float ph0, float spd, float seed, int mask) {
   CPose P;
   P.hips = vec3(0.); P.hipT = vec3(0.); P.torso = vec3(0.); P.head = vec3(0.);
   P.uaL = vec3(0.); P.laL = vec3(0.); P.uaR = vec3(0.); P.laR = vec3(0.);
@@ -249,10 +276,23 @@ CPose crowdPose(int anim, float t, float ph0, float spd, float seed) {
     crArm(P, 1., 0.45 + 0.18 * sin(t * 2.1 + seed), 0.18, 1.25 + 0.3 * sin(t * 3.3), 0.);
     crArm(P, -1., 0.25 + 0.15 * crNoise(t * 0.9, seed + 4.), 0.15, 0.9 + 0.35 * max(0., crNoise(t * 0.7, seed + 6.)), 0.);
     P.head += vec3(0.05 * sin(t * 2.7), 0.1 * sin(t * 0.9), 0.);
+  } else if (anim == 13) { // filming / taking a photo: phone held up in front of the face in both hands
+    crIdle(P, t, seed);
+    crArm(P, 1., 0.95, -0.3, 1.45, 0.); crArm(P, -1., 0.9, -0.38, 1.5, 0.);
+    P.head = vec3(-0.06 + 0.02 * crNoise(t * 0.3, seed), 0.06 * crNoise(t * 0.2, seed + 1.), 0.);
+  } else if (anim == 14) { // arguing: leaning in, both hands chopping the air
+    crIdle(P, t, seed);
+    float g1 = sin(t * 3.1 + seed), g2 = crNoise(t * 1.7, seed + 3.);
+    crArm(P, 1., 0.7 + 0.35 * g1, 0.2 + 0.2 * max(0., g2), 0.6 + 0.7 * max(0., -g1), 0.);
+    crArm(P, -1., 0.35 + 0.3 * g2, 0.25 + 0.25 * max(0., -g2), 0.9 + 0.4 * sin(t * 2.3 + seed), 0.);
+    P.torso.x -= 0.07 + 0.04 * max(0., g1); P.head.x += 0.08 * sin(t * 4.7 + seed); P.head.y += 0.15 * g2;
   } else {
     crIdle(P, t, seed);
     if (anim == 5) crPhone(P);
   }
+  // a held umbrella / trolley handle fixes the right arm while walking or standing
+  if ((mask & 256) != 0 && (anim <= 1 || anim == 12)) crArm(P, 1., ${UMBRELLA_ARM.fwd.toFixed(2)}, 0.12, ${UMBRELLA_ARM.elbow.toFixed(2)}, 0.);
+  else if ((mask & 512) != 0 && anim <= 1) crArm(P, 1., -0.35, 0.1, 0.2, 0.);
   return P;
 }
 void crowdXform(inout vec3 p, inout vec3 n) {
@@ -261,9 +301,12 @@ void crowdXform(inout vec3 p, inout vec3 n) {
   int anim = int(iAnim.x + 0.5);
   int hairStyle = int(iStyle.x + 0.5);
   int mask = int(iStyle.w + 0.5);
+  bool phoneOut = anim == 5 || anim == 6 || anim == 13;
   bool vis = piece == 0 || (piece <= 5 && piece == hairStyle) || (piece == 6 && int(iStyle.z + 0.5) == 2)
-    || (piece >= 7 && piece <= 11 && (mask & (1 << (piece - 6))) != 0) || (piece == 12 && (anim == 5 || anim == 6)) || (piece == 13 && (mask & 128) != 0);
+    || (piece >= 7 && piece <= 11 && (mask & (1 << (piece - 6))) != 0) || ((piece == 12 || piece == 14) && phoneOut) || (piece == 13 && (mask & 128) != 0)
+    || (piece >= 15 && (mask & (1 << (piece - 7))) != 0);
   if (!vis) { p = vec3(0.); n = vec3(0., 1., 0.); return; }
+  if (j == 13) { p *= iBody.x; mat3 R0 = crY(iPose.w); p = R0 * p + iPose.xyz; n = R0 * n; return; }
   float fem = iBody.z, g = iBody.y, gp = max(g, 0.);
   float y = p.y;
   // body shape
@@ -279,7 +322,7 @@ void crowdXform(inout vec3 p, inout vec3 n) {
   float side = (j == 3 || j == 4 || j == 7 || j == 8 || j == 11) ? -1. : 1.;
   if (j >= 3 && j <= 6) p.x += side * dsx;
   if (j >= 7) { float cx = side * (0.09 + dlx); p.x += side * dlx; p.x = cx + (p.x - cx) * (1. + 0.2 * gp); p.z *= 1. + 0.2 * gp; }
-  CPose P = crowdPose(anim, uCrowdTime, iAnim.y, iAnim.z, iAnim.w);
+  CPose P = crowdPose(anim, uCrowdTime, iAnim.y, iAnim.z, iAnim.w, mask);
   vec3 shoulder = vec3(side * (0.183 + dsx), 1.445, 0.004), elbow = vec3(side * (0.204 + dsx), 1.155, 0.012);
   vec3 hip = vec3(side * (0.09 + dlx), 0.935, 0.), knee = vec3(side * (0.093 + dlx), 0.515, 0.006), ankle = vec3(side * (0.095 + dlx), 0.088, 0.014);
   bool L = side < 0.;
@@ -305,6 +348,7 @@ flat varying vec4 vCS;
 varying vec3 vCRY;
 uniform sampler2D uCrowdAtlas;
 uniform vec4 uPatRect[8];
+uniform float uNight;
 vec3 crUnpack(float f) { uint u = uint(f + 0.5); vec3 c = vec3(float((u >> 16u) & 255u), float((u >> 8u) & 255u), float(u & 255u)) / 255.; return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 `;
 
@@ -345,11 +389,13 @@ function patchMaterial(mat, isDepth, uniforms) {
         else if (part == 10) { col = cHair * 0.5; }
         else if (part == 12) { col = cBot; }
         else if (part == 13) { col = crUnpack(vC1.z); crRough = 0.5; }
+        else if (part == 15) { col = vec3(0.02); crRough = 0.15; }
         else { col = vec3(0.9); }
         int pat = int(vC1.w + 0.5);
         if (isTop && pat > 0) { vec4 r = uPatRect[pat]; col *= texture2D(uCrowdAtlas, r.xy + clamp(vCRY.yz, 0.0, 1.0) * r.zw).rgb; }
         diffuseColor.rgb = col;`)
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = crRough;');
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = crRough;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n        if (part == 15) totalEmissiveRadiance = vec3(0.55, 0.72, 1.0) * mix(0.8, 3.2, uNight); // phone screens glow at night');
   };
   mat.customProgramCacheKey = () => isDepth ? 'vc-crowd-depth' : 'vc-crowd';
 }
@@ -362,7 +408,8 @@ const packRGB = hex => (hex >>> 0) & 0xffffff;
  *   crowd.set(i, { x, y, z, yaw, anim: 'walk' | 1, speed: 1, phase: 0.3, look: Crowd.randomLook(seed, 'office_f') });
  *   crowd.setCount(n); crowd.update(dt) // once per frame
  * yaw: rotation about +y; yaw = 0 faces -z; facing vector = (-sin yaw, 0, -cos yaw).
- * speed: gait cadence multiplier (1 ≈ 1.35 m/s walk, 1 ≈ 3.8 m/s run).
+ * speed: gait cadence multiplier (cadence 1 covers ≈ 1.25 m/s walking, ≈ 3 m/s running for a 1.78 m person; strides
+ *   scale with height). knockAt: crowd clock (crowd.time) when a 'knocked' fall started.
  */
 export class Crowd {
   constructor(maxCount = 400, opts = {}) {
@@ -377,7 +424,7 @@ export class Crowd {
     g.instanceCount = 0;
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
     this.geometry = g;
-    this.uniforms = { uCrowdTime: { value: 0 }, uCrowdAtlas: { value: getAtlas() }, uPatRect: { value: PATTERN_LIST.map(c => cellRect(c)) } };
+    this.uniforms = { uCrowdTime: { value: 0 }, uCrowdAtlas: { value: getAtlas() }, uPatRect: { value: PATTERN_LIST.map(c => cellRect(c)) }, uNight: U.night };
     this.material = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
     patchMaterial(this.material, false, this.uniforms);
     withLampField(this.material); // pedestrians under a street lamp are lit by it
@@ -404,8 +451,8 @@ export class Crowd {
     if (o.anim !== undefined) {
       const an = typeof o.anim === 'string' ? (CROWD_ANIM[o.anim] ?? 0) : o.anim;
       a[i * 4] = an;
-      if (an === 4 && this._lastAnim[i] !== 4) a[i * 4 + 1] = this.time; // knocked start time
-      else if (an !== 4) a[i * 4 + 1] = o.phase ?? a[i * 4 + 1];
+      if (an === 4) a[i * 4 + 1] = o.knockAt ?? (this._lastAnim[i] !== 4 ? this.time : a[i * 4 + 1]); // knocked: start time (crowd clock)
+      else a[i * 4 + 1] = o.phase ?? a[i * 4 + 1];
       this._lastAnim[i] = an;
     } else if (o.phase !== undefined && a[i * 4] !== 4) a[i * 4 + 1] = o.phase;
     if (o.speed !== undefined) a[i * 4 + 2] = o.speed;
@@ -479,6 +526,19 @@ export function randomLook(seed = 1, variant) {
     case 'student':
       L.fem = r() < 0.5 ? 1 : 0; C.top = 0xf8f9fa; L.tucked = true; L.pants = L.fem ? 2 : 0; C.bottom = pick(r, [0x24345c, 0x1f2a44, 0x8d6e4a]); C.shoes = 0xffffff;
       L.hair = L.fem ? pick(r, [2, 4]) : 1; L.height = 1.5 + r() * 0.18; L.girth = -0.15; L.acc |= CROWD_ACC.backpack; C.acc = pick(r, [0x343a40, 0x1c7ed6, 0xe64980, 0x2b8a3e]); break;
+    case 'delivery': { // food-delivery rider in the platform's colours, the insulated box on the back
+      const brand = pick(r, [0xd70f64, 0x00b14f, 0x00b14f, 0x00ccbc]);
+      C.top = brand; C.acc = brand; L.acc |= CROWD_ACC.box; L.sleeve = r() < 0.5 ? 2 : 1; L.pants = 1; C.bottom = pick(r, [0x111111, 0x2e3138, 0x1f2a44]);
+      C.shoes = pick(r, [0x111111, 0xffffff]); L.hair = r() < 0.3 ? 5 : 1; L.height = 1.64 + r() * 0.14; L.girth = (r() - 0.5) * 0.4;
+      if (r() < 0.35) L.acc |= CROWD_ACC.cap; break;
+    }
+    case 'jogger':
+      L.fem = r() < 0.45 ? 1 : 0; C.top = pick(r, [0xffffff, 0x111111, 0xff6b6b, 0x4dabf7, 0xb2f2bb, 0xffd43b, 0xf783ac, 0x868e96]); L.sleeve = pick(r, [0, 1, 1]); L.pants = 0;
+      C.bottom = pick(r, [0x111111, 0x1f2a44, 0x495057]); C.shoes = pick(r, [0xffffff, 0xff8787, 0x74c0fc, 0xc0eb75]); L.tucked = false;
+      L.hair = L.fem ? pick(r, [2, 4]) : pick(r, [1, 1, 5]); C.hair = pick(r, [HAIR.black, HAIR.black, HAIR.darkBrown, HAIR.brown]);
+      if (C.skin === SKIN.chinese && r() < 0.25) C.skin = pick(r, [SKIN.light, SKIN.pale]);
+      L.height = L.fem ? 1.56 + r() * 0.12 : 1.68 + r() * 0.14; L.girth = -0.2 + r() * 0.2;
+      if (r() < 0.3) L.acc |= L.fem ? CROWD_ACC.visor : CROWD_ACC.cap; C.acc = pick(r, [0xffffff, 0x111111, 0x1c7ed6]); break;
     case 'female':
       L.fem = 1; C.top = pick(r, brightTops); L.pattern = r() < 0.15 ? pick(r, [PAT.floral, PAT.batik]) : 0; if (L.pattern) C.top = 0xffffff; L.sleeve = pick(r, [0, 1, 1, 2]);
       L.pants = pick(r, [0, 1, 2, 2]); C.bottom = pick(r, [0x3d5f93, 0x111111, 0xe9ecef, 0xc8b48a, 0x1f2a44]); C.shoes = pick(r, [0xffffff, 0x111111, 0xd9c2a7]);
