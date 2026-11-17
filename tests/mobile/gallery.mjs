@@ -14,7 +14,7 @@ export const VIEWS = [
   ['merlion-wide', 17.2, [720, 22, 120], [600, 6, 10]],
   ['marina-bay-golden', 18.9, [480, 40, 140], [900, 60, 300]],
   ['mbs-night', 21, [880, 25, 620], [1291, 90, 377]],
-  ['supertrees-night', 20.5, [1560, 8, 470], [1665, 25, 555]],
+  ['supertrees-night', 20.5, [1555, 32, 445], [1665, 25, 555]],
   ['supertrees-grove', 21.3, [1598, 6, 505], [1680, 24, 560]],
   ['flyer', 9.5, [1430, 35, -120], [1572, 60, -266]],
   ['esplanade', 10, [620, 25, -190], [700, 8, -300]],
@@ -29,8 +29,8 @@ export const VIEWS = [
   ['aerial-city', 15, [-200, 420, 900], [200, 0, 100]],
   ['junction-traffic', 12, [-95, 42, 92], [-133, 0, 54]],
   ['sidewalk-crowd', 12, [-382, 1.7, 412], [-350, 1.5, 385]],
-  ['bridge-marina', 12, [1380, 25, -110], [1424, 2, -186]],
-  ['bridge-ayer-rajah', 12, [-600, 30, 1530], [-559, 6, 1593]],
+  ['bridge-sheares', 12, [1440, 40, -600], [1605, 22, -740]],
+  ['bridge-ayer-rajah', 12, [-490, 70, 1670], [-559, 7, 1593]],
   ['play-onfoot', 11, null, null, 'foot'],
   ['play-driving', 18.4, null, null, 'drive'],
 ];
@@ -52,7 +52,11 @@ async function shoot(set, list) {
       ui.style.display = hud ? '' : 'none';
       if (hud === 'drive') { g.cameraRig.override = null; void g.debugTp(-60, 1000, 0); void g.debugCar('infernus'); g.autopilot.engage({ x: 900, z: 250 }); }
       else if (hud === 'foot') { g.cameraRig.override = null; g.player.teleport(new V(-380, 0, 410), 2.2); }
-      else g.cameraRig.override = { position: new V(...pos), lookAt: new V(...look), snap: true, fov: 62 };
+      else {
+        // the player stands near what the camera looks at: traffic and crowds spawn around them, as they would in play
+        g.player.teleport(new V(look[0] + (pos[0] - look[0]) * 0.25, 0, look[2] + (pos[2] - look[2]) * 0.25), 0);
+        g.cameraRig.override = { position: new V(...pos), lookAt: new V(...look), snap: true, fov: 62 };
+      }
     }, [pos, look, hud]);
     await h.page.waitForTimeout(hud === 'drive' ? 9000 : 3500);
     await h.page.screenshot({ path: `${OUT}/${set}-${name}.png` });
