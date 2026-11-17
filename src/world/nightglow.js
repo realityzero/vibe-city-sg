@@ -174,10 +174,11 @@ export class NightGlow {
   async _init() {
     const clear = this._roadGrid(), B = this.game.city.data.buildings;
     await nextTask();
+    const hawkers = new Set(this.game.city.furniture?.hawkers || []); // (rebuilt as open pavilions by the city worker)
     for (let bi = 0; bi < B.length; bi++) {
       if (bi % 4000 === 3999) await nextTask();
       const b = B[bi];
-      if ((b.s !== STYLE_SHOPHOUSE && b.s !== STYLE_LOWRISE) || b.m > 0.5 || b.h < 4) continue;
+      if ((b.s !== STYLE_SHOPHOUSE && b.s !== STYLE_LOWRISE) || b.m > 0.5 || b.h < 4 || hawkers.has(b.id)) continue;
       const p = b.p, nV = p.length / 2;
       let area = 0; for (let i = 0; i < nV; i++) { const j = (i + 1) % nV; area += p[i * 2] * p[j * 2 + 1] - p[j * 2] * p[i * 2 + 1]; }
       const out = area > 0 ? 1 : -1;
