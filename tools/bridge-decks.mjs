@@ -135,6 +135,20 @@ function solve(members, pinAt) {
   for (const m of members) m.y = m.vid.map(v => y[v]);
 }
 
+// the densified points a deck profile needs between a and b: its own vertices and wherever the grade changes (a flat
+// deck or a steady ramp needs none in between; every point is a deck segment of geometry and collider)
+function profilePoints(m, a, b) {
+  const s = [0]; for (let i = a + 1; i <= b; i++) s.push(s[s.length - 1] + Math.hypot(m.np[i][0] - m.np[i - 1][0], m.np[i][1] - m.np[i - 1][1]));
+  const idx = [a]; let last = a;
+  for (let i = a + 1; i < b; i++) {
+    if (m.orig[i] >= 0) { idx.push(i); last = i; continue; }
+    const f = (s[i - a] - s[last - a]) / Math.max(1e-6, s[i + 1 - a] - s[last - a]);
+    if (Math.abs(m.y[i] - (m.y[last] + f * (m.y[i + 1] - m.y[last]))) > 0.03) { idx.push(i); last = i; }
+  }
+  if (b > a) idx.push(b);
+  return idx;
+}
+
 /**
  * Gives every bridge way (r.bridge) a deck profile r.y on densified points r.pts; lifts and splits the ground ways that
  * ramp up to them (their raised part becomes a bridge way). Returns the ways to insert: [[afterWay, newWay], ...].
@@ -268,7 +282,7 @@ export function elevateBridges(roadsRaw, isWaterAt) {
       if (G.links.some(L => L.how.includes('approach')) && short(members)) { members = run(true); stats.approaches++; }
       if (md === 'drive' && roadRoots.has(find(G.spans[0])) && short(members)) { members = run(true, interchange(members)); stats.interchanges++; }
       for (const m of members) {
-        if (!m.link) { m.r.pts = m.np; m.r.y = m.y; continue; }
+        if (!m.link) { const idx = profilePoints(m, 0, m.np.length - 1); m.r.pts = idx.map(i => m.np[i]); m.r.y = idx.map(i => m.y[i]); continue; }
         // a lifted ground way: its raised runs (with the vertices where they touch down) become bridge ways, the rest
         // stays a ground way on its own vertices
         const n = m.np.length, up = m.y.map(h => h > 0.05), runs = [];
@@ -276,7 +290,7 @@ export function elevateBridges(roadsRaw, isWaterAt) {
         if (!runs.length) continue;
         stats.lifted++; taken.add(m.r);
         const pieces = [], piece = (a, b, raised) => {
-          const idx = []; for (let i = a; i <= b; i++) if (raised || i === a || i === b || m.orig[i] >= 0) idx.push(i);
+          const idx = raised ? profilePoints(m, a, b) : []; if (!raised) for (let i = a; i <= b; i++) if (i === a || i === b || m.orig[i] >= 0) idx.push(i);
           pieces.push({ ...m.r, pts: idx.map(i => m.np[i]), y: idx.map(i => (raised ? m.y[i] : 0)), bridge: raised ? 1 : 0 });
           if (raised) for (let k = 1; k < idx.length; k++) stats.liftedM += Math.hypot(m.np[idx[k]][0] - m.np[idx[k - 1]][0], m.np[idx[k]][1] - m.np[idx[k - 1]][1]);
         };
@@ -307,7 +321,14 @@ export function validateBridges(roads) {
     if (Math.max(...ys) - Math.min(...ys) > 0.15) bad.push(`step ${fmt(l[0].r.pts[l[0].i])}: ${l.map(o => `${o.r.name || o.r.hw} ${o.r.y[o.i].toFixed(1)}`).join(" / ")}`);
   }
   // V-dip: a vertex under 1 m with more than one direction along the deck climbing above 3 m within 60 m
-  const reach = (r, i, dir) => { let s = 0, hi = 0; for (let j = i + dir; j >= 0 && j < r.pts.length && s < 60; j += dir) { s += Math.hypot(r.pts[j][0] - r.pts[j - dir][0], r.pts[j][1] - r.pts[j - dir][1]); hi = Math.max(hi, r.y[j]); } return hi; };
+  const reach = (r, i, dir) => { // highest deck within 60 m along the way (interpolated at 60 m: points can be sparse)
+    let s = 0, hi = 0;
+    for (let j = i + dir; j >= 0 && j < r.pts.length && s < 60; j += dir) {
+      const l = Math.hypot(r.pts[j][0] - r.pts[j - dir][0], r.pts[j][1] - r.pts[j - dir][1]), f = Math.min(1, (60 - s) / (l || 1));
+      hi = Math.max(hi, r.y[j - dir] + f * (r.y[j] - r.y[j - dir])); s += l;
+    }
+    return hi;
+  };
   for (const l of at.values()) {
     const { r, i } = l[0]; if (r.y[i] >= 1) continue;
     let high = 0;

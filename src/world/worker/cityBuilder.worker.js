@@ -175,9 +175,14 @@ function recessRing(r, D) {
 // window grid, trims and signs run on round the facets — u counts from the run's start, wallLen is the run's length —
 // instead of restarting on every facet with a seam and columns of another width. Per edge: {u0, len (of its run)}.
 const RUN_COS = Math.cos(25 * Math.PI / 180);
+// (scratch arrays shared by every call, grown as needed: a few typed arrays per ring for ~25k rings was garbage the
+// phone's JavaScriptCore let pile up)
+const RUN = { n: 0, dx: null, dz: null, len: null, u0: null, runLen: null, id: null, runs: [] };
 function wallRuns(ring, flags) {
-  const n = ring.length, dx = new Float64Array(n), dz = new Float64Array(n), len = new Float64Array(n), u0 = new Float64Array(n), runLen = new Float64Array(n);
-  for (let i = 0; i < n; i++) { const p = ring[i], q = ring[(i + 1) % n], l = Math.hypot(q[0] - p[0], q[1] - p[1]); len[i] = l; if (l > 0.05) { dx[i] = (q[0] - p[0]) / l; dz[i] = (q[1] - p[1]) / l; } }
+  const n = ring.length;
+  if (RUN.n < n) { const m = Math.max(64, n * 2); RUN.n = m; RUN.dx = new Float64Array(m); RUN.dz = new Float64Array(m); RUN.len = new Float64Array(m); RUN.u0 = new Float64Array(m); RUN.runLen = new Float64Array(m); RUN.id = new Int32Array(m); }
+  const { dx, dz, len, u0, runLen, id, runs } = RUN;
+  for (let i = 0; i < n; i++) { const p = ring[i], q = ring[(i + 1) % n], l = Math.hypot(q[0] - p[0], q[1] - p[1]); len[i] = l; dx[i] = l > 0.05 ? (q[0] - p[0]) / l : 0; dz[i] = l > 0.05 ? (q[1] - p[1]) / l : 0; }
   const flag = i => (flags ? flags[i] : 0);
   // a new run starts at edge i when the wall turns a corner or changes its facade flag (degenerate edges carry on)
   const starts = i => {
@@ -187,7 +192,7 @@ function wallRuns(ring, flags) {
   };
   let s0 = 0; while (s0 < n && !starts(s0)) s0++;
   if (s0 === n) s0 = 0; // a round building: one run all the way round
-  const runs = [], id = new Int32Array(n);
+  runs.length = 0;
   let acc = 0;
   for (let k = 0; k < n; k++) {
     const i = (s0 + k) % n;
