@@ -695,8 +695,10 @@ export function createFacadeMaterial({ reflection = false } = {}) {
           fEmis += led * band * uNight * 1.0;
         }
       }
-      // aviation obstruction lights
-      if (fTop > 110.0 && vWall.y > fTop - 1.2 && vWall.x < 0.8 && !special) fEmis += vec3(1.0, 0.05, 0.02) * uNight * 12.0 * step(0.5, fract(uTime * 0.5 + fSeed));
+      // aviation obstruction lights. A 0.8 x 1.2 m lamp is soon smaller than a pixel: from there its radiance scales
+      // with the share of the pixel it really covers, so a phone's 4x larger pixels don't bloom it into a red blob
+      vec2 avPx = fwidth(vWall.xy);
+      if (fTop > 110.0 && vWall.y > fTop - 1.2 && vWall.x < 0.8 && !special) fEmis += vec3(1.0, 0.05, 0.02) * uNight * 12.0 * step(0.5, fract(uTime * 0.5 + fSeed)) * clamp(0.96 / max(avPx.x * avPx.y, 1e-4), 0.12, 1.0);
       fRough = mix(fRough, fRough * 0.5, uWet);
       diffuseColor.rgb = albedo;
       roughnessFactor = fRough;
@@ -1186,10 +1188,21 @@ export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0.0 });
   const sizeW = meta.w * meta.res, sizeH = meta.h * meta.res;
   return patch(mat, {
-    key: shore ? 'ground-v6-shore' : 'ground-v6',
+    key: shore ? 'ground-v7-shore' : 'ground-v7',
     uniforms: { ...COMMON_U(), ...STREET_U(), uMask: { value: maskTex }, uMaskOrigin: { value: new THREE.Vector2(meta.xmin, meta.zmin) }, uMaskSize: { value: new THREE.Vector2(sizeW, sizeH) } },
     vertexHead: COMMON_VHEAD, vertexBody: COMMON_VBODY,
-    fragHead: COMMON_HEAD + STREET_GLSL + `uniform sampler2D uMask; uniform vec2 uMaskOrigin; uniform vec2 uMaskSize;`,
+    fragHead: COMMON_HEAD + STREET_GLSL + `uniform sampler2D uMask; uniform vec2 uMaskOrigin; uniform vec2 uMaskSize;
+// The mask's G/B channels hold class codes (plaza 1.0, sidewalk 0.86, car park 0.78, apron 0.59; park 1.0, woods
+// 0.71, pitch 0.39). A filtered code between two classes is a third one: a plaza next to bare ground filtered
+// through car-park asphalt (dark snakes along every plaza edge), a lawn next to nothing through sports pitch. So the
+// class is always one of the four surrounding texels' own codes: the one nearest the bilinear value f (smooth class
+// borders, same shape as before), ignoring texels below lo (unpaved / unvegetated). 0 if none qualifies.
+float maskClass(vec4 v, float f, float lo) {
+  vec4 d = abs(v - f) + step(v, vec4(lo)) * 9.0;
+  float m = min(min(d.x, d.y), min(d.z, d.w));
+  vec4 k = step(d, vec4(m));
+  return m > 8.0 ? 0.0 : dot(v, k) / dot(k, vec4(1.0));
+}`,
     fragAfterEmissive: `normal = bumpNormal(normal, bh, vViewPosition);
       if (uNight > 0.02) totalEmissiveRadiance += diffuseColor.rgb * lampLight(wp, camD);`,
     fragAfterMetal: /* glsl */`
@@ -1205,6 +1218,21 @@ export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
       float n1 = fbm3(wp * 0.07);
       // vegetation channel: crisp, slightly irregular edges (the mask is only 2 m/px)
       float edgeN = (vnoise(wp * 0.9) - 0.5) * 0.12 + (vnoise(wp * 3.7) - 0.5) * 0.05;
+      // class codes from the unfiltered texels (see maskClass); coverage stays with the filtered, mip-mapped m
+      float gc = g, bc = b;
+      if (!outside) {
+        ivec2 msz = textureSize(uMask, 0);
+        vec2 tc = muv * vec2(msz) - 0.5;
+        ivec2 t0 = clamp(ivec2(floor(tc)), ivec2(0), msz - 2);
+        vec2 tf = clamp(tc - vec2(t0), 0.0, 1.0);
+        vec4 q00 = texelFetch(uMask, t0, 0), q10 = texelFetch(uMask, t0 + ivec2(1, 0), 0), q01 = texelFetch(uMask, t0 + ivec2(0, 1), 0), q11 = texelFetch(uMask, t0 + ivec2(1, 1), 0);
+        vec4 lw = vec4((1.0 - tf.x) * (1.0 - tf.y), tf.x * (1.0 - tf.y), (1.0 - tf.x) * tf.y, tf.x * tf.y);
+        vec4 qg = vec4(q00.g, q10.g, q01.g, q11.g), qb = vec4(q00.b, q10.b, q01.b, q11.b);
+        gc = maskClass(qg, dot(qg, lw) + edgeN, 0.3); bc = maskClass(qb, dot(qb, lw) + edgeN, 0.4);
+        // (far away the mip-filtered coverage can reach past these four texels: keep its own code there)
+        if (gc < 0.3) gc = g;
+        if (bc < 0.4) bc = b;
+      }
       float gv = smoothstep(0.36, 0.42, g + edgeN);
       float kerbG = (1.0 - smoothstep(0.0, 0.035, abs(g + edgeN - 0.39))) * step(0.3, b);
       float pavW = b > 0.4 && g < 0.55 ? smoothstep(0.44, 0.5, b + edgeN) : 0.0;
@@ -1227,14 +1255,14 @@ export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
         vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
         vec3 dirt = mix(vec3(0.17, 0.12, 0.08), vec3(0.12, 0.13, 0.06), n1);
         col = mix(dirt, grass, smoothstep(0.3, 0.6, n1 + 0.25));
-        vec3 gcol = g < 0.5 ? pitch : (g < 0.8 ? grass * 0.75 : grass);
+        vec3 gcol = gc < 0.5 ? pitch : (gc < 0.8 ? grass * 0.75 : grass);
         col = mix(col, gcol, gv);
       }
       // paving channel
       if (b > 0.4 && g < 0.55) {
         vec3 pav;
         float stain = smoothstep(0.6, 0.74, fbm3(wp * 0.33 + 4.0));
-        if (b > 0.95) { // plaza granite: 600 mm tiles, speckled, occasional darker accent courses, thin grout
+        if (bc > 0.95) { // plaza granite: 600 mm tiles, speckled, occasional darker accent courses, thin grout
           float region = hash12(floor(wp / 60.0));
           vec2 tsz = region > 0.5 ? vec2(0.6) : vec2(0.6, 0.3);
           vec2 tp = wp / tsz, tid = floor(tp);
@@ -1250,7 +1278,7 @@ export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
           pav = mix(pav, pav * 0.4, jt);
           bh += (hv - 0.5) * 0.001 - jt * 0.003;
           rgh = 0.6 - 0.12 * hv;
-        } else if (b > 0.83) { // sidewalk pavers: bond varies by neighbourhood
+        } else if (bc > 0.83) { // sidewalk pavers: bond varies by neighbourhood
           float region = hash12(floor(wp / 140.0) + 0.5);
           float style = region < 0.42 ? 0.0 : region < 0.72 ? 1.0 : region < 0.88 ? 3.0 : 2.0;
           float jt, pid;
@@ -1261,7 +1289,7 @@ export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
           pav = mix(pav, pav * 0.35 + vec3(0.012, 0.011, 0.009), jt);
           bh += (pid - 0.5) * 0.0015 * cellFade(wp, 10.0) - jt * 0.004;
           rgh = 0.78 - 0.08 * pid;
-        } else if (b > 0.75) { // car park asphalt with oil drips
+        } else if (bc > 0.75) { // car park asphalt with oil drips
           float cf = cellFade(wp, 50.0);
           pav = vec3(0.06, 0.06, 0.065) * (0.8 + 0.3 * n1) * (1.0 + (cf > 0.0 ? stones(wp, 36.0) - 0.5 : 0.0) * 0.55 * cf);
           pav *= 1.0 - 0.4 * smoothstep(0.66, 0.74, vnoise(wp * 0.7 + 9.0));
