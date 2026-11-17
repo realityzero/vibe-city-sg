@@ -1,0 +1,10 @@
+import { launch, pagePids, footprintMB, webkitPurge } from '../mobile/lib.mjs';
+import { execSync } from 'child_process';
+const h = await launch('webkit');
+await h.page.goto(process.argv[2] || 'http://127.0.0.1:4173/?memmarks=200000', { waitUntil: 'commit' });
+const pids = await pagePids(h);
+await h.page.waitForFunction(() => window.__memMark === 'start' || document.readyState === 'complete', null, { timeout: 60000 });
+await h.page.waitForTimeout(4000); await webkitPurge(2500);
+console.log('mark', await h.page.evaluate(() => window.__memMark), 'page', Math.round(await footprintMB(pids.content)), 'gpu', Math.round(await footprintMB(pids.gpu)));
+console.log(execSync(`footprint -p ${pids.content} 2>&1 | head -16 | tail -10`).toString());
+await h.browser.close();

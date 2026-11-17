@@ -1,0 +1,17 @@
+import { launch } from '../mobile/lib.mjs';
+const h = await launch('webkit', { exclusive: false });
+await h.page.goto('http://127.0.0.1:4173/?skipTitle&newgame&freeroam=8', { waitUntil: 'load' });
+await h.page.waitForFunction(() => window.__game?.worldReady && __game.state === 'play', null, { timeout: 200000 });
+await h.page.waitForTimeout(2000);
+const st = () => h.page.evaluate(() => { const g = __game, t = g.touch; return { yaw: +g.cameraRig.yaw.toFixed(3), mode: t.mode, flags: t.flags, swim: g.player.swimming, looks: t.looks.size, pos: [g.player.position.x.toFixed(1), g.player.position.z.toFixed(1)], paused: g.paused }; });
+const ptr = (type, x, y, id) => h.page.evaluate(([type, x, y, id]) => document.querySelector('.vc-touch .surf').dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: id === 1 })), [type, x, y, id]);
+console.log('start', JSON.stringify(await st()));
+await ptr('pointerdown', 560, 170, 1);
+console.log('after down', JSON.stringify(await st()));
+for (let k = 1; k <= 8; k++) await ptr('pointermove', 560 + k * 15, 170, 1);
+console.log('after moves', JSON.stringify(await st()));
+await ptr('pointerup', 680, 170, 1);
+await h.page.waitForTimeout(200);
+console.log('end', JSON.stringify(await st()));
+console.log('jump btn', await h.page.evaluate(() => { const e = document.querySelector('.vc-touch .b-jump'); return e ? [e.getBoundingClientRect().width, getComputedStyle(e).display] : null; }));
+await h.browser.close();

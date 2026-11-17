@@ -1,9 +1,10 @@
-// Drop-in for `import { chromium } from 'playwright'` that rations headless browsers on this 8 GB M2.
+// Drop-in for `import { chromium, webkit } from 'playwright'` that rations headless browsers on this 8 GB M2.
 // Every launch takes one of SLOTS lock directories under /tmp/vc-locks (mkdir is atomic); `exclusive: true`
 // (frame-time / GPU measurements) takes all of them so nothing else renders meanwhile. Locks hold the owner's pid
 // and are stolen if that process is gone. Released when the browser closes or the process exits.
-import { chromium as pw } from 'playwright';
+import { chromium as pwChromium, webkit as pwWebkit } from 'playwright';
 import fs from 'fs';
+import os from 'os';
 const DIR = '/tmp/vc-locks', SLOTS = 2;
 fs.mkdirSync(DIR, { recursive: true });
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -37,7 +38,7 @@ async function acquire(exclusive) {
     await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
   }
 }
-export const chromium = {
+const rationed = pw => ({
   async launch({ exclusive = !!process.env.VC_EXCLUSIVE, ...opts } = {}) {
     const mine = await acquire(exclusive);
     const b = await pw.launch(opts);
@@ -47,4 +48,10 @@ export const chromium = {
     b.on('disconnected', free);
     return b;
   },
-};
+});
+export const chromium = rationed(pwChromium);
+// Safari's engine (Playwright's WebKit build): closest thing to iOS Safari on a Mac. macOS 14 only gets a frozen
+// WebKit build (r2251) that newer Playwright can't drive, so there it goes through playwright-core 1.59 (dev
+// dependency alias pw-webkit-mac14), the last release that speaks its protocol.
+const darwinMajor = os.platform() === 'darwin' ? +os.release().split('.')[0] : 0; // Darwin 23 = macOS 14
+export const webkit = rationed(darwinMajor === 23 ? (await import('pw-webkit-mac14')).webkit : pwWebkit);

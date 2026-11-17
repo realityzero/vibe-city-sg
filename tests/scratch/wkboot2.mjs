@@ -1,0 +1,15 @@
+import { launch, pagePids, footprintMB, webkitPurge } from '../mobile/lib.mjs';
+const h = await launch('webkit');
+await h.page.goto('http://127.0.0.1:4173/?skipTitle&newgame&memmarks=200000', { waitUntil: 'commit' });
+const pids = await pagePids(h);
+await h.page.waitForFunction(() => window.__memMark === 'start', null, { timeout: 60000 });
+await h.page.waitForTimeout(4000);
+const read = async l => { await webkitPurge(2500); console.log(l.padEnd(28), 'page', Math.round(await footprintMB(pids.content)), 'gpu', Math.round(await footprintMB(pids.gpu))); };
+await read('paused at start');
+await h.page.evaluate(async () => { await __game.audio?.ctx?.close(); __game.audio = null; __game._audioCtx = null; });
+await read('audio closed');
+await h.page.evaluate(() => { document.querySelectorAll('.vc-loading').forEach(e => e.remove()); });
+await read('loading screen removed');
+await h.page.evaluate(() => { document.getElementById('ui').style.display = 'none'; });
+await read('all UI hidden');
+await h.browser.close();
