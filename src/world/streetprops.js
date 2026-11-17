@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { U } from '../gfx/globals.js';
 import { mergeStatic } from '../gfx/mergeStatic.js';
+import { FILTER } from '../physics/physics.js';
 
 const CHINATOWN = /^(Pagoda Street|Temple Street|Smith Street|Trengganu Street|Sago Street|Mosque Street|Erskine Road|Club Street|Ann Siang Road|Keong Saik Road|Bukit Pasoh Road)$/;
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _p = new THREE.Vector3();
@@ -67,29 +68,39 @@ export class StreetProps {
     this.signMats = [];
     this.meshes = [];
     const scene = game.scene, data = game.city.data;
-    // ---------------- lantern strings
-    const lanterns = [], strings = [];
+    // ---------------- lantern strings: tied facade to facade across the street (a span with no wall within reach on
+    // either side is left out), clear of the street trees' crowns
+    const lanterns = [], wire = [];
+    const P = game.physics, veg = game.veg, tc = game.treeColliders;
+    const treeNear = (x, z, r) => {
+      if (!tc || !veg) return false;
+      for (let gx = Math.floor((x - r) / 40); gx <= Math.floor((x + r) / 40); gx++) for (let gz = Math.floor((z - r) / 40); gz <= Math.floor((z + r) / 40); gz++)
+        for (const i of tc.grid.get(gx * 100003 + gz) || []) if (Math.hypot(veg.pos[i * 2] - x, veg.pos[i * 2 + 1] - z) < r) return true;
+      return false;
+    };
+    const Y = 6.6;
     for (const r of data.roads) {
       if (!r.n || !CHINATOWN.test(r.n) || r.b) continue;
       const pts = []; for (let i = 0; i < r.p.length; i += 2) pts.push([r.p[i], r.p[i + 1]]);
-      const half = r.w / 2 + 3.2;
+      const reach = r.w / 2 + 6;
       let acc = 4;
       for (let i = 0; i < pts.length - 1; i++) {
         const [ax, az] = pts[i], [bx, bz] = pts[i + 1]; const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz); if (L < 1) continue;
         const rx = -dz / L, rz = dx / L;
-        while (acc < L) {
+        for (; acc < L; acc += 7.5) {
           const f = acc / L, cx = ax + dx * f, cz = az + dz * f;
-          const n = Math.max(4, Math.round(half * 2 / 1.5));
-          let prev = null;
+          const hr = P.raycast({ x: cx, y: Y, z: cz }, { x: rx, y: 0, z: rz }, reach, FILTER.static), hl = P.raycast({ x: cx, y: Y, z: cz }, { x: -rx, y: 0, z: -rz }, reach, FILTER.static);
+          if (!hr || !hl) continue;
+          const a = -hl.toi + 0.05, b = hr.toi - 0.05, span = b - a, n = Math.max(3, Math.round(span / 1.5)), sag = Math.min(0.9, span * 0.06);
+          let crown = false;
+          for (let k = 1; k < n && !crown; k++) { const o = a + span * k / n; crown = treeNear(cx + rx * o, cz + rz * o, 3.5); }
+          if (crown) continue;
           for (let k = 0; k <= n; k++) {
-            const t = k / n, off = -half + t * half * 2;
-            const y = 6.6 - Math.sin(t * Math.PI) * 0.9;
-            const p = new THREE.Vector3(cx + rx * off, y, cz + rz * off);
-            if (prev) strings.push(prev.x, prev.y, prev.z, p.x, p.y, p.z);
-            prev = p;
-            if (k > 0 && k < n) lanterns.push(p.x, p.y - 0.45, p.z);
+            const t = k / n, o = a + span * t;
+            wire.push(cx + rx * o, Y - Math.sin(t * Math.PI) * sag, cz + rz * o);
+            if (k > 0 && k < n) lanterns.push(cx + rx * o, Y - Math.sin(t * Math.PI) * sag - 0.45, cz + rz * o);
           }
-          acc += 7.5;
+          wire.push(NaN, NaN, NaN); // (end of a string)
         }
         acc -= L;
       }
@@ -100,7 +111,7 @@ export class StreetProps {
       const capB = capT.clone(); capB.translate(0, -0.76, 0);
       const tassel = new THREE.CylinderGeometry(0.03, 0.06, 0.35, 4, 1, true); tassel.translate(0, -0.6, 0);
       const geo = mergeGeometries([colorGeo(body, 0xd4141a), colorGeo(capT, 0xd8a52a), colorGeo(capB, 0xd8a52a), colorGeo(tassel, 0xffcf40)]);
-      this.lanternMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, emissive: 0xff1a08, emissiveIntensity: 0.2 });
+      this.lanternMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, emissive: 0xff3a10, emissiveIntensity: 0.2 });
       const im = new THREE.InstancedMesh(geo, this.lanternMat, lanterns.length / 3);
       // far lanterns (a few pixels): a plain low-poly red ball with the gold rim colour baked in
       const farGeo = colorGeo(new THREE.SphereGeometry(0.34, 5, 4).scale(1, 1.18, 1), 0xd4141a);
@@ -110,8 +121,24 @@ export class StreetProps {
       imFar.castShadow = false; imFar.receiveShadow = true; scene.add(imFar); this.meshes.push(imFar);
       im.castShadow = false; im.receiveShadow = true;
       scene.add(im);
-      const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(strings, 3));
-      const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x2a1a10 }));
+      // the wire: a 4 cm triangular tube (a 1 px line vanished on a phone), in the city's structure material
+      const pos = [], nor = [], col = [], c = new THREE.Color(0x2a1a10), w = 0.02;
+      const side = [[0, w * 1.6], [-w * 1.4, -w * 0.8], [w * 1.4, -w * 0.8]];
+      for (let i = 0; i + 5 < wire.length; i += 3) {
+        const x0 = wire[i], y0 = wire[i + 1], z0 = wire[i + 2], x1 = wire[i + 3], y1 = wire[i + 4], z1 = wire[i + 5];
+        if (x0 !== x0 || x1 !== x1) continue;
+        const L = Math.hypot(x1 - x0, z1 - z0) || 1, hx = -(z1 - z0) / L, hz = (x1 - x0) / L; // horizontal, across the wire
+        for (let k = 0; k < 3; k++) {
+          const [u0, v0] = side[k], [u1, v1] = side[(k + 1) % 3], nu = (u0 + u1) / 2, nv = (v0 + v1) / 2, nl = Math.hypot(nu, nv);
+          const q = (x, y, z, u, v) => { pos.push(x + hx * u, y + v, z + hz * u); nor.push(hx * nu / nl, nv / nl, hz * nu / nl); col.push(c.r, c.g, c.b); };
+          q(x0, y0, z0, u0, v0); q(x1, y1, z1, u0, v0); q(x1, y1, z1, u1, v1);
+          q(x0, y0, z0, u0, v0); q(x1, y1, z1, u1, v1); q(x0, y0, z0, u1, v1);
+        }
+      }
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); lg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); lg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const ls = new THREE.Mesh(lg, game.city.mats.struct);
+      ls.receiveShadow = true; ls.name = 'lanternWire';
       scene.add(ls);
       this.lanterns = { im, ls, n: lanterns.length / 3 }; this.meshes.push(im, ls);
     }
@@ -185,7 +212,8 @@ export class StreetProps {
     if (this.lanterns) this.lanterns.ls.visible = this.lanterns.im.count + this.lanternFar.meshes[0].count > 0;
     const n = U.night.value;
     for (const m of this.signMats) m.emissiveIntensity = 0.05 + n * 0.5;
-    if (this.lanternMat) this.lanternMat.emissiveIntensity = 0.12 + n * 1.15;
+    // lit from inside after dusk: bright enough for the bloom to pick up
+    if (this.lanternMat) this.lanternMat.emissiveIntensity = 0.12 + n * 3.2;
     if (this.adMat) this.adMat.emissiveIntensity = 0.25 + n * 1.4;
   }
 }
