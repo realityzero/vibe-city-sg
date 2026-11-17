@@ -25,59 +25,45 @@ function latticeTexture() {
   }, { srgb: false });
 }
 function foliageTexture() {
+  // the trunks' vertical gardens: ferns, bromeliads and orchids in many greens, with purple / pink / yellow flowers
   return canvasTexture(256, 256, (ctx, w, h) => {
     const R = rng(77);
-    ctx.fillStyle = '#2f5a24'; ctx.fillRect(0, 0, w, h);
-    const cols = ['#3f7a2c', '#4f8f35', '#2a4d1f', '#6a2f6e', '#a24c8c', '#d65e9a', '#e8c64a', '#5c9a3a', '#385f26'];
-    for (let i = 0; i < 1600; i++) {
-      ctx.fillStyle = cols[(R() * cols.length) | 0];
-      const x = R() * w, y = R() * h, r = 2 + R() * 7;
-      ctx.beginPath(); ctx.ellipse(x, y, r, r * (0.6 + R() * 0.8), R() * 3, 0, Math.PI * 2); ctx.fill();
-      // wrap
-      if (x < 8) { ctx.beginPath(); ctx.ellipse(x + w, y, r, r, 0, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#3f6f2e'; ctx.fillRect(0, 0, w, h);
+    const cols = ['#4f8a34', '#5f9e3c', '#3a6528', '#77a845', '#8fb84e', '#2f5a24', '#6a2f6e', '#b35a9a', '#d96ea6', '#e8c64a', '#c44f3a'];
+    for (let i = 0; i < 1900; i++) {
+      ctx.fillStyle = cols[(R() < 0.82 ? R() * 6 : 6 + R() * 5) | 0];
+      const x = R() * w, y = R() * h, r = 2 + R() * 6, ry = r * (0.6 + R() * 0.8), a = R() * 3;
+      for (const ox of [0, x < 8 ? w : x > w - 8 ? -w : null]) if (ox !== null) { ctx.beginPath(); ctx.ellipse(x + ox, y, r, ry, a, 0, Math.PI * 2); ctx.fill(); }
     }
   });
 }
 
-function supertreeTemplate(lattice, foliage) {
-  // canonical 50 m tree
-  const H = 50, trunkTop = 31;
-  const prof = [];
-  for (let i = 0; i <= 24; i++) {
-    const y = i / 24 * trunkTop;
-    const t = y / trunkTop;
-    const r = lerp(3.0, 2.3, smooth(Math.min(1, t * 3))) + Math.pow(Math.max(0, t - 0.2) / 0.8, 1.6) * 3.4;
-    prof.push(new THREE.Vector2(r, y));
-  }
-  const skin = new THREE.LatheGeometry(prof, 28);
-  const skinUV = skin.attributes.uv.array; for (let i = 0; i < skinUV.length; i += 2) { skinUV[i] *= 4; skinUV[i + 1] *= 5; }
-  const latProf = prof.map(p => new THREE.Vector2(p.x + 0.45, p.y));
-  const trunkLattice = new THREE.LatheGeometry(latProf, 28);
-  const tu = trunkLattice.attributes.uv.array; for (let i = 0; i < tu.length; i += 2) { tu[i] *= 4; tu[i + 1] *= 4.5; }
-  // canopy: trumpet bell
-  const cprof = [];
-  for (let i = 0; i <= 16; i++) {
-    const t = i / 16;
-    const y = trunkTop + t * (H - trunkTop);
-    const r = 5.9 + Math.pow(t, 1.7) * 10.5;
-    cprof.push(new THREE.Vector2(r, y));
-  }
+// canonical 50 m Supertree: a slender planted trunk (concrete core in a vertical garden) flaring into a wide steel
+// funnel canopy with radial branches and a rim, a planted bowl on top
+const ST_H = 50, ST_CANOPY = 32;
+const trunkR = y => 1.9 + 1.1 * Math.exp(-y / 2.2) + 1.4 * Math.pow(smooth(Math.min(1, Math.max(0, (y - 18) / (ST_CANOPY - 18)))), 1.4);
+const canopyR = t => trunkR(ST_CANOPY) + 9.6 * Math.pow(t, 1.5);
+function supertreeTemplate() {
+  const H = ST_H, top = ST_CANOPY;
+  const prof = []; for (let i = 0; i <= 26; i++) { const y = i / 26 * (top + 1); prof.push(new THREE.Vector2(trunkR(y), y)); }
+  const skin = new THREE.LatheGeometry(prof, 24);
+  const su = skin.attributes.uv.array; for (let i = 0; i < su.length; i += 2) { su[i] *= 3; su[i + 1] *= 6; }
+  const trunkLattice = new THREE.LatheGeometry(prof.map(p => new THREE.Vector2(p.x + 0.35, p.y)), 24);
+  const tu = trunkLattice.attributes.uv.array; for (let i = 0; i < tu.length; i += 2) { tu[i] *= 3.5; tu[i + 1] *= 6.5; }
+  // canopy: a funnel of lattice from the top of the trunk out to the rim
+  const cprof = []; for (let i = 0; i <= 16; i++) { const t = i / 16; cprof.push(new THREE.Vector2(canopyR(t), top + t * (H - top))); }
   const canopy = new THREE.LatheGeometry(cprof, 40);
   const cu = canopy.attributes.uv.array; for (let i = 0; i < cu.length; i += 2) { cu[i] *= 14; cu[i + 1] *= 3; }
-  // radial ribs of the canopy
   const ribs = [];
   for (let k = 0; k < 16; k++) {
     const a = k / 16 * Math.PI * 2;
-    const pts = cprof.filter((_, i) => i % 2 === 0).map(p => new THREE.Vector3(Math.cos(a) * (p.x + 0.15), p.y, Math.sin(a) * (p.x + 0.15)));
-    ribs.push(tubeAlong(pts, 0.28, 4));
+    ribs.push(tubeAlong(cprof.filter((_, i) => i % 2 === 0).map(p => new THREE.Vector3(Math.cos(a) * (p.x + 0.15), p.y, Math.sin(a) * (p.x + 0.15))), 0.24, 4));
   }
-  const rim = new THREE.TorusGeometry(cprof[16].x + 0.1, 0.45, 6, 48); rim.rotateX(Math.PI / 2); rim.translate(0, H, 0);
-  const ring2 = new THREE.TorusGeometry(cprof[8].x + 0.15, 0.3, 5, 40); ring2.rotateX(Math.PI / 2); ring2.translate(0, cprof[8].y, 0);
-  const core = new THREE.CylinderGeometry(1.6, 2.0, trunkTop + 1, 10, 1, true); core.translate(0, (trunkTop + 1) / 2, 0);
-  // "planted" crown inside the canopy (a shallow bowl)
-  const bowl = new THREE.CylinderGeometry(6.1, 5.7, 1.2, 24); bowl.translate(0, trunkTop + 0.4, 0);
-  const ribsGeo = mergeList([...ribs, ring2]);
-  return { skin, trunkLattice, canopy, ribsGeo, rim, core, bowl };
+  const ring2 = new THREE.TorusGeometry(cprof[8].x + 0.15, 0.26, 5, 40); ring2.rotateX(Math.PI / 2); ring2.translate(0, cprof[8].y, 0);
+  const rim = new THREE.TorusGeometry(cprof[16].x + 0.1, 0.4, 6, 48); rim.rotateX(Math.PI / 2); rim.translate(0, H, 0);
+  // the planted crown: a shallow bowl closing the trunk under the funnel
+  const bowl = new THREE.CylinderGeometry(trunkR(top + 1) + 0.6, trunkR(top + 1), 1.0, 24); bowl.translate(0, top + 0.6, 0);
+  return { trunk: mergeList([skin, bowl]), lattice: mergeList([trunkLattice, canopy]), ribs: mergeList([...ribs, ring2]), rim };
 }
 
 function mergeList(list) {
@@ -94,23 +80,29 @@ function mergeSimple(list) {
   return out;
 }
 
-// Supertree night lighting: the steel structure stays dark with a faint colour wash, points of LED light sit on the
-// lattice nodes (dots option), and the canopy rim glows. Emission is tinted per instance (instanceColor) and fades
-// with U.night; the shared uniforms below are driven by update() (calmer between shows, vivid during Garden Rhapsody).
+// Supertree night lighting: each tree is washed from its foot by coloured uplights (the planted trunk glows, fading
+// up its height), points of LED light sit on the lattice nodes (dots option), the canopy's steel catches a faint wash
+// and its rim glows. Emission is tinted per instance (instanceColor) and fades with U.night; the shared uniforms below
+// are driven by update() (calmer between shows, vivid during Garden Rhapsody).
 const SHOW = { wash: { value: 0.25 }, dotI: { value: 2.0 }, dotDen: { value: 0.35 } };
-function showMaterial(params, glow, { dots = false } = {}) {
+function showMaterial(params, glow, { dots = false, uplit = false } = {}) {
   const m = new THREE.MeshStandardMaterial(params);
   const uGlow = { value: glow };
   m.userData.glow = uGlow;
   m.onBeforeCompile = sh => {
     Object.assign(sh.uniforms, { uNight: U.night, uGlow, uWash: SHOW.wash, uDotI: SHOW.dotI, uDotDen: SHOW.dotDen });
+    if (uplit) sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vStY;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvStY = position.y / ${ST_H.toFixed(1)};`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uNight, uGlow, uWash, uDotI, uDotDen;')
+      .replace('#include <common>', `#include <common>\nuniform float uNight, uGlow, uWash, uDotI, uDotDen;${uplit ? '\nvarying float vStY;' : ''}`)
       .replace('#include <color_fragment>', '')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 #ifdef USE_COLOR
- float lineMask = (totalEmissiveRadiance.r + totalEmissiveRadiance.g + totalEmissiveRadiance.b + 0.001) / 3.0;
- vec3 e = vColor.rgb * uGlow * uWash * lineMask;
+ ${uplit ? `// the lights' colour on the planting: strong at the foot, a glow left up under the canopy
+ float k = 1.0 - smoothstep(0.0, 0.62, vStY);
+ vec3 e = vColor.rgb * uGlow * uWash * diffuseColor.rgb * (0.35 + 2.6 * k * k);` : `float lineMask = (totalEmissiveRadiance.r + totalEmissiveRadiance.g + totalEmissiveRadiance.b + 0.001) / 3.0;
+ vec3 e = vColor.rgb * uGlow * uWash * lineMask;`}
  ${dots ? `{
    // LED nodes where the diagonal lattice bars cross (a 45-degree grid in UV), a share of them lit
    vec2 lp = vec2(vMapUv.x + vMapUv.y, vMapUv.x - vMapUv.y) * 4.0;
@@ -127,7 +119,7 @@ function showMaterial(params, glow, { dots = false } = {}) {
  totalEmissiveRadiance *= uNight;
 #endif`);
   };
-  m.customProgramCacheKey = () => 'lmshow2' + (dots ? 'd' : '');
+  m.customProgramCacheKey = () => 'lmshow3' + (dots ? 'd' : '') + (uplit ? 'u' : '');
   return m;
 }
 
@@ -135,15 +127,12 @@ export function buildGardens(city, quality) {
   const M = materials();
   const group = new THREE.Group(); group.name = 'GardensByTheBay';
   const lat = latticeTexture();
-  const fol = foliageTexture();
-  const steelCol = 0x4a3036;
+  const steelCol = 0x56393f; // weathered purple-brown steel
   const latticeMat = showMaterial({ color: steelCol, roughness: 0.55, metalness: 0.5, map: lat, alphaMap: lat, alphaTest: 0.45, side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: lat }, 1.0, { dots: true });
   const ribMat = showMaterial({ color: steelCol, roughness: 0.5, metalness: 0.55, emissive: 0xffffff }, 0.2);
   const rimMat = showMaterial({ color: 0x3d2a30, roughness: 0.5, metalness: 0.6, emissive: 0xffffff }, 3.6);
-  const skinMat = new THREE.MeshStandardMaterial({ map: fol, roughness: 0.9, metalness: 0 });
-  fol.repeat.set(1, 1);
-  const coreMat = M.darkConcrete;
-  const T = supertreeTemplate(lat, fol);
+  const trunkMat = showMaterial({ map: foliageTexture(), roughness: 0.9, metalness: 0 }, 4.0, { uplit: true });
+  const T = supertreeTemplate();
 
   const trees = [...GROVE, ...(quality === 'low' ? [] : OUTLIERS)];
   const n = trees.length;
@@ -152,9 +141,9 @@ export function buildGardens(city, quality) {
     im.castShadow = cast; im.receiveShadow = true;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
     trees.forEach(([x, z, h], i) => {
-      const k = h / 50;
+      const k = h / ST_H;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (i * 1.7) % (Math.PI * 2));
-      s.set(k * (0.9 + 0.1 * (h / 50)), k, k * (0.9 + 0.1 * (h / 50)));
+      s.set(k * (0.9 + 0.1 * k), k, k * (0.9 + 0.1 * k));
       p.set(x, 0, z);
       im.setMatrixAt(i, m4.compose(p, q, s));
       im.setColorAt(i, new THREE.Color(1, 1, 1));
@@ -163,14 +152,7 @@ export function buildGardens(city, quality) {
     group.add(im);
     return im;
   };
-  mk(T.core, coreMat);
-  mk(T.skin, skinMat);
-  const iLat = mk(T.trunkLattice, latticeMat);
-  const iCan = mk(T.canopy, latticeMat);
-  const iRib = mk(T.ribsGeo, ribMat);
-  const iRim = mk(T.rim, rimMat, false);
-  mk(T.bowl, skinMat);
-  const showMeshes = [iLat, iCan, iRib, iRim];
+  const showMeshes = [mk(T.trunk, trunkMat), mk(T.lattice, latticeMat), mk(T.ribs, ribMat), mk(T.rim, rimMat, false)];
 
   // ---- observatory on the 50 m tree, OCBC Skyway
   const B = new Bucket();
@@ -208,7 +190,7 @@ export function buildGardens(city, quality) {
   const byName = n => city.buildings.find(b => b.n === n);
   const fd = byName('Flower Dome'), cf = byName('Cloud Forest');
   const gridTex = canvasTexture(256, 256, (ctx, w, h) => {
-    ctx.fillStyle = 'rgba(200,222,230,0.34)'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(214,230,236,0.5)'; ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = 'rgba(245,247,248,1)'; ctx.lineWidth = 5;
     for (let i = -2; i <= 4; i++) {
       ctx.beginPath(); ctx.moveTo(i * w / 2, 0); ctx.lineTo(i * w / 2 + w, h); ctx.stroke();
@@ -217,7 +199,13 @@ export function buildGardens(city, quality) {
     ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, 0); ctx.stroke();
   }, { srgb: true });
   gridTex.repeat.set(1 / 7, 1 / 7);
-  const domeGlass = new THREE.MeshPhysicalMaterial({ color: 0xffffff, map: gridTex, roughness: 0.12, metalness: 0.2, transparent: true, side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.6, emissive: 0x000000 });
+  // silvery glass shells that still read from across the bay; lit from inside at night
+  const domeGlass = new THREE.MeshPhysicalMaterial({ color: 0xffffff, map: gridTex, roughness: 0.12, metalness: 0.2, transparent: true, side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.6, emissive: 0xdce8ff, emissiveIntensity: 0.16 });
+  domeGlass.onBeforeCompile = sh => {
+    sh.uniforms.uNight = U.night;
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uNight;').replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= uNight;');
+  };
+  domeGlass.customProgramCacheKey = () => 'lmdome';
   const domeInner = new THREE.MeshStandardMaterial({ color: 0x47703a, roughness: 0.9, vertexColors: true });
   const domeExclusions = [];
   const domeMeshes = [];
@@ -279,7 +267,7 @@ export function buildGardens(city, quality) {
   const grove = city.buildings.filter(b => b.c === 0x76c82e);
   const exclusions = exclusionsForBuildings([...grove, ...domeExclusions]);
 
-  const colliders = trees.map(([x, z, h]) => ({ type: 'cylinder', center: [x, h * 0.3, z], radius: 3.2 * h / 50, halfHeight: h * 0.3 }));
+  const colliders = trees.map(([x, z, h]) => ({ type: 'cylinder', center: [x, h * 0.3, z], radius: 2.6 * h / ST_H, halfHeight: h * 0.3 }));
   for (const d of [fd, cf]) if (d) { const c = areaCentroid(ringOf(d)); colliders.push({ type: 'cylinder', center: [c[0], 12, c[1]], radius: d === fd ? 45 : 38, halfHeight: 12 }); }
 
   // lighting: calm, slowly drifting purples/blues between shows; Garden Rhapsody (19:45 and 20:45, 15 min) runs fast
@@ -315,6 +303,8 @@ export function buildGardens(city, quality) {
   return {
     group, exclusions, colliders, update,
     reflective: [...staticMeshes],
+    // the grove stands in an open plaza (park trees around it buried the trunks); the garden outliers in small lawns
+    clearings: [{ x: 1666, z: 564, r: 105 }, ...trees.slice(GROVE.length).map(([x, z, h]) => ({ x, z, r: canopyR(1) * h / ST_H + 4 }))],
     pois: [
       { id: 'supertrees', name: 'Supertree Grove', x: 1665, y: 0, z: 555 },
       { id: 'skyway', name: 'OCBC Skyway', x: 1640, y: 22, z: 560 },

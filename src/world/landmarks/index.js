@@ -27,11 +27,12 @@ const BUILDERS = [
 ];
 
 /**
- * @returns {Promise<{group, exclusions, colliders, reflective, update, pois, stats}>}
+ * @returns {Promise<{group, exclusions, colliders, reflective, update, pois, stats, clearings, paint}>} (clearings: plazas
+ * kept free of trees; paint: [OSM building id, wall colour] for buildings the city builder renders)
  */
 export async function createLandmarks({ THREE = THREE_NS, city, renderer, quality = 'high', isWater = () => false } = {}) {
   const group = new THREE.Group(); group.name = 'landmarks';
-  const exclusions = [], colliders = [], reflective = [], pois = [], updaters = [], perLandmark = {}, clearings = [];
+  const exclusions = [], colliders = [], reflective = [], pois = [], updaters = [], perLandmark = {}, clearings = [], paint = [];
   const env = { isWater }; // what builders may ask about the site (the ground mask)
   for (const [name, build] of BUILDERS) {
     // a task boundary between landmarks (awaiting a synchronous builder only queues a microtask, which lets no tap
@@ -44,6 +45,7 @@ export async function createLandmarks({ THREE = THREE_NS, city, renderer, qualit
     reflective.push(...(r.reflective || []));
     pois.push(...(r.pois || []));
     clearings.push(...(r.clearings || []));
+    paint.push(...(r.paint || []));
     if (r.update) updaters.push(r.update);
     let calls = 0; r.group.traverse(o => { if (o.isMesh || o.isPoints) calls++; });
     perLandmark[name] = { tris: triCount(r.group), calls };
@@ -51,7 +53,7 @@ export async function createLandmarks({ THREE = THREE_NS, city, renderer, qualit
   const stats = { tris: Object.values(perLandmark).reduce((a, b) => a + b.tris, 0), calls: Object.values(perLandmark).reduce((a, b) => a + b.calls, 0), perLandmark };
   console.log('[landmarks]', JSON.stringify(stats));
   return {
-    group, exclusions, colliders, reflective, pois, stats, clearings,
+    group, exclusions, colliders, reflective, pois, stats, clearings, paint,
     update(dt, env = {}) { for (const u of updaters) u(dt, env); },
   };
 }

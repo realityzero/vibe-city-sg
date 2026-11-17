@@ -2,7 +2,7 @@
 // and the rippling podium roofs. Positions derived from the OSM footprints of the towers / SkyPark.
 import {
   THREE, U, Bucket, materials, facadeMaterial, nightGlowMaterial, extrudeProfile, frameMatrix, rng, smooth, lerp,
-  ringOf, exclusionsForBuildings, signedArea, fixWinding,
+  ringOf, exclusionsForBuildings, signedArea, fixWinding, extrudeFootprint, capGeometry,
 } from './common.js';
 
 // local frame: +x = along the tower line (NNE), +z = east (towards Gardens by the Bay)
@@ -24,6 +24,55 @@ function skyParkHalfWidth(u) {
   return body;
 }
 
+const LASER_WIDTH = 0.45, LASER_MIN_PX = 1.4;
+/** n beams of length `len` (world space) drawn as one mesh: ribbons facing the camera, origin[i] / dir[i] set per frame */
+class Lasers {
+  constructor(n, len) {
+    this.origin = Array.from({ length: n }, () => new THREE.Vector3());
+    this.dir = Array.from({ length: n }, () => new THREE.Vector3(0, 1, 0));
+    const SEG = 8, beam = [], idx = [];
+    for (let i = 0; i < n; i++) for (let k = 0; k <= SEG; k++) {
+      const v = beam.length / 3;
+      beam.push(i, k / SEG, -1, i, k / SEG, 1);
+      if (k < SEG) idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(beam.length), 3)); // (placed in the shader)
+    g.setAttribute('beam', new THREE.Float32BufferAttribute(beam, 3));
+    g.setIndex(idx);
+    this.uniforms = {
+      uOrigin: { value: this.origin }, uDir: { value: this.dir }, uLen: { value: len }, uColor: { value: new THREE.Color(0x33ff88) },
+      uOpacity: { value: 0 }, uPxH: { value: 1000 },
+    };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: /* glsl */`
+        attribute vec3 beam; // beam index, distance along it (0..1), side of the ribbon (-1 / 1)
+        uniform vec3 uOrigin[${n}], uDir[${n}]; uniform float uLen, uPxH;
+        varying float vFade, vAcross;
+        void main() {
+          int i = int(beam.x + 0.5);
+          vec4 mv = viewMatrix * vec4(uOrigin[i] + uDir[i] * (beam.y * uLen), 1.0);
+          vec3 across = normalize(cross((viewMatrix * vec4(uDir[i], 0.0)).xyz, mv.xyz));
+          // at least LASER_MIN_PX wide: metres per pixel at this depth from the projection and the target height
+          float w = max(${LASER_WIDTH.toFixed(2)}, ${LASER_MIN_PX.toFixed(2)} * 2.0 * -mv.z / (projectionMatrix[1][1] * uPxH));
+          mv.xyz += across * beam.z * w * 0.5;
+          vFade = pow(1.0 - beam.y, 1.6); vAcross = beam.z;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        uniform vec3 uColor; uniform float uOpacity;
+        varying float vFade, vAcross;
+        void main() { gl_FragColor = vec4(uColor * vFade * uOpacity * (1.0 - vAcross * vAcross), 1.0); }`,
+    });
+    this.mesh = new THREE.Mesh(g, mat);
+    this.mesh.name = 'mbs-lasers'; this.mesh.frustumCulled = false; this.mesh.visible = false;
+    // the render target being drawn (main or a post pass target) sets the pixel size
+    const size = new THREE.Vector2();
+    this.mesh.onBeforeRender = r => { const rt = r.getRenderTarget(); this.uniforms.uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
+  }
+}
+
 export function buildMBS(city, quality) {
   const M = materials();
   // hotel towers at night: mostly dark glass with scattered warm rooms (many curtained), no glowing spandrels
@@ -37,7 +86,8 @@ export function buildMBS(city, quality) {
   const bandGlow = nightGlowMaterial(0xfff4e6, 0.35, { base: 0xe9ebec, rough: 0.4, metal: 0.35 });
   const roofMetal = new THREE.MeshStandardMaterial({ color: 0xe4e6e6, roughness: 0.45, metalness: 0.35 });
   const roofGlass = new THREE.MeshStandardMaterial({ color: 0x9fb3ba, roughness: 0.1, metalness: 0.7 });
-  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [3.0, 4.5], frame: [0.04, 0.1, 0.05], lit: 0.8, seed: 11, warm: 0xfff0d0, litIntensity: 1.8 });
+  // retail / expo glazing: tall panes, nearly all lit at night (not an office grid of lit and dark rooms)
+  const podGlass = facadeMaterial({ wall: 0xd8dcde, glass: 0x5d7b86, cell: [4.5, 5.5], frame: [0.03, 0.06, 0.04], lit: 0.97, seed: 11, warm: 0xffeccc, cool: 0xfff4e0, litIntensity: 1.0, curtains: 0.05 });
   const pavilionMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.5 });
 
   const F = frameMatrix(ORIGIN[0], ORIGIN[1], AX[0], AX[1]);
@@ -164,9 +214,20 @@ export function buildMBS(city, quality) {
     const tr = trunkGeo.clone(); tr.translate(u, DECK + 1.2, a); B.add(M.deck, tr, F);
   }
 
-  // ---- podium wave roofs (replace the OSM skillion strips 7063..7095)
+  // ---- podium: the Shoppes / Expo blocks (OSM 7323-7325, drawn by the city as 25 m office slabs) rebuilt as glazed
+  // 16.5 m podiums under the four rippling wave roofs that replace the OSM skillion strips 7053..7095
   const byId = new Map(city.buildings.map(b => [b.id, b]));
-  const groups = [[7063, 7068], [7069, 7082], [7083, 7095]];
+  const PODIUM = [7323, 7324, 7325], PODIUM_H = 16.5;
+  const podiumColliders = [];
+  for (const id of PODIUM) {
+    const b = byId.get(id); if (!b) continue;
+    const r = ringOf(b);
+    B.add(podGlass, extrudeFootprint(r, 0, PODIUM_H, { top: false }));
+    B.add(roofMetal, capGeometry(r, PODIUM_H));
+    const g = extrudeFootprint(r, 0, PODIUM_H);
+    podiumColliders.push({ type: 'trimesh', vertices: new Float32Array(g.attributes.position.array), indices: new Uint32Array([...Array(g.attributes.position.count).keys()]) });
+  }
+  const groups = [[7053, 7062], [7063, 7068], [7069, 7082], [7083, 7095]];
   const waveIds = [];
   const pcaOf = b => {
     const r = ringOf(b); let cx = 0, cz = 0; for (const p of r) { cx += p[0]; cz += p[1]; } cx /= r.length; cz /= r.length;
@@ -227,13 +288,14 @@ export function buildMBS(city, quality) {
       if (u2 < 0) for (let i = 0; i < n2.length; i++) n2[i] = -n2[i];
       B.add(roofGlass, sg);
     }
-    // glazed walls under the highest edge (t = 1) and along the first/last strips
+    // glazed walls under the highest edge (t = 1) and along the first/last strips, a clerestory over the podium roof
+    // along the lowest edge
     const wall = [], wallF = [];
-    const addWall = (pts) => {
+    const addWall = (pts, y0 = 0) => {
       let s = 0;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1]; const l = Math.hypot(b[0] - a[0], b[2] - a[2]);
-        const q = [[a[0], 0, a[2], s], [b[0], 0, b[2], s + l], [b[0], b[1], b[2], s + l], [a[0], a[1], a[2], s]];
+        const q = [[a[0], y0, a[2], s], [b[0], y0, b[2], s + l], [b[0], b[1], b[2], s + l], [a[0], a[1], a[2], s]];
         for (const k of [0, 1, 2, 0, 2, 3]) { wall.push(q[k][0], q[k][1], q[k][2]); wallF.push(q[k][3], q[k][1]); }
         s += l;
       }
@@ -241,6 +303,7 @@ export function buildMBS(city, quality) {
     addWall(rows.map(r => P(r, 1)));
     addWall([...Array(cols + 1).keys()].map(c => P(rows[0], c / cols)));
     addWall([...Array(cols + 1).keys()].map(c => P(rows[rows.length - 1], c / cols)));
+    addWall(rows.map(r => P(r, 0)), PODIUM_H);
     const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wall, 3)); wg.setAttribute('facade', new THREE.Float32BufferAttribute(wallF, 2));
     wg.computeVertexNormals();
     // double-sided feel: duplicate reversed
@@ -256,28 +319,23 @@ export function buildMBS(city, quality) {
   for (const m of meshes) group.add(m);
 
   // ---- Spectra light & water show: thin additive beams from the SkyPark fanning out over the bay toward the Event
-  // Plaza waterfront (shallow angles, sweeping), fading along their length like light scattered by humid air
-  const laserMat = new THREE.MeshBasicMaterial({ color: 0x33ff88, vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-  const beams = new THREE.Group(); beams.name = 'mbs-lasers';
-  const beamGeo = new THREE.CylinderGeometry(0.22, 0.22, 900, 4, 8, true); beamGeo.translate(0, 450, 0);
-  { const P = beamGeo.attributes.position, c = new Float32Array(P.count * 3);
-    for (let i = 0; i < P.count; i++) { const f = Math.pow(1 - P.getY(i) / 900, 1.6); c[i * 3] = c[i * 3 + 1] = c[i * 3 + 2] = f; }
-    beamGeo.setAttribute('color', new THREE.BufferAttribute(c, 3)); }
+  // Plaza waterfront (shallow angles, sweeping), fading along their length like light scattered by humid air.
+  // All beams are one mesh of camera-facing ribbons: a 0.45 m beam is a fraction of a pixel across the bay on a phone
+  // (it broke up into dashes), so each ribbon is widened to at least LASER_MIN_PX on screen.
   const spectra = (city.pois || []).find(p => p.n === 'Spectra') || { x: 994.4, z: 285.8 };
-  const lasers = [];
+  const lasers = new Lasers(8, 900);
+  const aims = [];
   for (let i = 0; i < 8; i++) {
-    const m = new THREE.Mesh(beamGeo, laserMat);
-    const u = lerp(-150, 90, i / 7);
-    const p = new THREE.Vector3(u, DECK + 1, -12).applyMatrix4(F);
-    m.position.copy(p); m.frustumCulled = false;
+    const p = new THREE.Vector3(lerp(-150, 90, i / 7), DECK + 1, -12).applyMatrix4(F);
+    lasers.origin[i].copy(p);
     // home azimuth: toward the Event Plaza, spread a little per beam
-    const aim = Math.atan2(spectra.x - p.x, spectra.z - p.z) + (i - 3.5) * 0.07;
-    beams.add(m); lasers.push({ m, phase: i * 0.7, aim });
+    aims.push(Math.atan2(spectra.x - p.x, spectra.z - p.z) + (i - 3.5) * 0.07);
   }
+  const beams = lasers.mesh;
   group.add(beams);
 
   // colliders: legs as boxes (curved leg approximated by stacked boxes), crown/skypark
-  const colliders = [];
+  const colliders = [...podiumColliders];
   const yaw = Math.atan2(-AX[1], AX[0]);
   const toWorld = (u, y, a) => new THREE.Vector3(u, y, a).applyMatrix4(F);
   for (const uc of TOWERS) {
@@ -290,7 +348,7 @@ export function buildMBS(city, quality) {
   }
   { const c = toWorld(-25, (TOP + DECK) / 2, 0); colliders.push({ type: 'box', center: [c.x, c.y, c.z], half: [171, (DECK - TOP) / 2 + 0.5, 19], yaw }); }
 
-  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
+  const ex = exclusionsForBuildings(city.buildings.filter(b => [153, 154, 830, 831, ...PODIUM].includes(b.id) || waveIds.includes(b.id) || /^Marina Bay Sands Tower|^SkyPark$/.test(b.n || '')));
   const sky = toWorld(110, DECK + 1, 0), lobby = toWorld(-50, 0, -30), base = toWorld(-50, 0, 0);
   const pois = [
     { id: 'mbs', name: 'Marina Bay Sands', x: base.x, y: 0, z: base.z },
@@ -298,24 +356,21 @@ export function buildMBS(city, quality) {
     { id: 'skypark', name: 'Sands SkyPark', x: sky.x, y: sky.y, z: sky.z },
   ];
 
-  const tmpC = new THREE.Color();
-  const dir = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
   function update(dt, env) {
     const t = U.time.value;
     // Spectra light & water show at 20:00 and 21:00 (env.forceShow for testing)
     const h = env.time ?? 12;
     const show = (h >= 20 && h < 20.25) || (h >= 21 && h < 21.25) || env.forceShow;
-    const target = show ? 0.5 : 0;
-    laserMat.opacity += (target - laserMat.opacity) * Math.min(1, dt * 2);
-    beams.visible = laserMat.opacity > 0.01;
+    const u = lasers.uniforms;
+    u.uOpacity.value += ((show ? 0.5 : 0) - u.uOpacity.value) * Math.min(1, dt * 2);
+    beams.visible = u.uOpacity.value > 0.01;
     if (beams.visible) {
-      tmpC.setHSL((t * 0.05) % 1, 1, 0.55); laserMat.color.copy(tmpC);
-      for (const L of lasers) {
-        const az = L.aim + Math.sin(t * 0.45 + L.phase) * 0.55;
+      u.uColor.value.setHSL((t * 0.05) % 1, 1, 0.55);
+      for (let i = 0; i < aims.length; i++) {
+        const phase = i * 0.7, az = aims[i] + Math.sin(t * 0.45 + phase) * 0.55;
         // from slightly down onto the water to a few degrees above the horizon
-        const tilt = -0.2 + 0.26 * (0.5 + 0.5 * Math.sin(t * 0.31 + L.phase * 1.7));
-        dir.set(Math.sin(az) * Math.cos(tilt), Math.sin(tilt), Math.cos(az) * Math.cos(tilt));
-        L.m.quaternion.setFromUnitVectors(up, dir);
+        const tilt = -0.2 + 0.26 * (0.5 + 0.5 * Math.sin(t * 0.31 + phase * 1.7));
+        lasers.dir[i].set(Math.sin(az) * Math.cos(tilt), Math.sin(tilt), Math.cos(az) * Math.cos(tilt));
       }
     }
   }

@@ -93,11 +93,11 @@ export function buildSkyline(city, quality) {
   // ===================================================== CapitaSpring (88 Market St, 280 m)
   if (has(7585)) {
     const T = ring(7585);
-    B.add(finGlass, extrudeFootprint(CAPITASPRING_SITE, 0, 22));
+    B.add(finGlass, extrudeFootprint(CAPITASPRING_SITE, 0, 22, { top: false })); // (roofed by the planter: no coplanar cap to z-fight)
     B.add(M.planter, capGeometry(CAPITASPRING_SITE, 22.05));
     const oasis0 = 92, oasis1 = 114, top = 268;
     B.add(finGlass, extrudeFootprint(T, 22, oasis0, { top: false }));
-    B.add(finGlass, extrudeFootprint(T, oasis1, top));
+    B.add(finGlass, extrudeFootprint(T, oasis1, top, { top: false }));
     addFins(T, 26, oasis0); addFins(T, oasis1, top - 0.5);
     // Green Oasis: four open storeys of jungle wrapped round a central core, with slender columns
     B.add(M.white, extrudeFootprint(offsetRing(T, 0.3), oasis0, oasis0 + 0.9));
@@ -121,7 +121,7 @@ export function buildSkyline(city, quality) {
   if (has(5706) && has(5709)) {
     const low = ring(5706), up = ring(5709), annex = has(5710) ? ring(5710) : null;
     B.add(finGlass, extrudeFootprint(low, 0, 180, { top: true }));
-    if (annex) { B.add(finGlass, extrudeFootprint(annex, 0, 100)); planterTop(annex, 100.05, 8, 0); }
+    if (annex) { B.add(finGlass, extrudeFootprint(annex, 0, 100, { top: false })); planterTop(annex, 100.05, 8, 0); }
     B.add(finGlass, extrudeFootprint(up, 180, 282));
     addFins(low, 8, 180, 1.9); addFins(up, 180, 282, 1.9);
     // stepped crown: three receding tiers with lit edges
@@ -179,7 +179,7 @@ export function buildSkyline(city, quality) {
     // three tower blocks with horizontal white bands
     for (const id of [5721, 5722, 5723, 5724, 5725]) if (has(id)) {
       const b = byId.get(id); const r = ring(id);
-      B.add(pickGlass, extrudeFootprint(r, 26, b.h));
+      B.add(pickGlass, extrudeFootprint(r, 26, b.h, { top: false }));
       planterTop(r, b.h + 0.05, 3, 4);
       colliders.push(boxCollider(r, 26, b.h));
     }
@@ -222,7 +222,7 @@ export function buildSkyline(city, quality) {
   {
     for (const id of [6168, 6169]) if (has(id)) {
       const b = byId.get(id); const r = ring(id);
-      B.add(louvre, extrudeFootprint(r, 0, b.h));
+      B.add(louvre, extrudeFootprint(r, 0, b.h, { top: false }));
       for (let y = 14; y < b.h - 6; y += 13.2) {
         const lr = offsetRing(r, 1.1);
         B.add(warmBand, sidesOnly(lr, y, y + 0.7));

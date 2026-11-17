@@ -206,7 +206,8 @@ async function loadMask(url) {
   return { w, h, data };
 }
 
-async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, quality = 'high' }) {
+async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSize = 300, quality = 'high' }) {
+  const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
   progress(0.02, 'Downloading OpenStreetMap Singapore');
@@ -382,7 +383,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
     const base = b.m || 0;
     const ch = chunk(b.noPhys ? coarseKey(cx, cz) : chunkKey(cx, cz));
     // colours
-    let wallHex = b.c;
+    let wallHex = painted.get(b.id) ?? b.c;
     let palette = style === STYLE.glass ? PAL.glass : style === STYLE.office ? PAL.office : style === STYLE.resi ? PAL.resi : style === STYLE.hdb ? PAL.hdb : style === STYLE.shophouse ? PAL.shophouse : style === STYLE.civic ? PAL.civic : style === STYLE.industrial ? PAL.industrial : style === STYLE.parking ? PAL.parking : style === STYLE.station ? PAL.station : style === STYLE.canopy ? PAL.canopy : PAL.lowrise;
     if (wallHex == null || wallHex < 0) wallHex = pick(palette, seed);
     let wallCol = srgbToLin(c3(wallHex));

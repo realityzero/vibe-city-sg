@@ -1,6 +1,7 @@
 // The Merlion (8.6 m): lion head with a curly mane on a scaled fish body rising from sculpted waves,
 // spouting a water jet into Marina Bay. Plus the Merlion cub behind it.
 import { THREE, U, Bucket, canvasTexture, rng, lerp, smooth, circlePoly, frameFromAngle, uplitMaterial } from './common.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WATER_LEVEL } from '../../core/constants.js';
 
 function scaleTexture() {
@@ -132,29 +133,51 @@ function varTube(curve, rad, segs, radial) {
   return g;
 }
 
-/** GPU particle water jet following a parabola from `mouth` with initial velocity `v0` (world space). */
-function waterJet(mouth, v0, { count = 700, size = 0.9, spread = 0.18, water = WATER_LEVEL } = {}) {
+/**
+ * The statues' water jets: GPU particles following a parabola from each mouth plus a continuous core stream, all jets
+ * in one Points and one stream mesh. jets: [{ mouth, v0 (world space), count, size, spread, water }]
+ */
+function waterJets(jets) {
+  const total = jets.reduce((n, j) => n + j.count, 0);
+  const seeds = new Float32Array(total * 4), launch = new Float32Array(total * 4), vel = new Float32Array(total * 4), drop = new Float32Array(total * 2);
+  const R = rng(3), arcs = [], tubes = [];
+  let i = 0;
+  for (const { mouth, v0, count, size, spread, water } of jets) {
+    const tLand = (v0.y + Math.sqrt(v0.y * v0.y + 2 * 9.81 * (mouth.y - water))) / 9.81;
+    for (let k = 0; k < count; k++, i++) {
+      seeds.set([R(), R() * 2 - 1, R() * 2 - 1, R()], i * 4);
+      launch.set([mouth.x, mouth.y, mouth.z, size], i * 4);
+      vel.set([v0.x, v0.y, v0.z, tLand], i * 4);
+      drop.set([spread, water], i * 2);
+    }
+    // continuous core stream
+    const pts = []; for (let k = 0; k <= 24; k++) { const t = k / 24 * tLand; pts.push(new THREE.Vector3(mouth.x + v0.x * t, mouth.y + v0.y * t - 4.905 * t * t, mouth.z + v0.z * t)); }
+    arcs.push(...pts);
+    tubes.push(varTube(new THREE.CatmullRomCurve3(pts), t => lerp(0.13, 0.42, t) * (size / 0.9), 48, 10));
+  }
   const g = new THREE.BufferGeometry();
-  const seeds = new Float32Array(count * 4);
-  const R = rng(3);
-  for (let i = 0; i < count; i++) { seeds[i * 4] = R(); seeds[i * 4 + 1] = R() * 2 - 1; seeds[i * 4 + 2] = R() * 2 - 1; seeds[i * 4 + 3] = R(); }
-  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(count * 3), 3));
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(total * 3), 3));
   g.setAttribute('seed', new THREE.Float32BufferAttribute(seeds, 4));
-  const tLand = (v0.y + Math.sqrt(v0.y * v0.y + 2 * 9.81 * (mouth.y - water))) / 9.81;
+  g.setAttribute('launch', new THREE.Float32BufferAttribute(launch, 4));
+  g.setAttribute('vel', new THREE.Float32BufferAttribute(vel, 4));
+  g.setAttribute('drop', new THREE.Float32BufferAttribute(drop, 2));
+  // (positions come from the shader: bound the arcs and their splashes for culling)
+  g.boundingSphere = new THREE.Sphere().setFromPoints(arcs); g.boundingSphere.radius += 3;
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { uTime: U.time, uMouth: { value: mouth.clone() }, uV0: { value: v0.clone() }, uLand: { value: tLand }, uSize: { value: size }, uSpread: { value: spread }, uNight: U.night, uWater: { value: water } },
+    uniforms: { uTime: U.time, uNight: U.night, uPxH: { value: 1000 } },
     vertexShader: /* glsl */`
       #include <common>
       #include <logdepthbuf_pars_vertex>
-      attribute vec4 seed; uniform float uTime, uLand, uSize, uSpread, uWater; uniform vec3 uMouth, uV0;
+      attribute vec4 seed, launch, vel; attribute vec2 drop; uniform float uTime, uPxH;
       varying float vA;
       void main() {
+        float uLand = vel.w, uWater = drop.y;
         float life = uLand * 1.25;
         float t = fract(uTime / life + seed.x) * life;
-        vec3 jitter = vec3(seed.y, seed.z * 0.6, seed.w * 2.0 - 1.0) * uSpread;
-        vec3 v = uV0 * (0.96 + 0.08 * seed.w) + jitter * 2.0;
-        vec3 p = uMouth + v * t + vec3(0.0, -4.905, 0.0) * t * t;
+        vec3 jitter = vec3(seed.y, seed.z * 0.6, seed.w * 2.0 - 1.0) * drop.x;
+        vec3 v = vel.xyz * (0.96 + 0.08 * seed.w) + jitter * 2.0;
+        vec3 p = launch.xyz + v * t + vec3(0.0, -4.905, 0.0) * t * t;
         vA = 1.0;
         if (p.y < uWater + 0.05) {
           // splash: bounce up a little and fade
@@ -163,7 +186,8 @@ function waterJet(mouth, v0, { count = 700, size = 0.9, spread = 0.18, water = W
         }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = uSize * (1.0 + t * 0.8) * 300.0 / -mv.z;
+        // droplet clusters of launch.w metres, never under 1.5 px: the arc must read across the bay on a phone
+        gl_PointSize = max(1.5, launch.w * (1.0 + t * 0.8) * projectionMatrix[1][1] * 0.5 * uPxH / -mv.z);
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */`
@@ -174,16 +198,14 @@ function waterJet(mouth, v0, { count = 700, size = 0.9, spread = 0.18, water = W
         vec2 c = gl_PointCoord - 0.5; float d = dot(c, c);
         if (d > 0.25) discard;
         float a = (1.0 - d * 4.0) * 0.55 * vA;
-        // unlit spray: at night it only catches the floodlights (dimmer, slightly warm), not daylight
-        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.36, 0.38, 0.4), uNight);
+        // unlit spray: at night it catches the floodlights on the deck (warm white)
+        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.85, 0.78, 0.66), uNight);
         gl_FragColor = vec4(col, a);
       }`,
   });
-  const pts = new THREE.Points(g, mat); pts.frustumCulled = false;
-  // continuous core stream
-  const curvePts = []; for (let i = 0; i <= 24; i++) { const t = i / 24 * tLand; curvePts.push(new THREE.Vector3(mouth.x + v0.x * t, mouth.y + v0.y * t - 4.905 * t * t, mouth.z + v0.z * t)); }
-  const curve = new THREE.CatmullRomCurve3(curvePts);
-  const tube = varTube(curve, t => lerp(0.13, 0.42, t) * (size / 0.9), 48, 10);
+  const pts = new THREE.Points(g, mat);
+  const size = new THREE.Vector2();
+  pts.onBeforeRender = r => { const rt = r.getRenderTarget(); mat.uniforms.uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
   const tubeMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: { uTime: U.time, uNight: U.night },
@@ -195,10 +217,10 @@ function waterJet(mouth, v0, { count = 700, size = 0.9, spread = 0.18, water = W
         #include <logdepthbuf_fragment>
         float n = h(floor(vec2(vUv.x * 6.0, vUv.y * 40.0 - uTime * 30.0)));
         float a = (0.35 + 0.35 * n) * (1.0 - vUv.y * 0.35);
-        vec3 col = mix(vec3(0.95,0.97,1.0), vec3(0.4,0.42,0.44), uNight);
+        vec3 col = mix(vec3(0.95,0.97,1.0), vec3(0.88,0.8,0.68), uNight);
         gl_FragColor = vec4(col, a); }`,
   });
-  const stream = new THREE.Mesh(tube, tubeMat); stream.frustumCulled = false;
+  const stream = new THREE.Mesh(mergeGeometries(tubes, false), tubeMat);
   const grp = new THREE.Group(); grp.add(pts, stream);
   return grp;
 }
@@ -250,9 +272,9 @@ function plazaGeometry(isWater) {
 }
 
 export function buildMerlion(city, quality, renderer, env = {}) {
-  // floodlit warm-white from the deck at night (strongest on the fish body, softer up on the head)
-  const body = uplitMaterial(0xfff0dc, 0.12, { y0: 0, y1: 11, floor: 0.3, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
-  const stone = uplitMaterial(0xfff0dc, 0.07, { y0: 0, y1: 4, floor: 0.2, base: 0xe6e1d6, rough: 0.7 });
+  // floodlit warm-white from the deck at night: brightest at the foot, the whole statue still lit up to the mane
+  const body = uplitMaterial(0xffe6c4, 0.3, { y0: 0, y1: 15, floor: 0.4, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
+  const stone = uplitMaterial(0xffe6c4, 0.22, { y0: 0, y1: 15, floor: 0.4, base: 0xe6e1d6, rough: 0.7 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2c2a27, roughness: 0.9 });
   const plinth = new THREE.MeshStandardMaterial({ color: 0xb8b0a2, roughness: 0.85 });
   const group = new THREE.Group(); group.name = 'Merlion';
@@ -262,28 +284,31 @@ export function buildMerlion(city, quality, renderer, env = {}) {
     { x: 612.5, z: 22.5, yaw: -0.12, scale: 1.25, name: 'Merlion', id: 'merlion', water: WATER_LEVEL, hero: true },
     { x: 590, z: 22.4, yaw: -0.05, scale: 0.26, name: 'Merlion Cub', id: 'merlion_cub', water: 0.6 },
   ];
+  const B = new Bucket(), jets = []; // both statues: one draw per material, one for their jets
   for (const s of statues) {
-    const B = new Bucket();
-    const { mouth } = merlionGeometry(B, { body, stone, dark, base: plinth }, 7);
+    const S = new Bucket();
+    const { mouth } = merlionGeometry(S, { body, stone, dark, base: plinth }, 7);
     // platform the statue stands on (main merlion: semicircular viewing deck at the water's edge)
     if (s.hero) {
-      const deck = new THREE.CylinderGeometry(4.2, 4.4, 1.8, 32); deck.translate(0, -0.9 + 0.02, 0); B.add(plinth, deck);
+      const deck = new THREE.CylinderGeometry(4.2, 4.4, 1.8, 32); deck.translate(0, -0.9 + 0.02, 0); S.add(plinth, deck);
     } else {
-      const ped = new THREE.CylinderGeometry(2.6, 2.8, 2.2, 20); ped.translate(0, -1.1, 0); B.add(plinth, ped);
-      const basin = new THREE.TorusGeometry(5.5, 0.35, 6, 32); basin.rotateX(Math.PI / 2); basin.translate(6, -2.4, 0); B.add(plinth, basin);
+      const ped = new THREE.CylinderGeometry(2.6, 2.8, 2.2, 20); ped.translate(0, -1.1, 0); S.add(plinth, ped);
+      const basin = new THREE.TorusGeometry(5.5, 0.35, 6, 32); basin.rotateX(Math.PI / 2); basin.translate(6, -2.4, 0); S.add(plinth, basin);
     }
     const F = frameFromAngle(s.x, s.z, s.yaw, s.hero ? 0.02 : 0.6);
     F.multiply(new THREE.Matrix4().makeScale(s.scale, s.scale, s.scale));
-    const meshes = B.build({ name: s.id });
-    for (const m of meshes) { m.geometry.applyMatrix4(F); m.geometry.computeBoundingSphere(); group.add(m); }
+    B.addBucket(S, F);
     // jet in world space
-    const wMouth = mouth.clone().applyMatrix4(F);
     const dir = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
-    const v0 = dir.multiplyScalar(7.2 * Math.sqrt(s.scale)).add(new THREE.Vector3(0, 1.6 * Math.sqrt(s.scale), 0));
-    group.add(waterJet(wMouth, v0, { count: s.hero ? 700 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1 }));
+    jets.push({
+      mouth: mouth.clone().applyMatrix4(F), v0: dir.multiplyScalar(7.2 * Math.sqrt(s.scale)).add(new THREE.Vector3(0, 1.6 * Math.sqrt(s.scale), 0)),
+      count: s.hero ? 700 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1,
+    });
     pois.push({ id: s.id, name: s.name, x: s.x, y: 0, z: s.z });
     colliders.push({ type: 'cylinder', center: [s.x, 4.3 * s.scale, s.z], radius: 2.5 * s.scale, halfHeight: 4.3 * s.scale });
   }
+  for (const m of B.build({ name: 'merlion' })) group.add(m);
+  group.add(waterJets(jets));
   const plaza = env.isWater && plazaGeometry(env.isWater);
   if (plaza) {
     const m = new THREE.Mesh(plaza, new THREE.MeshStandardMaterial({ map: graniteTexture(), roughness: 0.78, metalness: 0 }));

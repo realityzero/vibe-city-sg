@@ -1,10 +1,42 @@
 // Singapore Flyer: 165 m observation wheel (150 m diameter), 28 capsules mounted outside the rim, cable spokes,
 // A-frame supports and the terminal building. The wheel turns slowly (~30 min per revolution).
-import { THREE, U, Bucket, materials, nightGlowMaterial, frameMatrix, ringOf, exclusionsForBuildings, strut, lerp, facadeMaterial, extrudeFootprint, areaCentroid } from './common.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import {
+  THREE, U, Bucket, materials, nightGlowMaterial, frameMatrix, ringOf, exclusionsForBuildings, strut, facadeMaterial, extrudeFootprint, offsetRing,
+  signedArea, blobTree, rng, capGeometry,
+} from './common.js';
 
 const CENTER = [1572, -266.5];
 const DIR = [0.7897, -0.6134];   // wheel plane (horizontal component)
 const HUB_Y = 90, RADIUS = 75, CAPS = 28;
+// the terminal: three stepped storeys round a rainforest courtyard (OSM parts, ground floor first); the wheel turns
+// down into the courtyard, where the lowest capsule meets the boarding deck. The roofs stay below 14 m: the capsules
+// clear the courtyard's edge above that.
+const TERMINAL = [[8352, 0, 5], [8351, 5, 9.5], [8350, 9.5, 14]], BOARD_Y = 7;
+
+/** walls facing into a courtyard ring (extrudeFootprint faces out) */
+function innerWalls(ring, y0, y1) {
+  const g = extrudeFootprint(ring, y0, y1, { top: false });
+  for (const a of Object.values(g.attributes)) {
+    const v = a.array, n = a.itemSize;
+    for (let t = 0; t < v.length / (3 * n); t++) for (let k = 0; k < n; k++) { const i = (t * 3 + 1) * n + k, j = (t * 3 + 2) * n + k; [v[i], v[j]] = [v[j], v[i]]; }
+  }
+  const nn = g.attributes.normal.array; for (let i = 0; i < nn.length; i++) nn[i] = -nn[i];
+  return g;
+}
+/** flat roof over a ring with a courtyard hole, facing up */
+function annulus(outer, hole, y) {
+  const o = signedArea(outer) < 0 ? outer.slice().reverse() : outer, h = signedArea(hole) > 0 ? hole.slice().reverse() : hole, all = [...o, ...h];
+  const pos = [];
+  for (const t of THREE.ShapeUtils.triangulateShape(o.map(p => new THREE.Vector2(p[0], p[1])), [h.map(p => new THREE.Vector2(p[0], p[1]))])) {
+    const [a, b, c] = t.map(k => all[k]);
+    // wound to face up: (b - a) x (c - a) has y = dz1 * dx2 - dx1 * dz2
+    const up = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]) > 0;
+    for (const q of up ? [a, b, c] : [a, c, b]) pos.push(q[0], y, q[1]);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  return g;
+}
 
 export function buildFlyer(city, quality) {
   const M = materials();
@@ -32,16 +64,34 @@ export function buildFlyer(city, quality) {
   }
   const axle = new THREE.CylinderGeometry(2.2, 2.2, 28, 16); axle.rotateX(Math.PI / 2); axle.translate(0, HUB_Y, 0);
   S.add(M.steel, axle);
-  // terminal building
-  const term = city.buildings.find(b => b.id === 51761904 || (b.n === 'Singapore Flyer' && b.p.length > 40));
-  const termMat = facadeMaterial({ wall: 0xe9ecee, glass: 0x456070, cell: [3.2, 4.2], frame: [0.03, 0.08, 0.1], lit: 0.85, seed: 21, warm: 0xfff3dc });
-  const statics = [];
-  if (term) {
-    const g = extrudeFootprint(ringOf(term), 0, 12.5);
-    const tm = new THREE.Mesh(g, termMat); tm.castShadow = tm.receiveShadow = true; statics.push(tm);
-    const roof = extrudeFootprint(ringOf(term).map(([x, z]) => { const c = areaCentroid(ringOf(term)); return [c[0] + (x - c[0]) * 1.02, c[1] + (z - c[1]) * 1.02]; }), 12.5, 13.6);
-    const rm = new THREE.Mesh(roof, M.white); rm.castShadow = rm.receiveShadow = true; statics.push(rm);
+  // terminal building (in the wheel's frame: x along the wheel, z across it)
+  const termMat = facadeMaterial({ wall: 0xe9ecee, glass: 0x456070, cell: [3.2, 4.2], frame: [0.03, 0.08, 0.1], lit: 0.85, seed: 21, warm: 0xfff3dc, wallGlow: 0.1 });
+  const toLocal = ([x, z]) => { const dx = x - CENTER[0], dz = z - CENTER[1]; return [dx * DIR[0] + dz * DIR[1], -dx * DIR[1] + dz * DIR[0]]; };
+  const byId = new Map(city.buildings.map(b => [b.id, b]));
+  const termCollider = [];
+  for (const [id, y0, y1] of TERMINAL) {
+    const b = byId.get(id); if (!b) continue;
+    const outer = ringOf(b).map(toLocal), hole = b.ho?.length ? ringOf({ p: b.ho[0] }).map(toLocal) : null; // (holes are flat x,z lists too)
+    const walls = extrudeFootprint(outer, y0, y1, { top: false });
+    S.add(termMat, walls); termCollider.push(walls);
+    S.add(white, extrudeFootprint(offsetRing(outer, 0.35), y1 - 0.7, y1 + 0.25, { top: false })); // white roof edge
+    if (hole) {
+      const inner = innerWalls(hole, y0, y1); S.add(termMat, inner); termCollider.push(inner);
+      const roof = annulus(outer, hole, y1); S.add(M.concrete, roof); termCollider.push(roof);
+      if (y0 === 0) {
+        // the rainforest courtyard, kept clear along the wheel
+        S.add(M.planter, capGeometry(hole, 0.04));
+        const R = rng(9), cz = hole.reduce((a, p) => a + p[1], 0) / hole.length;
+        for (let i = 0; i < 26; i++) {
+          const p = hole[(R() * hole.length) | 0], k = 0.2 + R() * 0.7, x = p[0] * k, z = cz + (p[1] - cz) * k;
+          if (Math.abs(z) > 9) for (const g of blobTree(x, 0, z, 1.3 + R() * 0.8, R)) S.add(M.foliageSolid, g);
+        }
+      }
+    }
   }
+  // boarding deck under the lowest capsule, on slim columns
+  S.add(white, new THREE.BoxGeometry(30, 0.6, 12).translate(0, BOARD_Y - 0.3, 0));
+  for (const x of [-12, 0, 12]) for (const z of [-4.5, 4.5]) S.add(M.steel, new THREE.CylinderGeometry(0.3, 0.3, BOARD_Y - 0.6, 8).translate(x, (BOARD_Y - 0.6) / 2, z));
   const sMeshes = S.build({ name: 'flyer-static' });
   sMeshes.forEach(m => { m.matrixAutoUpdate = true; group.add(m); });
 
@@ -74,6 +124,7 @@ export function buildFlyer(city, quality) {
     W.add(rimMat, strut(new THREE.Vector3(Math.cos(a) * RADIUS, Math.sin(a) * RADIUS, 0), new THREE.Vector3(Math.cos(a) * (RADIUS + 3.2), Math.sin(a) * (RADIUS + 3.2), 0), 0.5, 6));
   }
   const ledMat = nightGlowMaterial(0x9fd8ff, 5.0, { base: 0xdfe3e6, rough: 0.35, metal: 0.6 });
+  ledMat.userData.ownDraw = true; // its hue cycles at night (update below)
   for (const z of [-3.5, 3.5]) { const t = new THREE.TorusGeometry(RADIUS + 0.9, 0.22, 4, 200); t.translate(0, 0, z); W.add(ledMat, t); }
   const wMeshes = W.build({ name: 'flyer-wheel', castShadow: true });
   wMeshes.forEach(m => { m.matrixAutoUpdate = true; wheel.add(m); });
@@ -85,7 +136,9 @@ export function buildFlyer(city, quality) {
   const capFrame = new THREE.CylinderGeometry(2.15, 2.15, 0.5, 14, 1); capFrame.rotateX(Math.PI / 2);
   const capsInst = new THREE.InstancedMesh(capGeo, capMat, CAPS);
   const frameInst = new THREE.InstancedMesh(capFrame, M.steel, CAPS * 2);
-  capsInst.frustumCulled = frameInst.frustumCulled = false;
+  // they orbit the hub: bound the whole circle once rather than recomputing it from the instances every frame
+  capsInst.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, HUB_Y, 0), RADIUS + 8);
+  frameInst.boundingSphere = capsInst.boundingSphere.clone();
   group.add(capsInst, frameInst);
 
   const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
@@ -101,16 +154,20 @@ export function buildFlyer(city, quality) {
   };
   placeCaps();
 
-  statics.forEach(s => { s.matrixAutoUpdate = false; s.updateMatrix(); });
   const root = new THREE.Group(); root.name = 'SingaporeFlyerRoot';
-  root.add(group); statics.forEach(s => root.add(s));
+  root.add(group);
 
   const ids = new Set([51761904, 230082125]);
   const ex = exclusionsForBuildings(city.buildings.filter(b => (b.id >= 6253 && b.id <= 6281) || (b.id >= 8350 && b.id <= 8352) || b.n === 'Singapore Flyer' || ids.has(b.id)));
   const cx = CENTER[0], cz = CENTER[1];
   const yaw = Math.atan2(-DIR[1], DIR[0]);
   const colliders = [];
-  if (term) colliders.push({ type: 'cylinder', center: [areaCentroid(ringOf(term))[0], 6.5, areaCentroid(ringOf(term))[1]], radius: 48, halfHeight: 6.5 });
+  if (termCollider.length) {
+    // the terminal's walls and roofs, in world space
+    const g = mergeGeometries(termCollider.map(t => { const c = new THREE.BufferGeometry(); c.setAttribute('position', t.attributes.position.clone()); return c.applyMatrix4(F); }), false);
+    const v = g.attributes.position.array;
+    colliders.push({ type: 'trimesh', vertices: new Float32Array(v), indices: new Uint32Array([...Array(v.length / 3).keys()]) });
+  }
   for (const side of [-1, 1]) for (const sx of [-1, 1]) {
     const fx = cx + DIR[0] * sx * 20 + (-DIR[1]) * side * 36, fz = cz + DIR[1] * sx * 20 + DIR[0] * side * 36;
     colliders.push({ type: 'cylinder', center: [fx, 8, fz], radius: 2.2, halfHeight: 8 });
