@@ -79,6 +79,10 @@ for a while, so allocation *churn* during the load matters as well as what stays
   with `ArrayBuffer.transfer` (old memory released at once, not at the next GC); vertices go through the positional
   writers (`wv/sv/rv/dv`, `p1..p4`) — no object or array literal, spread or string key per vertex. Its output is
   checked bit-identical with `tests/mobile/workerhash.mjs`; `tests/mobile/workermem.mjs` / `workerallocs.mjs` measure it.
+- **Road network** (`world/roadnet.js`): every lane, sidewalk and junction-connector point lives in one packed
+  `PathStore` (doubles; a `Path` is an offset + count into it), built with scalar math — no array per point or typed
+  array per path. `tests/mobile/roadnethash.mjs` fingerprints everything it builds (bit-identical refactors) and
+  reports the build's allocations.
 - Static textures drop their canvases / bitmaps after upload (`gfx/texrelease.js`); static geometry drops its arrays
   (`gfx/geomrelease.js`) and stores unit normals as normalized `Int8x4` (also the worker's output). Vehicle atlases go
   to the GPU at half size on Low (`setAtlasGpuScale`) — what a ~630 px wide phone render samples anyway.
@@ -107,7 +111,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   categories), `longtasks.mjs` / `cpuwindow.mjs` (load tasks at 1.6x CPU throttle ≈ A14), `visual.mjs` (PSNR A/B of
   fixed views against a variant or another build), `gpusplit.mjs` (frame cost by subsystem at phone settings),
   `gpubuffers.mjs`, `drawcalls.mjs`, `textures.mjs`, `programs.mjs`, `uilayers.mjs`, `census.mjs`, `allocs.mjs`,
-  `workermem.mjs` / `workerallocs.mjs` / `workerhash.mjs`, `steptimes.mjs` (load time at 1.6x), `wkattr.mjs`.
+  `workermem.mjs` / `workerallocs.mjs` / `workerhash.mjs`, `roadnethash.mjs`, `steptimes.mjs` (load time at 1.6x),
+  `wkattr.mjs`, `turns.mjs` / `trafficcpu.mjs` (AI traffic).
 
 ## Physics, driving and placement
 - Physics steps at a fixed 60 Hz. Bodies are drawn at `lerp(previous, current, alpha)` (`PoseInterp` in physics.js,
@@ -119,6 +124,18 @@ for a while, so allocation *churn* during the load matters as well as what stays
   ramped pedals (brake wins over throttle; reverse after a short stop), brakes as impulses (force × h), yaw-rate assist,
   inertia-normalised bike balance, support-faded downforce. Parked cars may sleep; input or impacts wake them.
   `tests/drivefeel.mjs [60|120|var] [car]` measures judder (car velocity jerk, camera-relative shake, seat offset).
+- **AI traffic** (`entities/traffic.js`) moves on the lane graph (progress `s` along lanes / junction connectors, IDM
+  car-following with per-driver temperament) but is drawn as a kinematic bicycle: the rear axle rolls along its heading,
+  the front wheels steer by pure pursuit of the route ahead, so the heading only changes as the car rolls; `s` is kept
+  at the body's projection. Speed is planned for the bends ahead (`Path.bends()`: comfortable lateral acceleration,
+  gentle braking before the corner), indicators blink before and through turns, bodies roll / dive / squat on a spring
+  (`TrafficRenderer.setTransform` tilt: body only, wheels stay down). Junctions: amber commits a car that can't stop
+  smoothly; merges and crossings resolve first come, first through. Beyond 140 / 200 m from the camera a car is driven
+  every 2nd / 3rd frame. Spawns favour what the camera faces: within 180 m in view only where a building hides the spot
+  (one sight test a tick), and with the quota full a car far behind the camera is let go every 1.5 s.
+  `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration, jerk, turn speeds, off-line distance,
+  overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right turn from above);
+  `tests/mobile/trafficcpu.mjs` times `Traffic.update` at phone settings.
 - The follow camera uses frame-rate independent smoothing, a softer vertical follow and a fast-but-not-instant pull-in.
   Small props have no colliders; trees get solid trunks near the player from a pool of static cylinders
   (`world/treecolliders.js`, group `PROP`: cars and Tommy hit them, wheel rays and the camera ray don't).
