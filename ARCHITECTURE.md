@@ -188,6 +188,9 @@ for a while, so allocation *churn* during the load matters as well as what stays
 - `TreeColliders.trunkNear` also answers for furniture (people walk round it); sturdy pieces get low colliders.
 - Low halls holding a food centre (OSM name or POI) are built as hawker centres: a 3.4 m colonnade with tables round
   the stalls (facade flag 6) under a hipped roof. Long shophouse walls are rows of ~5.5 m units in their own pastels.
+- Chinatown's lantern strings (`world/streetprops.js`) are strung only where rays from the street find a facade on
+  both sides, and never through a street tree's crown. Every building outline (and each landmark footprint) is stamped
+  into the builder's occupancy grid before trees are planted, so no crown grows through a roof.
 
 ## Street life (pedestrians)
 - The crowd lives around the **camera** (`Pedestrians.viewer`), not the player, and is spent where it looks: walkers
