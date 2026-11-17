@@ -2,6 +2,7 @@
 // building walls/roofs (chunked), road ribbons + junctions + bridges, footways, seawalls, tree placements, physics meshes.
 // Output buffers are transferred back to the main thread.
 import earcut from 'earcut';
+import { buildStreetscape } from './streetscape.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -238,7 +239,7 @@ async function loadMask(url) {
   return { w, h, data };
 }
 
-async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSize = 300, quality = 'high' }) {
+async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
@@ -372,6 +373,13 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
   const excluded = (x, z) => excl.some(p => pip(x, z, p));
   let nb = 0, wallTris = 0, roofTris = 0;
   const buildingInfo = []; // for main thread: footprint centroid/height (used by radar, missions, vegetation)
+  // collected for the street furniture (streetscape.js): shopfront points, pier-side pot spots, shophouse back walls,
+  // HDB blocks, and table spots in void decks and hawker colonnades
+  const shopFronts = [], piers = [], shopBacks = [], hdbBlocks = [], colonnade = [];
+  // hawker centres: low halls named as one, or holding one (OSM puts most as a POI inside a plain building)
+  const HAWKER = /food cent(re|er)|hawker|cooked food/i, hawkerPois = city.pois.filter(p => HAWKER.test(p.n || ''));
+  const isHawkerHall = (b, ring, area) => !b.noPhys && (b.m || 0) < 0.5 && b.h <= 21 && (b.l || 1) <= 3 && area > 600
+    && (HAWKER.test(b.n || '') || hawkerPois.some(p => pip(p.x, p.z, ring)));
   // ---- procedural outskirts: HDB estates and condos beyond the OSM bbox so the skyline doesn't end
   const outskirts = [];
   {
@@ -411,7 +419,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
     const holes = (b.ho || []).map(ringOf).filter(h => h.length >= 3).map(h => (area2(h) > 0 ? h.reverse() : h));
     const seed = hash1(b.id + 0.5);
     const style = b.s;
-    const top = b.h;
+    const hawker = isHawkerHall(b, outer, Math.abs(area2(outer)) / 2);
+    // (a single-storey hall's OSM height is its roof's; the stalls stand under a 4.6 m colonnade below it)
+    const top = hawker ? Math.min(b.h, 4.5 * (b.l || 1) + 3) : b.h;
     const base = b.m || 0;
     const ch = chunk(b.noPhys ? coarseKey(cx, cz) : chunkKey(cx, cz));
     // colours
@@ -422,15 +432,17 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
     if (style === STYLE.glass && b.c != null) wallCol = mixc(wallCol, srgbToLin(c3(pick(PAL.glass, seed))), 0.5);
     // accent colour packed into aF2.w as hue index for HDB/shophouse shutters, + 128 * building use (tools/building-uses.mjs:
     // only retail/unknown buildings get shopfronts and signboards; hospitals, schools, offices, hotels... get lobbies)
-    const accent = Math.floor(hash1(b.id * 3.1) * 8) + 128 * (b.u || 0);
+    const accent = Math.floor(hash1(b.id * 3.1) * 8) + 128 * (hawker ? 1 : b.u || 0);
     // aF2.z: the block number from an OSM name like "Blk 5" (hospital entrance plaques), 0 when there is none
     const blkM = b.n && /^(?:Blk|Block)\s*(\d{1,3})\b/i.exec(b.n), blockNo = blkM ? +blkM[1] : 0;
     let roofShape = b.r || 0;
     let roofH = roofShape ? (b.rh || 2) : 0;
+    if (hawker && !roofShape) { roofShape = 2; roofH = Math.min(3.5, Math.sqrt(Math.abs(area2(outer)) / 2) * 0.09); }
     if (style === STYLE.shophouse && !roofShape && top < 18 && seed < 0.85) { roofShape = 1; roofH = Math.min(3.2, 1.2 + seed * 2.5); }
     // shophouses: the OSM height usually includes the roof; keep the pitch modest and extend the walls so every floor shows
     let topAdj = top;
     if (style === STYLE.shophouse && roofShape) { roofH = Math.min(roofH, Math.max(1.4, (top - base) * 0.22)); topAdj = top + roofH * 0.6; }
+    if (hawker) topAdj = Math.max(top, 4.6 + 1.2 + roofH);
     const area = Math.abs(area2(outer)) / 2;
     let floorH = style === STYLE.shophouse ? 3.9 : style === STYLE.glass ? 4.1 : style === STYLE.office ? 3.9 : style === STYLE.parking ? 3.0 : style === STYLE.hdb ? 2.85 : style === STYLE.civic ? 5.0 : 3.25;
     // (distant procedural outskirts skip the parapet: its inner faces are sub-pixel there, ~90k triangles)
@@ -446,7 +458,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
 
     // ---- per-edge facade flags, packed into aF2.w as accent + 16*flag (+ 128*use):
     // 1 shophouse front above the five-foot-way (signboard), 2 recessed shopfront, 3 HDB void-deck back wall,
-    // 4 HDB common-corridor side, 5 HDB end wall (painted block number)
+    // 4 HDB common-corridor side, 5 HDB end wall (painted block number), 6 hawker stalls behind the colonnade
     const nE = outer.length, eFlag = new Array(nE).fill(0);
     const edgeN = i => { const p = outer[i], q = outer[(i + 1) % nE]; const ex = q[0] - p[0], ez = q[1] - p[1], len = Math.hypot(ex, ez) || 1; return [ez / len, -ex / len, len]; };
     let recess = null, H1 = 0;
@@ -464,8 +476,21 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
       if (bi >= 0) {
         const D = new Array(nE).fill(0); D[bi] = 1.9 + seed * 0.5;
         const r2 = recessRing(outer, D);
-        if (r2) { recess = { ring: r2, D, pw: 0.5, step: 5.2, first: true }; eFlag[bi] = 1; }
+        if (r2) { recess = { ring: r2, D, pw: 0.5, step: 5.5, first: true, flag: 2 }; eFlag[bi] = 1; }
+        const p = outer[bi], q = outer[(bi + 1) % nE], len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        for (let t = 2.5; t < len; t += 5) shopFronts.push(p[0] + (q[0] - p[0]) * t / len, p[1] + (q[1] - p[1]) * t / len);
+        // back walls (facing away from the street) carry the aircon condensers
+        const [fx, fz] = edgeN(bi);
+        for (let i = 0; i < nE; i++) {
+          const [nx, nz, len2] = edgeN(i); if (len2 < 3 || nx * fx + nz * fz > -0.7) continue;
+          const a = outer[i], c = outer[(i + 1) % nE];
+          shopBacks.push([a[0], a[1], c[0], c[1], nx, nz, gBase, floorH, Math.max(1, Math.round((wallTop - gBase) / floorH) - 1)]);
+        }
       }
+    }
+    if (hawker) {
+      const D = 3.4, r2 = recessRing(outer, new Array(nE).fill(D));
+      if (r2) recess = { ring: r2, D: new Array(nE).fill(D), pw: 0.6, step: 6, first: false, flag: 6, h: 4.6 };
     }
     let hdbO = null, hdbSlab = false;
     if (isHdb) {
@@ -480,11 +505,12 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
         else if (len > 10 && len < 34 && hash1(b.id + i * 1.7) < 0.5) eFlag[i] = 5;
       }
       if (!b.noPhys && base < 0.5 && top > 14 && !holes.length) {
-        const r2 = recessRing(outer, new Array(nE).fill(2.1));
-        if (r2) recess = { ring: r2, D: new Array(nE).fill(2.1), pw: 0.75, step: 6.5, first: false };
+        const r2 = recessRing(outer, new Array(nE).fill(3.0));
+        if (r2) recess = { ring: r2, D: new Array(nE).fill(3.0), pw: 0.75, step: 6.5, first: false, flag: 3 };
       }
+      if (!b.noPhys && base < 0.5 && hdbO) hdbBlocks.push({ ring: outer, cx, cz, ux: hdbO.ux, uz: hdbO.uz });
     }
-    if (recess) H1 = gBase + floorH;
+    if (recess) H1 = gBase + (recess.h || floorH);
 
     const OT = b.noPhys ? 'o.' : '';
     const addWalls = (ring, yA, yB, f1x, colour, inward = false, flags = null, tag = 'w.main') => {
@@ -535,14 +561,16 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
     if (recess) {
       // upper floors stand on the original outline; the ground floor steps back behind a colonnade
       addWalls(outer, H1, wallTop, f1, wallCol, false, eFlag);
-      addWalls(recess.ring, y0, H1, f1, wallCol, false, recess.D.map((d, i) => d > 0 ? (isShop ? 2 : 3) : eFlag[i]), 'w.recess');
-      const FLOOR_Y = 0.12;
+      // (hawker stalls are shopfronts: one tall bay each under the colonnade)
+      const f1r = hawker ? [STYLE.shophouse, seed, H1 - gBase, base] : f1;
+      addWalls(recess.ring, y0, H1, f1r, wallCol, false, recess.D.map((d, i) => d > 0 ? recess.flag : eFlag[i]), 'w.recess');
+      const FLOOR_Y = 0.12, col0 = colonnade.length;
       for (let i = 0; i < nE; i++) {
         if (!(recess.D[i] > 0)) continue;
         const j = (i + 1) % nE, p = outer[i], q = outer[j], p2 = recess.ring[i], q2 = recess.ring[j];
         const ex = q[0] - p[0], ez = q[1] - p[1], len = Math.hypot(ex, ez); if (len < 0.6) continue;
         const ux = ex / len, uz = ez / len, inx = -uz, inz = ux;
-        const fl = isShop ? 2 : 3, f2 = [len, wallTop, blockNo, accent + 16 * fl];
+        const fl = recess.flag, f2 = [len, wallTop, blockNo, accent + 16 * fl];
         const uvOf = P => [(P[0] - p[0]) * ux + (P[1] - p[1]) * uz, (P[0] - p[0]) * inx + (P[1] - p[1]) * inz];
         // soffit (plaster ceiling with lamps), tiled floor raised one step, and the step's riser
         TAG = 'w.ffw';
@@ -559,6 +587,15 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
         for (let k = recess.first ? 0 : 1; k < nP; k++) {
           const t = pw / 2 + 0.02 + (len - pw - 0.04) * k / (nP - 1);
           pillar(p[0] + ux * t + inx * (pw / 2 + 0.03), p[1] + uz * t + inz * (pw / 2 + 0.03), ux, uz, pw, y0, H1, f2);
+          if (isShop && k < nP - 1) piers.push([p[0] + ux * (t + pw / 2 + 0.34) + inx * 0.32, p[1] + uz * (t + pw / 2 + 0.34) + inz * 0.32]);
+        }
+        // furniture in the bays: stone tables in the void deck, the hawker centre's tables all round
+        // (bays meeting at a corner share it: one set there)
+        const spot = (x, z, kind) => { if (!colonnade.some((c, j) => j >= col0 && Math.hypot(c[0] - x, c[1] - z) < 2.6)) colonnade.push([x, z, Math.atan2(ux, uz), kind]); };
+        if (!isShop && gBase < 0.5) for (let k = 1; k < nP; k++) {
+          const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), d = recess.D[i] / 2;
+          if (hawker) for (const o of len / (nP - 1) > 5.2 ? [-1.35, 1.35] : [0]) spot(p[0] + ux * (t + o) + inx * d, p[1] + uz * (t + o) + inz * d, 'kopitiam');
+          else if (len / (nP - 1) > 4 && hash1(b.id * 1.9 + i * 7.3 + k * 3.1) < 0.3) spot(p[0] + ux * t + inx * d, p[1] + uz * t + inz * d, 'stoneTable');
         }
       }
     } else addWalls(outer, y0, wallTop, f1, wallCol, false, eFlag);
@@ -1083,6 +1120,12 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
     }
   }
 
+  // ================= STREET FURNITURE ================= (after the trees: it keeps clear of them)
+  const furniture = buildStreetscape({
+    city, M, maskAt, occAt, roadGrid, RG, excluded, clearings, shopFronts, piers, shopBacks, hdbBlocks, colonnade,
+    chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occStroke([[x, z], [x, z]], r, 115), setTag: t => { TAG = t; },
+  });
+
   // ================= OUTPUT =================
   progress(0.9, 'Uploading city to GPU');
   const transfer = [];
@@ -1108,8 +1151,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], paint = [], chunkSiz
   }
   const treeArr = new Float32Array(trees); transfer.push(treeArr.buffer);
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
+  transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer);
   const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles }, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {

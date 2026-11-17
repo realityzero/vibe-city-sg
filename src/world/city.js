@@ -72,7 +72,7 @@ export class City {
   }
   isWater(x, z) { return this.maskAt(x, z) < 160; }
 
-  build({ exclusions = [], paint = [], onProgress }) {
+  build({ exclusions = [], clearings = [], paint = [], onProgress }) {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL('./worker/cityBuilder.worker.js', import.meta.url), { type: 'module' });
       worker.onmessage = e => {
@@ -83,13 +83,14 @@ export class City {
           worker.terminate();
           this.trees = m.trees;
           this.buildingInfo = m.buildingInfo;
+          this.furniture = m.furniture; // street furniture: { pieces, obstacles } (world/worker/streetscape.js)
           this.stats = m.stats;
           this._facadeRecords(m.facadeRecords);
           this._createMeshes(m).then(() => resolve(m.stats), reject);
         }
       };
       worker.onerror = e => reject(e);
-      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, paint, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
+      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, clearings, paint, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
     });
   }
 
