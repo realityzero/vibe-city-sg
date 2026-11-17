@@ -9,6 +9,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { U } from '../gfx/globals.js';
 import { STREET, createStructMaterial } from '../gfx/materials.js';
 import { FILTER } from '../physics/physics.js';
+import { nextTask } from '../core/nextTask.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
@@ -26,10 +27,13 @@ const ABBR = [[/\bRoad\b/g, 'Rd'], [/\bStreet\b/g, 'St'], [/\bAvenue\b/g, 'Ave']
 const abbr = n => ABBR.reduce((s, [a, b]) => s.replace(a, b), n);
 function hash(x, z) { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); }
 
-// one InstancedMesh per prop type, holding only the instances near the camera
+// one InstancedMesh per prop type, holding only the instances near the camera. The ~55k placed instances are stored
+// struct-of-arrays (position, matrix, uv rows in typed arrays; grid cells hold indices): an object plus a 16-float
+// array per instance was ~10 MB of small objects on phones.
 class NearPool {
   constructor(scene, geo, mat, { cap = 400, radius = 170, shadow = false, uv = false, name = '' } = {}) {
-    this.items = []; this.radius = radius; this.cap = cap; this.cell = 80; this.grid = new Map();
+    this.n = 0; this.radius = radius; this.cap = cap; this.cell = 80; this.grid = new Map();
+    this.xz = new Float64Array(64 * 2); this.mats = new Float32Array(64 * 16); this.uvs = uv ? new Float32Array(64 * 4) : null;
     if (uv) { this.uvAttr = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4); this.uvAttr.setUsage(THREE.DynamicDrawUsage); geo.setAttribute('aUV', this.uvAttr); }
     this.mesh = new THREE.InstancedMesh(geo, mat, cap);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -38,22 +42,33 @@ class NearPool {
     scene.add(this.mesh);
   }
   add(x, y, z, yaw = 0, sx = 1, sy = 1, sz = 1, uv = null) {
+    const i = this.n++;
+    if (i * 16 >= this.mats.length) this._grow();
     _q.setFromAxisAngle(UP, yaw); _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
-    const it = { x, z, m: _m.toArray(new Float32Array(16)), uv };
-    this.items.push(it);
+    _m.toArray(this.mats, i * 16);
+    this.xz[i * 2] = x; this.xz[i * 2 + 1] = z;
+    if (this.uvs && uv) this.uvs.set(uv, i * 4);
     const k = Math.floor(x / this.cell) * 100003 + Math.floor(z / this.cell);
-    let l = this.grid.get(k); if (!l) this.grid.set(k, l = []); l.push(it);
+    let l = this.grid.get(k); if (!l) this.grid.set(k, l = []); l.push(i);
   }
+  _grow() {
+    const g = (a, per) => { if (!a) return a; const b = new a.constructor(Math.max(a.length * 2, per * 64)); b.set(a); return b; };
+    this.xz = g(this.xz, 2); this.mats = g(this.mats, 16); this.uvs = g(this.uvs, 4);
+  }
+  /** x / z of instance i */
+  x(i) { return this.xz[i * 2]; }
+  z(i) { return this.xz[i * 2 + 1]; }
   refresh(cx, cz) {
-    const R = this.radius, c = this.cell, R2 = R * R, arr = this.mesh.instanceMatrix.array, uva = this.uvAttr?.array;
+    if (!this._trimmed) { this._trimmed = true; const n = this.n; this.xz = this.xz.slice(0, n * 2); this.mats = this.mats.slice(0, n * 16); if (this.uvs) this.uvs = this.uvs.slice(0, n * 4); }
+    const R = this.radius, c = this.cell, R2 = R * R, arr = this.mesh.instanceMatrix.array, uva = this.uvAttr?.array, xz = this.xz, M = this.mats, UV = this.uvs;
     let n = 0;
     for (let gx = Math.floor((cx - R) / c); gx <= Math.floor((cx + R) / c) && n < this.cap; gx++)
       for (let gz = Math.floor((cz - R) / c); gz <= Math.floor((cz + R) / c) && n < this.cap; gz++) {
         const l = this.grid.get(gx * 100003 + gz); if (!l) continue;
-        for (const it of l) {
-          const dx = it.x - cx, dz = it.z - cz; if (dx * dx + dz * dz > R2) continue;
-          arr.set(it.m, n * 16);
-          if (uva) uva.set(it.uv, n * 4);
+        for (const i of l) {
+          const dx = xz[i * 2] - cx, dz = xz[i * 2 + 1] - cz; if (dx * dx + dz * dz > R2) continue;
+          arr.set(M.subarray(i * 16, i * 16 + 16), n * 16);
+          if (uva && UV) uva.set(UV.subarray(i * 4, i * 4 + 4), n * 4);
           if (++n >= this.cap) break;
         }
       }
@@ -205,9 +220,27 @@ class WearMap {
     for (let i = 0; i < W * H; i++) { px[i * 2] = Math.round(Math.min(1, grime[i]) * 255); px[i * 2 + 1] = Math.round(Math.min(1, polish[i]) * 255); }
     const t = new THREE.DataTexture(px, W, H, THREE.RGFormat, THREE.UnsignedByteType);
     t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+    t.userData.releaseSource = true; // GPU only from here on (gfx/texrelease.js)
     STREET.wear.value = t; STREET.wearOrigin.value.set(this.x0, this.z0); STREET.wearSize.value.set(W * this.res, H * this.res);
     this.grime = this.polish = null;
   }
+}
+
+/** growable typed array (append 3 at a time) */
+class GrowBuf {
+  constructor(T, n = 1024) { this.T = T; this.a = new T(n); this.n = 0; }
+  p3(x, y, z) {
+    if (this.n + 3 > this.a.length) { let s = this.a.length * 2; while (s < this.n + 3) s *= 2; const b = new this.T(s); b.set(this.a.subarray(0, this.n)); this.a = b; }
+    const a = this.a, n = this.n; a[n] = x; a[n + 1] = y; a[n + 2] = z; this.n = n + 3;
+  }
+  out() { return this.a.slice(0, this.n); }
+}
+/** one face of a kerb/linkway quad a-b-d-e into chunk c (flip: reversed winding and normal) */
+function emitQuad(c, a, b, d, e, nx, ny, nz, col, flip) {
+  const base = c.pos.n / 3, sg = flip ? -1 : 1, P = c.pos, N = c.nor, C = c.col, I = c.idx;
+  P.p3(a[0], a[1], a[2]); P.p3(b[0], b[1], b[2]); P.p3(d[0], d[1], d[2]); P.p3(e[0], e[1], e[2]);
+  for (let i = 0; i < 4; i++) { N.p3(nx * sg, ny * sg, nz * sg); C.p3(col[0], col[1], col[2]); }
+  if (flip) { I.p3(base, base + 2, base + 1); I.p3(base, base + 3, base + 2); } else { I.p3(base, base + 1, base + 2); I.p3(base, base + 2, base + 3); }
 }
 
 export class StreetDetail {
@@ -218,8 +251,13 @@ export class StreetDetail {
     const t0 = performance.now();
     this.blocked = (x, z) => P.raycast({ x, y: 40, z }, { x: 0, y: -1, z: 0 }, 60)?.point.y > 0.6 || city.isWater(x, z);
     this.overhead = (x, z, h) => (P.raycast({ x, y: h, z }, { x: 0, y: 1, z: 0 }, 60) != null);
-
+    // built in slices, handing the main thread back in between (~0.6 s on a phone): await .ready
+    this.ready = this._init(t0);
+  }
+  async _init(t0) {
+    const game = this.game, net = game.roadnet, data = game.city.data, brk = nextTask;
     this.buildLookup();
+    await brk();
     // crossings from OSM (footway=crossing ribbons): endpoints, centre, direction, signal or zebra
     this.crossings = [];
     for (const r of data.roads) {
@@ -231,23 +269,30 @@ export class StreetDetail {
       this.crossings.push({ ax, az, bx, bz, mx, mz, L, hw: r.w / 2, signal: this.sigAt(mx, mz) > 0.5, edge: ln.lane.edge, dir: ln.dir.clone().setY(0).normalize(), pos: ln.pos });
     }
     this.mats();
+    await brk();
     this.buildKerbsAndLinkways();
+    await brk();
     this.buildSigns();
+    await brk();
     this.buildCrossings();
+    await brk();
     this.buildFurniture();
+    await brk();
     this.buildBridges();
+    await brk();
     this.buildWear();
     // light under the linkways and footbridges in the street-light map
     const LM = game.props?.light;
     if (LM) {
-      for (const it of this.linkLights.items) LM.add(it.x, it.z, 3.1, 0.3);
+      const LL = this.linkLights; for (let i = 0; i < LL.n; i++) LM.add(LL.x(i), LL.z(i), 3.1, 0.3);
       for (const b of this.bridges) LM.add(b.x, b.z, 8.5, 0.35);
       LM.upload();
+      LM.e = null; // the last lamps are in: the accumulation grid (15 MB) is done with, the GPU has the result
     }
     this.lastRefresh = new THREE.Vector3(1e9, 0, 0);
     const pp = game.player?.position || game.camera.position;
     this.refresh(pp.x, pp.z);
-    console.log('streetdetail', JSON.stringify({ ms: Math.round(performance.now() - t0), crossings: this.crossings.length, bridges: this.bridges.length, chunks: this.chunks.length, linkwayTrees: this.linkwayTrees, items: Object.fromEntries(this.pools.map(p => [p.mesh.name.slice(7), p.items.length])) }));
+    console.log('streetdetail', JSON.stringify({ ms: Math.round(performance.now() - t0), crossings: this.crossings.length, bridges: this.bridges.length, chunks: this.chunks.length, linkwayTrees: this.linkwayTrees, items: Object.fromEntries(this.pools.map(p => [p.mesh.name.slice(7), p.n])) }));
   }
 
   // ---------------------------------------------------------------- road-shader lookup texture (4 m/px)
@@ -280,11 +325,14 @@ export class StreetDetail {
       for (let s = 12; s < l.path.length - 6; s += 3) { l.path.sample(s, v); stamp(v.x, v.z, 4.2, 1); if (full) stamp(v.x, v.z, 4.2, 3); }
       this.busLanes.push({ l, full });
     }
-    this.sig = { px, W, H, res, M };
+    // gameplay queries only read the red channel: keep that (a quarter of the size) and let the RGBA go once uploaded
+    const red = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) red[i] = px[i * 4];
+    this.sig = { px: red, W, H, res, M };
     const tex = new THREE.DataTexture(px, W, H); tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.flipY = false; tex.needsUpdate = true;
+    tex.userData.releaseSource = true;
     STREET.sig.value = tex; STREET.sigOrigin.value.set(M.xmin, M.zmin); STREET.sigSize.value.set(W * res, H * res);
   }
-  sigAt(x, z) { const S = this.sig; const i = Math.floor((x - S.M.xmin) / S.res), j = Math.floor((z - S.M.zmin) / S.res); if (i < 0 || j < 0 || i >= S.W || j >= S.H) return 0; return S.px[(j * S.W + i) * 4] / 255; }
+  sigAt(x, z) { const S = this.sig; const i = Math.floor((x - S.M.xmin) / S.res), j = Math.floor((z - S.M.zmin) / S.res); if (i < 0 || j < 0 || i >= S.W || j >= S.H) return 0; return S.px[j * S.W + i] / 255; }
 
   mats() {
     this.propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 });
@@ -303,20 +351,20 @@ export class StreetDetail {
   // ---------------------------------------------------------------- kerbs (+ linkways) in 300 m chunk meshes
   buildKerbsAndLinkways() {
     const net = this.game.roadnet, data = this.game.city.data, CH = 300;
+    // chunk buffers are growable typed arrays and quads are written without a closure or array per call: plain-array
+    // pushes made this builder a few hundred MB of garbage during the load
     const chunks = new Map();
-    const chunk = (x, z) => { const k = `${Math.floor(x / CH)},${Math.floor(z / CH)}`; let c = chunks.get(k); if (!c) chunks.set(k, c = { k, x: (Math.floor(x / CH) + 0.5) * CH, z: (Math.floor(z / CH) + 0.5) * CH, pos: [], nor: [], col: [], idx: [] }); return c; };
+    const chunk = (x, z) => { const cx = Math.floor(x / CH), cz = Math.floor(z / CH), k = cx * 100003 + cz; let c = chunks.get(k); if (!c) chunks.set(k, c = { k: `${cx},${cz}`, x: (cx + 0.5) * CH, z: (cz + 0.5) * CH, pos: new GrowBuf(Float32Array), nor: new GrowBuf(Float32Array), col: new GrowBuf(Uint8Array), idx: new GrowBuf(Uint32Array) }); return c; };
     // quad a-b-d-e (any winding): oriented so its front face points along n (n = null: emit both sides)
     const quad = (c, a, b, d, e, n, col) => {
       const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
       let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
-      const emit = (flip) => {
-        const base = c.pos.length / 3, sg = flip ? -1 : 1;
-        for (const v of [a, b, d, e]) { c.pos.push(v[0], v[1], v[2]); c.nor.push(nx * sg, ny * sg, nz * sg); c.col.push(col[0], col[1], col[2]); }
-        if (flip) c.idx.push(base, base + 2, base + 1, base, base + 3, base + 2); else c.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-      };
-      if (!n) { emit(false); emit(true); return; }
-      emit(nx * n[0] + ny * n[1] + nz * n[2] < 0);
+      if (!n) { emitQuad(c, a, b, d, e, nx, ny, nz, col, false); emitQuad(c, a, b, d, e, nx, ny, nz, col, true); return; }
+      emitQuad(c, a, b, d, e, nx, ny, nz, col, nx * n[0] + ny * n[1] + nz * n[2] < 0);
     };
+    // the kerb loop's quads (two per 5 m of kerb, city-wide): corners written into scratch arrays instead of fresh ones
+    const KA = [0, 0, 0], KB = [0, 0, 0], KD = [0, 0, 0], KE = [0, 0, 0], KN = [0, 0, 0], K_UP = [0, 1, 0];
+    const kp = (v, x, z, o, y, rx, rz) => { v[0] = x + rx * o; v[1] = y; v[2] = z + rz * o; return v; };
     const c8 = hex => { const c = new THREE.Color(hex); return [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)]; };
     const kerbCol = c8(0xa9a59c), kerbTop = c8(0xc4c0b6);
     // where kerbs must drop: crossings, service-road mouths
@@ -349,13 +397,14 @@ export class StreetDetail {
             const mx = (x0 + x1) / 2 + rx * off0, mz = (z0 + z1) / 2 + rz * off0;
             if (inGap(mx, mz)) continue;
             const c = chunk(mx, mz);
-            const p = (x, z, o, y) => [x + rx * o, y, z + rz * o];
             const yT = 0.16, yB = 0.02;
             // road-facing face + top (the back drops to footway level and is never seen)
-            quad(c, p(x0, z0, off0, yB), p(x1, z1, off0, yB), p(x1, z1, off0, yT), p(x0, z0, off0, yT), [-rx, 0, -rz], kerbCol);
-            quad(c, p(x0, z0, off0, yT), p(x1, z1, off0, yT), p(x1, z1, off1, yT), p(x0, z0, off1, yT), [0, 1, 0], kerbTop);
+            KN[0] = -rx; KN[2] = -rz;
+            quad(c, kp(KA, x0, z0, off0, yB, rx, rz), kp(KB, x1, z1, off0, yB, rx, rz), kp(KD, x1, z1, off0, yT, rx, rz), kp(KE, x0, z0, off0, yT, rx, rz), KN, kerbCol);
+            quad(c, kp(KA, x0, z0, off0, yT, rx, rz), kp(KB, x1, z1, off0, yT, rx, rz), kp(KD, x1, z1, off1, yT, rx, rz), kp(KE, x0, z0, off1, yT, rx, rz), K_UP, kerbTop);
             kerbM += s1 - s0;
             if (e.c <= 4 && ((A.degree >= 3 && (A.signal || e.c <= 3) && s0 < trimA + 26) || (B.degree >= 3 && (B.signal || e.c <= 3) && s1 > len - trimB - 26))) {
+              const p = (x, z, o, y) => [x + rx * o, y, z + rz * o];
               const [ax2, , az2] = p(x0, z0, off0 + 0.45, 0), [bx2, , bz2] = p(x1, z1, off0 + 0.45, 0);
               rails.push([(ax2 + bx2) / 2, (az2 + bz2) / 2, Math.atan2(-(bz2 - az2), bx2 - ax2), Math.hypot(bx2 - ax2, bz2 - az2)]);
             }
@@ -429,7 +478,7 @@ export class StreetDetail {
       if (doneAt.some(([px, pz]) => Math.hypot(px - x, pz - z) < half)) return;
       const sw = net2.nearestSidewalk(x, z, 30); if (!sw || sw.dist > 14) return;
       const s = sw.sw.path; let best = 0, bd = 1e9; // arc-length of the projection
-      for (let i = 0; i < s.p.length - 1; i++) { const ax = s.p[i][0], az = s.p[i][2], bx = s.p[i + 1][0], bz = s.p[i + 1][2], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); const dd = Math.hypot(ax + dx * t - x, az + dz * t - z); if (dd < bd) { bd = dd; best = s.cum[i] + Math.sqrt(L2) * t; } }
+      for (let i = 0; i < s.n - 1; i++) { const ax = s.x(i), az = s.z(i), bx = s.x(i + 1), bz = s.z(i + 1), dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); const dd = Math.hypot(ax + dx * t - x, az + dz * t - z); if (dd < bd) { bd = dd; best = s.cum[i] + Math.sqrt(L2) * t; } }
       linkway(sw.sw, best - half, best + half); doneAt.push([x, z]); lw++;
     };
     for (const p of data.pois) if (p.k === 'subway_entrance') linkFrom(p.x, p.z, 28);
@@ -438,12 +487,12 @@ export class StreetDetail {
     // meshes
     this.chunks = [];
     for (const c of chunks.values()) {
-      if (!c.pos.length) continue;
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
-      g.setAttribute('normal', new THREE.Float32BufferAttribute(c.nor, 3));
-      g.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(c.col), 3, true));
-      g.setIndex(c.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(c.idx, 1) : new THREE.Uint16BufferAttribute(c.idx, 1));
+      if (!c.pos.n) continue;
+      const g = new THREE.BufferGeometry(), idx = c.idx.out();
+      g.setAttribute('position', new THREE.BufferAttribute(c.pos.out(), 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(c.nor.out(), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(c.col.out(), 3, true));
+      g.setIndex(new THREE.BufferAttribute(c.pos.n / 3 > 65535 ? idx : Uint16Array.from(idx), 1));
       g.computeBoundingSphere();
       const mesh = new THREE.Mesh(g, this.structMat); mesh.receiveShadow = true; mesh.castShadow = true; mesh.matrixAutoUpdate = false; mesh.name = 'kerbs_' + c.k;
       this.game.scene.add(mesh);
@@ -640,7 +689,7 @@ export class StreetDetail {
     const v = new THREE.Vector3(), d = new THREE.Vector3();
     for (const sw of net.sidewalks) {
       const e = sw.edge; if (e.c > 5) continue;
-      const P = sw.path, h0 = hash(P.p[0][0], P.p[0][2]);
+      const P = sw.path, h0 = hash(P.x(0), P.z(0));
       for (let s = 18 + h0 * 50; s < P.length - 10; s += 95 + hash(s, h0) * 60) {
         P.sample(s, v, d); const rx = -d.z * sw.side, rz = d.x * sw.side; // outward (away from road) for this side
         const x = v.x + rx * 1.1, z = v.z + rz * 1.1;

@@ -19,7 +19,7 @@
   position: fixed; inset: 0; z-index: 1000; overflow: hidden;
   font-family: var(--ui); color: var(--text); background: var(--bg);
   font-size: clamp(12px, 0.55vw + 0.5vh, 18px); line-height: 1.35;
-  user-select: none; -webkit-font-smoothing: antialiased; outline: none;
+  user-select: none; -webkit-user-select: none; -webkit-font-smoothing: antialiased; outline: none;
 }
 .vc-mg *, .vc-mg *::before, .vc-mg *::after { box-sizing: border-box; }
 .vc-mg button { font: inherit; color: inherit; cursor: pointer; }

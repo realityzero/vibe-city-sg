@@ -14,33 +14,118 @@ const hash1 = n => { let x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x 
 
 self.onmessage = async e => {
   if (e.data.type === 'build') {
+    F32_NORMALS = !!e.data.f32normals;
     try { await build(e.data); }
     catch (err) { self.postMessage({ type: 'error', message: err.message, stack: err.stack }); }
   }
 };
 
 // ---------- growable buffers ----------
+// They start small: every chunk owns ~40 of them (7 geometry kinds x their attributes), most nearly empty. At 64 KB
+// apiece they once held ~1 GB of zeros at the end of the build — part of a 3.5 GB peak that, being a thread of the
+// tab, iOS charged to Safari's tab (killing it). Doubling growth costs little.
+// The hot paths write through p1..p4 / pa (fixed arity, no rest/spread arrays): the build emits ~2M vertices, and a
+// spread or literal per vertex was a good part of the 1.7 GB of garbage it once churned through in two seconds —
+// garbage JavaScriptCore lets pile up long enough to matter on a phone.
 class Buf {
-  constructor(n = 1 << 14) { this.a = new Float32Array(n); this.n = 0; }
-  push(...v) { if (this.n + v.length > this.a.length) this.grow(this.n + v.length); for (let i = 0; i < v.length; i++) this.a[this.n++] = v[i]; }
-  grow(min) { let s = this.a.length * 2; while (s < min) s *= 2; const b = new Float32Array(s); b.set(this.a.subarray(0, this.n)); this.a = b; }
-  out() { return this.a.slice(0, this.n); }
+  constructor(n = 256, T = Float32Array) { this.T = T; this.a = new T(n); this.n = 0; }
+  push(...v) { this.pa(v); }
+  pa(v) { const k = v.length; if (this.n + k > this.a.length) this.grow(this.n + k); const a = this.a; let n = this.n; for (let i = 0; i < k; i++) a[n++] = v[i]; this.n = n; }
+  p1(x) { if (this.n + 1 > this.a.length) this.grow(this.n + 1); this.a[this.n++] = x; }
+  p2(x, y) { if (this.n + 2 > this.a.length) this.grow(this.n + 2); const a = this.a, n = this.n; a[n] = x; a[n + 1] = y; this.n = n + 2; }
+  p3(x, y, z) { if (this.n + 3 > this.a.length) this.grow(this.n + 3); const a = this.a, n = this.n; a[n] = x; a[n + 1] = y; a[n + 2] = z; this.n = n + 3; }
+  p4(x, y, z, w) { if (this.n + 4 > this.a.length) this.grow(this.n + 4); const a = this.a, n = this.n; a[n] = x; a[n + 1] = y; a[n + 2] = z; a[n + 3] = w; this.n = n + 4; }
+  // ArrayBuffer.transfer reallocates and detaches the old buffer at once: its memory is released now, not whenever
+  // the garbage collector gets round to it (JavaScriptCore, busy in a tight build loop, gets round to it late)
+  grow(min) { let s = this.a.length * 2; while (s < min) s *= 2; if (XFER) { this.a = new this.T(this.a.buffer.transfer(s * this.a.BYTES_PER_ELEMENT)); return; } const b = new this.T(s); b.set(this.a.subarray(0, this.n)); this.a = b; }
+  /** the contents, exactly sized; the Buf is spent afterwards */
+  out() { if (XFER) { const r = new this.T(this.a.buffer.transfer(this.n * this.a.BYTES_PER_ELEMENT)); this.a = null; return r; } return this.a.slice(0, this.n); }
+  free() { if (XFER && this.a) this.a.buffer.transfer(0); this.a = null; }
 }
-class IBuf {
-  constructor(n = 1 << 14) { this.a = new Uint32Array(n); this.n = 0; }
-  push(...v) { if (this.n + v.length > this.a.length) { let s = this.a.length * 2; while (s < this.n + v.length) s *= 2; const b = new Uint32Array(s); b.set(this.a.subarray(0, this.n)); this.a = b; } for (let i = 0; i < v.length; i++) this.a[this.n++] = v[i]; }
-  out() { return this.a.slice(0, this.n); }
+const XFER = typeof ArrayBuffer.prototype.transfer === 'function';
+class IBuf extends Buf { constructor(n = 256) { super(n, Uint32Array); } }
+// unit normals leave as signed normalized xyz + pad — 8-bit (4 bytes a vertex instead of 12, at most 0.3° off: a
+// diffuse lighting change below one 8-bit level) or 16-bit for facades (8 bytes). Four components: Metal wants
+// 4-byte-aligned vertex strides — ANGLE would keep a converted copy of a 3-component byte layout. Shaders read a vec3.
+let F32_NORMALS = false; // ?f32normals: A/B against full-precision normals
+// The facade shader seeds each wall's weathering from its orientation, floor(atan(N.z, N.x) * 2): a wall whose angle
+// sits within a rounding step of a bin edge keeps its bin (the nearest neighbouring 8-bit value on the right side),
+// so packing re-rolls no wall's streaks or mould.
+const wallBin = (x, z) => Math.floor(Math.atan2(z, x) * 2 + 10);
+// Facades (glass panes mirror the sky; a 0.4° tilt visibly moves a sharp reflection across a whole pane) take 16 bits.
+function packNormals(a, n, bits16 = false) {
+  const v = n / 3, M = bits16 ? 32767 : 127, o = bits16 ? new Int16Array(v * 4) : new Int8Array(v * 4), q = x => Math.round((x > 1 ? 1 : x < -1 ? -1 : x) * M);
+  for (let i = 0; i < v; i++) {
+    const x = a[i * 3], y = a[i * 3 + 1], z = a[i * 3 + 2];
+    let qx = q(x), qz = q(z);
+    if (Math.abs(y) <= 0.7 && (qx || qz)) {
+      const bin = wallBin(x, z);
+      if (wallBin(qx, qz) !== bin) {
+        const ang = Math.atan2(z, x); let best = null, be = Infinity;
+        for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+          const cx = qx + dx, cz = qz + dz; if (Math.abs(cx) > M || Math.abs(cz) > M || wallBin(cx, cz) !== bin) continue;
+          const e = Math.abs(Math.atan2(cz, cx) - ang); if (e < be) { be = e; best = [cx, cz]; }
+        }
+        if (best) { qx = best[0]; qz = best[1]; }
+      }
+    }
+    o[i * 4] = qx; o[i * 4 + 1] = q(y); o[i * 4 + 2] = qz;
+  }
+  return o;
 }
 class Geo {
   constructor(layout) { this.layout = layout; this.b = {}; for (const k in layout) this.b[k] = new Buf(); this.idx = new IBuf(); this.vc = 0; }
-  // v: object of arrays per attribute name
-  vert(v) { for (const k in this.layout) this.b[k].push(...v[k]); return this.vc++; }
-  tri(a, b, c) { this.idx.push(a, b, c); TC[TAG] = (TC[TAG] || 0) + 1; }
+  // v: object of arrays per attribute name (the general form; the hot paths use the positional writers below)
+  vert(v) { for (const k in this.layout) { if (k === 'aRec') this.b.aRec.p1(recIndex(v.aF1, v.aF2)); else this.b[k].pa(v[k]); } return this.vc++; }
+  /** WALL_LAYOUT vertex: position, normal n[3], colour col[3], aWall (u, v), facade record (f1, f2) */
+  wv(x, y, z, n, col, u, v, f1, f2) { const B = this.b; B.position.p3(x, y, z); B.normal.p3(n[0], n[1], n[2]); B.color.p3(col[0], col[1], col[2]); B.aWall.p2(u, v); B.aRec.p1(recIndex(f1, f2)); return this.vc++; }
+  /** SIMPLE_LAYOUT vertex */
+  sv(x, y, z, n, col) { const B = this.b; B.position.p3(x, y, z); B.normal.p3(n[0], n[1], n[2]); B.color.p3(col[0], col[1], col[2]); return this.vc++; }
+  /** ROOF_LAYOUT vertex: normal as scalars, aRoof r[4] */
+  rv(x, y, z, nx, ny, nz, col, r) { const B = this.b; B.position.p3(x, y, z); B.normal.p3(nx, ny, nz); B.color.p3(col[0], col[1], col[2]); B.aRoof.p4(r[0], r[1], r[2], r[3]); return this.vc++; }
+  /** ROAD_LAYOUT vertex: aRoad (r0..r3), aLanes (l0..l3), aJunc (j0..j3) */
+  dv(x, y, z, nx, ny, nz, r0, r1, r2, r3, l0, l1, l2, l3, j0, j1, j2, j3) { const B = this.b; B.position.p3(x, y, z); B.normal.p3(nx, ny, nz); B.aRoad.p4(r0, r1, r2, r3); B.aLanes.p4(l0, l1, l2, l3); B.aJunc.p4(j0, j1, j2, j3); return this.vc++; }
+  tri(a, b, c) { this.idx.p3(a, b, c); TC[TAG] = (TC[TAG] || 0) + 1; }
   empty() { return this.vc === 0; }
-  out() { const o = { attributes: {}, index: this.idx.out(), count: this.vc }; for (const k in this.layout) o.attributes[k] = { array: this.b[k].out(), itemSize: this.layout[k] }; return o; }
+  out() {
+    const o = { attributes: {}, index: this.idx.out(), count: this.vc };
+    for (const k in this.layout) {
+      const b = this.b[k];
+      if (k === 'normal' && !F32_NORMALS) { o.attributes[k] = { array: packNormals(b.a, b.n, this.layout === WALL_LAYOUT), itemSize: 4, normalized: true }; b.free(); }
+      else o.attributes[k] = { array: b.out(), itemSize: this.layout[k] };
+    }
+    return o;
+  }
 }
-const WALL_LAYOUT = { position: 3, normal: 3, color: 3, aWall: 2, aF1: 4, aF2: 4 };
+// facade parameters (aF1, aF2: 8 floats, constant over each quad) live in a shared record table that the facade
+// shader reads with texelFetch; a wall vertex carries just the record index (aRec). 28 bytes less per vertex, same
+// floats in the shader.
+const WALL_LAYOUT = { position: 3, normal: 3, color: 3, aWall: 2, aRec: 1 };
+// Records are deduplicated on their exact float64 values (as the string keys they replaced did: 0 and -0 alike, NaN
+// equal to NaN) in an open-addressed table — a string per new key was 140 MB of garbage.
+const REC = { data: new Buf(1 << 16), f64: new Buf(1 << 16, Float64Array), n: 0, last: -1, lv: new Float64Array(8), tab: new Int32Array(1 << 16).fill(-1) };
+const _hf = new Float64Array(1), _hu = new Uint32Array(_hf.buffer);
+const recHash = v => { let h = 0x811c9dc5; for (let i = 0; i < 8; i++) { const x = v[i]; _hf[0] = x === 0 ? 0 : x !== x ? NaN : x; h = Math.imul(h ^ _hu[0], 0x01000193); h = Math.imul(h ^ _hu[1], 0x01000193); } return (h ^ (h >>> 15)) >>> 0; };
+const recSame = (j, v) => { const F = REC.f64.a, o = j * 8; for (let i = 0; i < 8; i++) { const a = F[o + i], b = v[i]; if (a !== b && (a === a || b === b)) return false; } return true; };
+function recPut(j) { const T = REC.tab, m = T.length - 1; let s = recHash(REC.f64.a.subarray(j * 8, j * 8 + 8)) & m; while (T[s] >= 0) s = (s + 1) & m; T[s] = j; }
+function recIndex(f1, f2) {
+  const L = REC.lv;
+  if (REC.last >= 0 && L[0] === f1[0] && L[1] === f1[1] && L[2] === f1[2] && L[3] === f1[3] && L[4] === f2[0] && L[5] === f2[1] && L[6] === f2[2] && L[7] === f2[3]) return REC.last;
+  L[0] = f1[0]; L[1] = f1[1]; L[2] = f1[2]; L[3] = f1[3]; L[4] = f2[0]; L[5] = f2[1]; L[6] = f2[2]; L[7] = f2[3];
+  const T = REC.tab, m = T.length - 1;
+  let s = recHash(L) & m, i;
+  while ((i = T[s]) >= 0 && !recSame(i, L)) s = (s + 1) & m;
+  if (i < 0) {
+    i = REC.n++;
+    REC.data.p4(L[0], L[1], L[2], L[3]); REC.data.p4(L[4], L[5], L[6], L[7]);
+    REC.f64.p4(L[0], L[1], L[2], L[3]); REC.f64.p4(L[4], L[5], L[6], L[7]);
+    if (REC.n * 2 > T.length) { REC.tab = new Int32Array(T.length * 2).fill(-1); for (let j = 0; j < REC.n; j++) recPut(j); }
+    else T[s] = i;
+  }
+  return (REC.last = i);
+}
 const ROOF_LAYOUT = { position: 3, normal: 3, color: 3, aRoof: 4 };
+const N_UP = [0, 1, 0], N_DOWN = [0, -1, 0];
 const ROAD_LAYOUT = { position: 3, normal: 3, aRoad: 4, aLanes: 4, aJunc: 4 };
 const SIMPLE_LAYOUT = { position: 3, normal: 3, color: 3 };
 
@@ -113,10 +198,12 @@ const pick = (arr, s) => arr[Math.floor(s * arr.length) % arr.length];
 async function loadMask(url) {
   const blob = await (await fetch(url)).blob();
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-  const cv = new OffscreenCanvas(bmp.width, bmp.height);
+  const w = bmp.width, h = bmp.height, cv = new OffscreenCanvas(w, h);
   const ctx = cv.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bmp, 0, 0);
-  return { w: bmp.width, h: bmp.height, data: ctx.getImageData(0, 0, bmp.width, bmp.height).data };
+  ctx.drawImage(bmp, 0, 0); bmp.close();
+  const data = ctx.getImageData(0, 0, w, h).data;
+  cv.width = cv.height = 1; // the decoded bitmap and the canvas (25 MB each) go now rather than at some later GC
+  return { w, h, data };
 }
 
 async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, quality = 'high' }) {
@@ -146,12 +233,18 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
   const chunk = k => {
     // wallsNear / structNear: street-level detail (colonnade pillars, five-foot-way floors, laundry poles, walkway posts)
     // that the main thread only draws for nearby chunks
-    if (!chunks.has(k)) chunks.set(k, { walls: new Geo(WALL_LAYOUT), roofs: new Geo(ROOF_LAYOUT), roads: new Geo(ROAD_LAYOUT), foot: new Geo(ROAD_LAYOUT), struct: new Geo(SIMPLE_LAYOUT), wallsNear: new Geo(WALL_LAYOUT), structNear: new Geo(SIMPLE_LAYOUT), phys: { pos: new Buf(), idx: new IBuf(), vc: 0 } });
+    if (!chunks.has(k)) chunks.set(k, { walls: new Geo(WALL_LAYOUT), roofs: new Geo(ROOF_LAYOUT), roads: new Geo(ROAD_LAYOUT), foot: new Geo(ROAD_LAYOUT), struct: new Geo(SIMPLE_LAYOUT), wallsNear: new Geo(WALL_LAYOUT), structNear: new Geo(SIMPLE_LAYOUT), phys: { pos: new Buf(), idx: new IBuf(), vc: 0 }, occl: { pos: new Buf(), idx: new IBuf(), vc: 0 } });
     return chunks.get(k);
   };
   // physics triangle soup per chunk (buildings + bridge decks)
-  const physQuad = (ch, a, b, c, d) => { const P = ch.phys; const base = P.vc; P.pos.push(...a, ...b, ...c, ...d); P.vc += 4; P.idx.push(base, base + 1, base + 2, base, base + 2, base + 3); };
-  const physTri = (ch, a, b, c) => { const P = ch.phys; const base = P.vc; P.pos.push(...a, ...b, ...c); P.vc += 3; P.idx.push(base, base + 1, base + 2); };
+  const physQuad = (ch, a, b, c, d) => { const P = ch.phys, base = P.vc; P.pos.p3(a[0], a[1], a[2]); P.pos.p3(b[0], b[1], b[2]); P.pos.p3(c[0], c[1], c[2]); P.pos.p3(d[0], d[1], d[2]); P.vc += 4; P.idx.p3(base, base + 1, base + 2); P.idx.p3(base, base + 2, base + 3); };
+  // vertical wall quad p→q from y0 to y1 (same vertices and order as physQuad with [p,y0], [q,y0], [q,y1], [p,y1])
+  const physWall = (ch, px, pz, qx, qz, y0, y1) => { const P = ch.phys, base = P.vc; P.pos.p3(px, y0, pz); P.pos.p3(qx, y0, qz); P.pos.p3(qx, y1, qz); P.pos.p3(px, y1, pz); P.vc += 4; P.idx.p3(base, base + 1, base + 2); P.idx.p3(base, base + 2, base + 3); };
+  const physTri = (ch, a, b, c) => { const P = ch.phys, base = P.vc; P.pos.p3(a[0], a[1], a[2]); P.pos.p3(b[0], b[1], b[2]); P.pos.p3(c[0], c[1], c[2]); P.vc += 3; P.idx.p3(base, base + 1, base + 2); };
+  // sight blockers that nothing collides with (pitched roofs, gables, arcade / void-deck ceilings, covered walkways):
+  // the cutscene line-of-sight rays test them (core/visibility.js), driving and walking never meet them
+  const occlTri = (ch, a, b, c) => { const P = ch.occl, base = P.vc; P.pos.p3(a[0], a[1], a[2]); P.pos.p3(b[0], b[1], b[2]); P.pos.p3(c[0], c[1], c[2]); P.vc += 3; P.idx.p3(base, base + 1, base + 2); };
+  const occlQuad = (ch, a, b, c, d) => { occlTri(ch, a, b, c); occlTri(ch, a, c, d); };
 
   // occupancy grid for tree placement (2 m)
   const occ = new Uint8Array(mask.w * mask.h);
@@ -370,22 +463,23 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
         if (inward) { nx = -nx; nz = -nz; }
         const f2 = [len, wallTop, blockNo, accent + 16 * (flags ? flags[i] : 0)];
         const n = [nx, 0, nz];
-        const a = ch.walls.vert({ position: [p[0], yA, p[1]], normal: n, color: colour, aWall: [0, yA], aF1: f1x, aF2: f2 });
-        const bb = ch.walls.vert({ position: [q[0], yA, q[1]], normal: n, color: colour, aWall: [len, yA], aF1: f1x, aF2: f2 });
-        const c = ch.walls.vert({ position: [q[0], yB, q[1]], normal: n, color: colour, aWall: [len, yB], aF1: f1x, aF2: f2 });
-        const d = ch.walls.vert({ position: [p[0], yB, p[1]], normal: n, color: colour, aWall: [0, yB], aF1: f1x, aF2: f2 });
+        const W = ch.walls;
+        const a = W.wv(p[0], yA, p[1], n, colour, 0, yA, f1x, f2);
+        const bb = W.wv(q[0], yA, q[1], n, colour, len, yA, f1x, f2);
+        const c = W.wv(q[0], yB, q[1], n, colour, len, yB, f1x, f2);
+        const d = W.wv(p[0], yB, p[1], n, colour, 0, yB, f1x, f2);
         if (!inward) { ch.walls.tri(a, c, bb); ch.walls.tri(a, d, c); }
         else { ch.walls.tri(a, bb, c); ch.walls.tri(a, c, d); }
         wallTris += 2;
-        if (!inward && yB - yA > 1.5 && !b.noPhys) physQuad(ch, [p[0], Math.max(yA, -0.5), p[1]], [q[0], Math.max(yA, -0.5), q[1]], [q[0], yB, q[1]], [p[0], yB, p[1]]);
+        if (!inward && yB - yA > 1.5 && !b.noPhys) physWall(ch, p[0], p[1], q[0], q[1], Math.max(yA, -0.5), yB);
       }
     };
     // generic wall-material quad (winding chosen from the normal), uv = aWall
     const wQuad = (A, B, C, Dq, n, col, uvA, uvB, uvC, uvD, f1x, f2, g = ch.walls) => {
-      const i0 = g.vert({ position: A, normal: n, color: col, aWall: uvA, aF1: f1x, aF2: f2 });
-      const i1 = g.vert({ position: B, normal: n, color: col, aWall: uvB, aF1: f1x, aF2: f2 });
-      const i2 = g.vert({ position: C, normal: n, color: col, aWall: uvC, aF1: f1x, aF2: f2 });
-      const i3 = g.vert({ position: Dq, normal: n, color: col, aWall: uvD, aF1: f1x, aF2: f2 });
+      const i0 = g.wv(A[0], A[1], A[2], n, col, uvA[0], uvA[1], f1x, f2);
+      const i1 = g.wv(B[0], B[1], B[2], n, col, uvB[0], uvB[1], f1x, f2);
+      const i2 = g.wv(C[0], C[1], C[2], n, col, uvC[0], uvC[1], f1x, f2);
+      const i3 = g.wv(Dq[0], Dq[1], Dq[2], n, col, uvD[0], uvD[1], f1x, f2);
       const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
       if ((uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2] >= 0) { g.tri(i0, i1, i2); g.tri(i0, i2, i3); }
       else { g.tri(i0, i2, i1); g.tri(i0, i3, i2); }
@@ -419,6 +513,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
         // soffit (plaster ceiling with lamps), tiled floor raised one step, and the step's riser
         TAG = 'w.ffw';
         wQuad([p[0], H1, p[1]], [q[0], H1, q[1]], [q2[0], H1, q2[1]], [p2[0], H1, p2[1]], [0, -1, 0], wallCol, uvOf(p), uvOf(q), uvOf(q2), uvOf(p2), [12, seed, floorH, base], f2);
+        if (!b.noPhys) occlQuad(ch, [p[0], H1, p[1]], [q[0], H1, q[1]], [q2[0], H1, q2[1]], [p2[0], H1, p2[1]]);
         if (gBase < 0.5) {
           const flCol = srgbToLin(c3(isShop ? 0xb9a58e : 0xb4b2ac));
           wQuad([p[0], FLOOR_Y, p[1]], [q[0], FLOOR_Y, q[1]], [q2[0], FLOOR_Y, q2[1]], [p2[0], FLOOR_Y, p2[1]], [0, 1, 0], flCol, uvOf(p), uvOf(q), uvOf(q2), uvOf(p2), [14, seed, floorH, base], f2, ch.wallsNear);
@@ -464,7 +559,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       const tris = earcut(flat, holeIdx.length ? holeIdx : undefined);
       const baseV = ch.roofs.vc;
       const ny = down ? -1 : 1;
-      for (let i = 0; i < flat.length; i += 2) ch.roofs.vert({ position: [flat[i], y, flat[i + 1]], normal: [0, ny, 0], color: roofCol, aRoof: roofAttr });
+      for (let i = 0; i < flat.length; i += 2) ch.roofs.rv(flat[i], y, flat[i + 1], 0, ny, 0, roofCol, roofAttr);
       for (let t = 0; t < tris.length; t += 3) {
         const ia = tris[t], ib = tris[t + 1], ic = tris[t + 2];
         const a2 = (flat[ib * 2] - flat[ia * 2]) * (flat[ic * 2 + 1] - flat[ia * 2 + 1]) - (flat[ic * 2] - flat[ia * 2]) * (flat[ib * 2 + 1] - flat[ia * 2 + 1]);
@@ -482,20 +577,23 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
       let A = a, B = bb, C = c;
       if (ny < 0) { B = c; C = bb; nx = -nx; ny = -ny; nz = -nz; }
-      const i0 = ch.roofs.vert({ position: A, normal: [nx, ny, nz], color: colour, aRoof: roofAttr });
-      const i1 = ch.roofs.vert({ position: B, normal: [nx, ny, nz], color: colour, aRoof: roofAttr });
-      const i2 = ch.roofs.vert({ position: C, normal: [nx, ny, nz], color: colour, aRoof: roofAttr });
+      const i0 = ch.roofs.rv(A[0], A[1], A[2], nx, ny, nz, colour, roofAttr);
+      const i1 = ch.roofs.rv(B[0], B[1], B[2], nx, ny, nz, colour, roofAttr);
+      const i2 = ch.roofs.rv(C[0], C[1], C[2], nx, ny, nz, colour, roofAttr);
       ch.roofs.tri(i0, i1, i2); roofTris++;
+      if (!b.noPhys) occlTri(ch, A, B, C);
     };
     const gableEnd = (a, bb, c) => {
       // vertical triangle in wall material (plain)
       const pt = TAG; TAG = 'w.gable';
       let nx = (bb[2] - a[2]), nz = -(bb[0] - a[0]); const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
       const f2 = [1, top, 1, accent], pf = [STYLE.plain, seed, floorH, base];
-      const i0 = ch.walls.vert({ position: a, normal: [nx, 0, nz], color: wallCol, aWall: [0, a[1]], aF1: pf, aF2: f2 });
-      const i1 = ch.walls.vert({ position: bb, normal: [nx, 0, nz], color: wallCol, aWall: [1, bb[1]], aF1: pf, aF2: f2 });
-      const i2 = ch.walls.vert({ position: c, normal: [nx, 0, nz], color: wallCol, aWall: [0.5, c[1]], aF1: pf, aF2: f2 });
+      const gn = [nx, 0, nz];
+      const i0 = ch.walls.wv(a[0], a[1], a[2], gn, wallCol, 0, a[1], pf, f2);
+      const i1 = ch.walls.wv(bb[0], bb[1], bb[2], gn, wallCol, 1, bb[1], pf, f2);
+      const i2 = ch.walls.wv(c[0], c[1], c[2], gn, wallCol, 0.5, c[1], pf, f2);
       ch.walls.tri(i0, i2, i1); ch.walls.tri(i0, i1, i2); // double sided (cheap; orientation-agnostic)
+      if (!b.noPhys) occlTri(ch, a, bb, c);
       TAG = pt;
     };
 
@@ -573,10 +671,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
           wQuad([p[0], roofY, p[1]], [q[0], roofY, q[1]], [q[0], roofY + hh, q[1]], [p[0], roofY + hh, p[1]], n, col, [0, roofY], [len, roofY], [len, roofY + hh], [0, roofY + hh], pf, [len, roofY + hh, 1, accent]);
         }
         const rc = srgbToLin(c3(0x8c8a85));
-        const i0 = ch.roofs.vert({ position: [box[0][0], roofY + hh, box[0][1]], normal: [0, 1, 0], color: rc, aRoof: roofAttr });
-        const i1 = ch.roofs.vert({ position: [box[1][0], roofY + hh, box[1][1]], normal: [0, 1, 0], color: rc, aRoof: roofAttr });
-        const i2 = ch.roofs.vert({ position: [box[2][0], roofY + hh, box[2][1]], normal: [0, 1, 0], color: rc, aRoof: roofAttr });
-        const i3 = ch.roofs.vert({ position: [box[3][0], roofY + hh, box[3][1]], normal: [0, 1, 0], color: rc, aRoof: roofAttr });
+        const i0 = ch.roofs.rv(box[0][0], roofY + hh, box[0][1], 0, 1, 0, rc, roofAttr);
+        const i1 = ch.roofs.rv(box[1][0], roofY + hh, box[1][1], 0, 1, 0, rc, roofAttr);
+        const i2 = ch.roofs.rv(box[2][0], roofY + hh, box[2][1], 0, 1, 0, rc, roofAttr);
+        const i3 = ch.roofs.rv(box[3][0], roofY + hh, box[3][1], 0, 1, 0, rc, roofAttr);
         ch.roofs.tri(i0, i2, i1); ch.roofs.tri(i0, i3, i2);
         // HDB: big painted water tank on the lift room roof
         if (isHdb && !b.noPhys) { const [tx, tz] = P(L * 0.3, 0); boxGeo(S, tx, roofY + hh, tz, Math.min(L, 2.6), 2.2, Math.min(Wd, 1.8), srgbToLin(c3(0xbfc3c4))); }
@@ -715,10 +813,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       // slope normal
       let ny = 1, nx = 0, nz = 0;
       if (Y) { const i0 = Math.max(0, i - 1), i1 = Math.min(n - 1, i + 1); const ds = S[i1] - S[i0]; if (ds > 0) { const g = (Y[i1] - Y[i0]) / ds; nx = -tx * g; nz = -tz * g; const l = Math.hypot(nx, 1, nz); nx /= l; ny = 1 / l; nz /= l; } }
-      const lanes = [r.lf || 0, r.lb || 0, r.c, r.o ? 1 : 0];
-      const junc = [distBehind[i], distAhead[i], rBehind[i], rAhead[i]];
-      geo.vert({ position: [P[i][0] - rx * hw * m, y, P[i][1] - rz * hw * m], normal: [nx, ny, nz], aRoad: [-hw, S[i], r.w, opts.kind], aLanes: lanes, aJunc: junc });
-      geo.vert({ position: [P[i][0] + rx * hw * m, y, P[i][1] + rz * hw * m], normal: [nx, ny, nz], aRoad: [hw, S[i], r.w, opts.kind], aLanes: lanes, aJunc: junc });
+      const l0 = r.lf || 0, l1 = r.lb || 0, l2 = r.c, l3 = r.o ? 1 : 0;
+      const px = P[i][0], pz = P[i][1], ox = rx * hw * m, oz = rz * hw * m;
+      geo.dv(px - ox, y, pz - oz, nx, ny, nz, -hw, S[i], r.w, opts.kind, l0, l1, l2, l3, distBehind[i], distAhead[i], rBehind[i], rAhead[i]);
+      geo.dv(px + ox, y, pz + oz, nx, ny, nz, hw, S[i], r.w, opts.kind, l0, l1, l2, l3, distBehind[i], distAhead[i], rBehind[i], rAhead[i]);
     }
     for (let i = 0; i < n - 1; i++) {
       const a = base0 + i * 2, b = a + 1, c = a + 2, d = a + 3; // a=left_i b=right_i c=left_i+1 d=right_i+1
@@ -753,11 +851,12 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
         const [ax, az] = P[i], [bx, bz] = P[i + 1]; const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz); if (l < 0.5) continue;
         const rx = -dz / l * hw, rz = dx / l * hw;
         const s = ch.struct;
-        const v0 = s.vert({ position: [ax - rx, yC, az - rz], normal: [0, 1, 0], color: colR }), v1 = s.vert({ position: [ax + rx, yC, az + rz], normal: [0, 1, 0], color: colR });
-        const v2 = s.vert({ position: [bx - rx, yC, bz - rz], normal: [0, 1, 0], color: colR }), v3 = s.vert({ position: [bx + rx, yC, bz + rz], normal: [0, 1, 0], color: colR });
+        const v0 = s.sv(ax - rx, yC, az - rz, N_UP, colR), v1 = s.sv(ax + rx, yC, az + rz, N_UP, colR);
+        const v2 = s.sv(bx - rx, yC, bz - rz, N_UP, colR), v3 = s.sv(bx + rx, yC, bz + rz, N_UP, colR);
         s.tri(v0, v2, v1); s.tri(v1, v2, v3);
-        const w0 = s.vert({ position: [ax - rx, yC, az - rz], normal: [0, -1, 0], color: colR }), w1 = s.vert({ position: [ax + rx, yC, az + rz], normal: [0, -1, 0], color: colR });
-        const w2 = s.vert({ position: [bx - rx, yC, bz - rz], normal: [0, -1, 0], color: colR }), w3 = s.vert({ position: [bx + rx, yC, bz + rz], normal: [0, -1, 0], color: colR });
+        occlQuad(ch, [ax - rx, yC, az - rz], [bx - rx, yC, bz - rz], [bx + rx, yC, bz + rz], [ax + rx, yC, az + rz]);
+        const w0 = s.sv(ax - rx, yC, az - rz, N_DOWN, colR), w1 = s.sv(ax + rx, yC, az + rz, N_DOWN, colR);
+        const w2 = s.sv(bx - rx, yC, bz - rz, N_DOWN, colR), w3 = s.sv(bx + rx, yC, bz + rz, N_DOWN, colR);
         s.tri(w0, w1, w2); s.tri(w1, w3, w2);
         // posts every ~6 m on one side
         const np = Math.floor(l / 6);
@@ -778,8 +877,8 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       const x = r.p[i * 2], z = r.p[i * 2 + 1]; const k = kp(x, z);
       if (!isJunction(k) || juncDone.has(k)) continue; juncDone.add(k);
       const rad = (halfW.get(k) || 3) * 1.05; const ch = chunk(chunkKey(x, z)); const g = ch.roads;
-      const SEG = 16; const c0 = g.vert({ position: [x, 0.048, z], normal: [0, 1, 0], aRoad: [0, 0, rad * 2, 4], aLanes: [0, 0, 5, 0], aJunc: [0, 0, 99, 99] });
-      for (let s = 0; s < SEG; s++) { const a = s / SEG * Math.PI * 2; g.vert({ position: [x + Math.cos(a) * rad, 0.048, z + Math.sin(a) * rad], normal: [0, 1, 0], aRoad: [0, 0, rad * 2, 4], aLanes: [0, 0, 5, 0], aJunc: [0, 0, 99, 99] }); }
+      const SEG = 16; const c0 = g.dv(x, 0.048, z, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99);
+      for (let s = 0; s < SEG; s++) { const a = s / SEG * Math.PI * 2; g.dv(x + Math.cos(a) * rad, 0.048, z + Math.sin(a) * rad, 0, 1, 0, 0, 0, rad * 2, 4, 0, 0, 5, 0, 0, 0, 99, 99); }
       for (let s = 0; s < SEG; s++) g.tri(c0, c0 + 1 + ((s + 1) % SEG), c0 + 1 + s);
     }
   }
@@ -933,6 +1032,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
   progress(0.9, 'Uploading city to GPU');
   const transfer = [];
   const outChunks = [];
+  const mem = { chunks: chunks.size, cap: 0, used: 0, recs: REC.n };
+  for (const ch of chunks.values()) for (const g of [...['walls', 'roofs', 'roads', 'foot', 'struct', 'wallsNear', 'structNear'].map(n => ch[n]), { b: { p: ch.phys.pos }, idx: ch.phys.idx }]) { for (const b of [...Object.values(g.b), g.idx]) { mem.cap += b.a.byteLength; mem.used += b.n * b.a.BYTES_PER_ELEMENT; } }
+  mem.cap = Math.round(mem.cap / 1048576); mem.used = Math.round(mem.used / 1048576);
   for (const [k, ch] of chunks) {
     const coarse = k >= 900000, kk = coarse ? k - 900000 : k, size = coarse ? chunkSize * 3 : chunkSize;
     const cx = (kk % 1000) - 50, cz = Math.floor(kk / 1000) - 50;
@@ -945,15 +1047,18 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       transfer.push(g.index.buffer);
     }
     if (ch.phys.vc) { o.phys = { vertices: ch.phys.pos.out(), indices: ch.phys.idx.out() }; transfer.push(o.phys.vertices.buffer, o.phys.indices.buffer); }
+    if (ch.occl.vc) { o.occl = { vertices: ch.occl.pos.out(), indices: ch.occl.idx.out() }; transfer.push(o.occl.vertices.buffer, o.occl.indices.buffer); }
     outChunks.push(o);
+    chunks.set(k, null); // its growable buffers (with their slack) can go as soon as the exact copies exist
   }
   const treeArr = new Float32Array(trees); transfer.push(treeArr.buffer);
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, stats: { buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {
-  const i0 = g.vert({ position: a, normal: n, color: col }), i1 = g.vert({ position: b, normal: n, color: col }), i2 = g.vert({ position: c, normal: n, color: col }), i3 = g.vert({ position: d, normal: n, color: col });
+  const i0 = g.sv(a[0], a[1], a[2], n, col), i1 = g.sv(b[0], b[1], b[2], n, col), i2 = g.sv(c[0], c[1], c[2], n, col), i3 = g.sv(d[0], d[1], d[2], n, col);
   // pick winding so that face normal matches n
   const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
   const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
@@ -961,7 +1066,7 @@ function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {
   if (fx * n[0] + fy * n[1] + fz * n[2] < 0 || doubleSided) {
     if (doubleSided) {
       const nn = [-n[0], -n[1], -n[2]];
-      const j0 = g.vert({ position: a, normal: nn, color: col }), j1 = g.vert({ position: b, normal: nn, color: col }), j2 = g.vert({ position: c, normal: nn, color: col }), j3 = g.vert({ position: d, normal: nn, color: col });
+      const j0 = g.sv(a[0], a[1], a[2], nn, col), j1 = g.sv(b[0], b[1], b[2], nn, col), j2 = g.sv(c[0], c[1], c[2], nn, col), j3 = g.sv(d[0], d[1], d[2], nn, col);
       g.tri(j0, j2, j1); g.tri(j0, j3, j2);
     } else { g.tri(i0, i2, i1); g.tri(i0, i3, i2); }
   }

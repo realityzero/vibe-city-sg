@@ -1,6 +1,7 @@
 // Free-roam extras: hidden kaya toasts (collectibles) and ERP gantries that charge you for driving under them.
 import * as THREE from 'three';
 import { Pickup } from '../world/markers.js';
+import { mergeStatic } from '../gfx/mergeStatic.js';
 
 const ERP_ROADS = ['Shenton Way', 'Robinson Road', 'Cecil Street', 'Anson Road', 'Bras Basah Road', 'Eu Tong Sen Street', 'Raffles Avenue', 'Esplanade Drive', 'Bayfront Avenue', 'Fullerton Road', 'Stamford Road', 'New Bridge Road', 'Victoria Street', 'Nicoll Highway', 'Marina Boulevard'];
 
@@ -36,6 +37,7 @@ export class Extras {
     const tex = erpTexture();
     const steel = new THREE.MeshStandardMaterial({ color: 0x9ea6ad, metalness: 0.7, roughness: 0.4 });
     const panel = new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.6, roughness: 0.5 });
+    const grps = [];
     for (const name of ERP_ROADS) {
       const es = net.edges.filter(e => e.n === name && e.len > 60 && !e.y);
       if (!es.length) continue;
@@ -52,9 +54,10 @@ export class Extras {
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 0.8), panel); sign.position.set(0, 6, 0.42); grp.add(sign);
       const sign2 = sign.clone(); sign2.rotation.y = Math.PI; sign2.position.z = -0.42; grp.add(sign2);
       grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
-      game.scene.add(grp);
+      game.scene.add(grp); grps.push(grp);
       this.gantries.push({ name, x, z, dx: d.x, dz: d.y, hw, side: 0, cool: 0, price: [1, 2, 2, 3, 4][Math.floor(Math.random() * 5)] });
     }
+    mergeStatic(game.scene, grps, 'erpGantries');
   }
 
   update(dt) {

@@ -2,6 +2,8 @@
 import { h, mountShell, runShell, meter, clamp, pick, sleep, sfx, typeText, confetti, money, voice } from './common.js';
 import { PORTRAITS, TOMMY_BACK } from './portraits.js';
 import { playSeq, negoTermsSpeak, negoUsersSpeak } from '../../missions/vodyn.js';
+// canvas pixel ratio capped at 2: a 3x phone screen would make each full-screen minigame canvas ~12 MB
+const MG_DPR = Math.min(2, window.devicePixelRatio || 1);
 
 const M = 1e6;
 const ACCEPT = 60;
@@ -431,7 +433,7 @@ function skyline(scope, cv) {
   const stars = Array.from({ length: 160 }, () => ({ x: Math.random(), y: Math.random() * 0.5, r: Math.random() * 1.3 + 0.3, p: Math.random() * 6.28 }));
   const rockets = [], sparks = [];
   const build = () => {
-    const d = devicePixelRatio;
+    const d = MG_DPR;
     W = cv.width = cv.clientWidth * d; H = cv.height = cv.clientHeight * d;
     bg = document.createElement('canvas'); bg.width = W; bg.height = H;
     const b = bg.getContext('2d');
@@ -497,21 +499,21 @@ function skyline(scope, cv) {
   };
   build();
   scope.on(window, 'resize', build);
-  const burst = (x, y, col) => { const n = 90; for (let i = 0; i < n; i++) { const a = Math.random() * 7, s = (2 + Math.random() * 3) * devicePixelRatio; sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 + Math.random() * 0.8, t: 0, col }); } };
+  const burst = (x, y, col) => { const n = 90; for (let i = 0; i < n; i++) { const a = Math.random() * 7, s = (2 + Math.random() * 3) * MG_DPR; sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 + Math.random() * 0.8, t: 0, col }); } };
   const COLS = ['#ff3ea5', '#26e0ff', '#ffd23f', '#7cff6b', '#b388ff', '#ffffff'];
   let rocketT = 0;
   scope.loop((dt, now) => {
     if (!bg) return;
     ctx.drawImage(bg, 0, 0);
-    for (const s of stars) { ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.35 * Math.sin(now * 1.6 + s.p)})`; ctx.fillRect(s.x * W, s.y * H, s.r * devicePixelRatio, s.r * devicePixelRatio); }
+    for (const s of stars) { ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.35 * Math.sin(now * 1.6 + s.p)})`; ctx.fillRect(s.x * W, s.y * H, s.r * MG_DPR, s.r * MG_DPR); }
     // pool shimmer
     const py = H * 0.88;
     for (let i = 0; i < 14; i++) { const x = ((i * 137 + now * 40) % (W + 200)) - 100; ctx.fillStyle = 'rgba(200,255,255,.08)'; ctx.fillRect(x, py + 6 + (i % 4) * 9, 80, 2); }
-    if (fireOn) { rocketT -= dt; if (rocketT <= 0) { rocketT = 0.25 + Math.random() * 0.5; rockets.push({ x: W * (0.15 + Math.random() * 0.7), y: H * 0.72, vy: -(5 + Math.random() * 3) * devicePixelRatio, t: 0, top: H * (0.12 + Math.random() * 0.25), col: COLS[Math.floor(Math.random() * COLS.length)] }); } }
+    if (fireOn) { rocketT -= dt; if (rocketT <= 0) { rocketT = 0.25 + Math.random() * 0.5; rockets.push({ x: W * (0.15 + Math.random() * 0.7), y: H * 0.72, vy: -(5 + Math.random() * 3) * MG_DPR, t: 0, top: H * (0.12 + Math.random() * 0.25), col: COLS[Math.floor(Math.random() * COLS.length)] }); } }
     for (let i = rockets.length - 1; i >= 0; i--) { const r = rockets[i]; r.y += r.vy * dt * 60; ctx.fillStyle = '#fff'; ctx.fillRect(r.x, r.y, 2, 6); if (r.y < r.top) { burst(r.x, r.y, r.col); rockets.splice(i, 1); } }
     ctx.globalCompositeOperation = 'lighter';
     for (let i = sparks.length - 1; i >= 0; i--) { const p = sparks[i]; p.t += dt; p.vy += 0.04 * dt * 60; p.vx *= 0.985; p.vy *= 0.985; p.x += p.vx * dt * 60; p.y += p.vy * dt * 60;
-      const a = Math.max(0, 1 - p.t / p.life); ctx.fillStyle = p.col; ctx.globalAlpha = a; ctx.fillRect(p.x, p.y, 3.2 * devicePixelRatio, 3.2 * devicePixelRatio); ctx.globalAlpha = a * 0.25; ctx.fillRect(p.x - 3 * devicePixelRatio, p.y - 3 * devicePixelRatio, 9 * devicePixelRatio, 9 * devicePixelRatio); if (p.t > p.life) sparks.splice(i, 1); }
+      const a = Math.max(0, 1 - p.t / p.life); ctx.fillStyle = p.col; ctx.globalAlpha = a; ctx.fillRect(p.x, p.y, 3.2 * MG_DPR, 3.2 * MG_DPR); ctx.globalAlpha = a * 0.25; ctx.fillRect(p.x - 3 * MG_DPR, p.y - 3 * MG_DPR, 9 * MG_DPR, 9 * MG_DPR); if (p.t > p.life) sparks.splice(i, 1); }
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   });
   return { fireworks: on => { fireOn = on; } };

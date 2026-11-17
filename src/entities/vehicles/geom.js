@@ -181,8 +181,11 @@ export function capGeometry(contour, z, normalZ) {
  * Clips the triangles of `surfaces` to the region where every constraint f(p, n) <= 0,
  * offsetting the result along the normal. Used for lights, intakes and decals.
  */
+const _cn = new THREE.Vector3(), _vp = new THREE.Vector3(), _vn = new THREE.Vector3();
+const SP = [new Float64Array(192), new Float64Array(192)], SN = [new Float64Array(192), new Float64Array(192)], VALS = new Float64Array(64);
 export function clipRegion(surfaces, constraints, offset = 0.003) {
   const outP = [], outN = [];
+  const emit = (p, nrm) => { const nn = _cn.copy(nrm).normalize(); outP.push(p.x + nn.x * offset, p.y + nn.y * offset, p.z + nn.z * offset); outN.push(nn.x, nn.y, nn.z); };
   const A = new THREE.Vector3(), B = new THREE.Vector3(), Cc = new THREE.Vector3();
   const nA = new THREE.Vector3(), nB = new THREE.Vector3(), nC = new THREE.Vector3();
   for (const geo of surfaces) {
@@ -193,30 +196,50 @@ export function clipRegion(surfaces, constraints, offset = 0.003) {
       const ia = idx ? idx[t * 3] : t * 3, ib = idx ? idx[t * 3 + 1] : t * 3 + 1, ic = idx ? idx[t * 3 + 2] : t * 3 + 2;
       A.fromBufferAttribute(pos, ia); B.fromBufferAttribute(pos, ib); Cc.fromBufferAttribute(pos, ic);
       nA.fromBufferAttribute(nrm, ia); nB.fromBufferAttribute(nrm, ib); nC.fromBufferAttribute(nrm, ic);
-      let poly = [[A.clone(), nA.clone()], [B.clone(), nB.clone()], [Cc.clone(), nC.clone()]];
-      for (const f of constraints) {
-        if (!poly.length) break;
-        const vals = poly.map(v => f(v[0], v[1]));
-        if (vals.every(x => x <= 0)) continue;
-        if (vals.every(x => x > 0)) { poly = []; break; }
-        const np = [];
-        for (let i = 0; i < poly.length; i++) {
-          const j = (i + 1) % poly.length, va = vals[i], vb = vals[j];
-          if (va <= 0) np.push(poly[i]);
+      // allocation-free walk while the triangle is still unclipped (same order and tests as the general path below):
+      // nearly every body triangle is rejected by an early constraint, and building clones for each one made this the
+      // load's biggest allocator (~4 GB per load across all vehicle types)
+      let k = 0;
+      for (; k < constraints.length; k++) {
+        const f = constraints[k], va = f(A, nA), vb = f(B, nB), vc = f(Cc, nC);
+        if (va <= 0 && vb <= 0 && vc <= 0) continue;
+        if (va > 0 && vb > 0 && vc > 0) k = -1;
+        break;
+      }
+      if (k < 0) continue; // rejected whole
+      if (k === constraints.length) { // inside every constraint: emitted unchanged
+        emit(A, nA); emit(B, nB); emit(Cc, nC);
+        continue;
+      }
+      // straddles constraint k: Sutherland–Hodgman over flat scratch arrays (no per-vertex objects), same arithmetic
+      // as Vector3.lerp / normalize
+      let n = 3, cur = 0;
+      const P0 = SP[0], N0 = SN[0];
+      P0[0] = A.x; P0[1] = A.y; P0[2] = A.z; P0[3] = B.x; P0[4] = B.y; P0[5] = B.z; P0[6] = Cc.x; P0[7] = Cc.y; P0[8] = Cc.z;
+      N0[0] = nA.x; N0[1] = nA.y; N0[2] = nA.z; N0[3] = nB.x; N0[4] = nB.y; N0[5] = nB.z; N0[6] = nC.x; N0[7] = nC.y; N0[8] = nC.z;
+      for (let c = k; c < constraints.length && n; c++) {
+        const f = constraints[c], P = SP[cur], N = SN[cur];
+        let allIn = true, allOut = true;
+        for (let i = 0; i < n; i++) { _vp.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); _vn.set(N[i * 3], N[i * 3 + 1], N[i * 3 + 2]); const v = VALS[i] = f(_vp, _vn); if (v <= 0) allOut = false; else allIn = false; }
+        if (allIn) continue;
+        if (allOut) { n = 0; break; }
+        const Q = SP[cur ^ 1], M = SN[cur ^ 1];
+        let m = 0;
+        for (let i = 0; i < n; i++) {
+          const j = (i + 1) % n, va = VALS[i], vb = VALS[j];
+          if (va <= 0) { for (let q = 0; q < 3; q++) { Q[m * 3 + q] = P[i * 3 + q]; M[m * 3 + q] = N[i * 3 + q]; } m++; }
           if ((va <= 0) !== (vb <= 0)) {
-            const s = va / (va - vb);
-            np.push([poly[i][0].clone().lerp(poly[j][0], s), poly[i][1].clone().lerp(poly[j][1], s)]);
+            const t = va / (va - vb);
+            for (let q = 0; q < 3; q++) { Q[m * 3 + q] = P[i * 3 + q] + (P[j * 3 + q] - P[i * 3 + q]) * t; M[m * 3 + q] = N[i * 3 + q] + (N[j * 3 + q] - N[i * 3 + q]) * t; }
+            m++;
           }
         }
-        poly = np;
+        n = m; cur ^= 1;
       }
-      if (poly.length < 3) continue;
-      for (let i = 1; i + 1 < poly.length; i++) {
-        for (const v of [poly[0], poly[i], poly[i + 1]]) {
-          const nn = v[1].clone().normalize();
-          outP.push(v[0].x + nn.x * offset, v[0].y + nn.y * offset, v[0].z + nn.z * offset);
-          outN.push(nn.x, nn.y, nn.z);
-        }
+      if (n < 3) continue;
+      const P = SP[cur], N = SN[cur];
+      for (let i = 1; i + 1 < n; i++) for (const v of [0, i, i + 1]) {
+        _vp.set(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); _vn.set(N[v * 3], N[v * 3 + 1], N[v * 3 + 2]); emit(_vp, _vn);
       }
     }
   }

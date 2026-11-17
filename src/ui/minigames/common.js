@@ -1,5 +1,7 @@
 // Shared plumbing for the DOM minigames: element builder, disposable scope, meters, pause overlay.
 import './minigames.css';
+// canvas pixel ratio capped at 2: a 3x phone screen would make each full-screen minigame canvas ~12 MB
+const MG_DPR = Math.min(2, window.devicePixelRatio || 1);
 
 export function h(tag, props, ...children) {
   const el = document.createElement(tag);
@@ -172,19 +174,19 @@ export function confetti(scope, host, { count = 160, colors = ['#ff3ea5', '#26e0
   const c = h('canvas', { class: 'mg-confetti' });
   host.append(c);
   const ctx = c.getContext('2d');
-  const resize = () => { c.width = host.clientWidth * devicePixelRatio; c.height = host.clientHeight * devicePixelRatio; };
+  const resize = () => { c.width = host.clientWidth * MG_DPR; c.height = host.clientHeight * MG_DPR; };
   resize();
   const W = () => c.width, H = () => c.height;
   const parts = Array.from({ length: count }, () => ({
-    x: W() * (0.2 + Math.random() * 0.6), y: H() * 0.45, vx: (Math.random() - 0.5) * 18 * devicePixelRatio, vy: -(8 + Math.random() * 16) * devicePixelRatio,
-    r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4, w: (6 + Math.random() * 8) * devicePixelRatio, hgt: (3 + Math.random() * 5) * devicePixelRatio, col: pick(colors),
+    x: W() * (0.2 + Math.random() * 0.6), y: H() * 0.45, vx: (Math.random() - 0.5) * 18 * MG_DPR, vy: -(8 + Math.random() * 16) * MG_DPR,
+    r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4, w: (6 + Math.random() * 8) * MG_DPR, hgt: (3 + Math.random() * 5) * MG_DPR, col: pick(colors),
   }));
   let t = 0;
   scope.loop(dt => {
     t += dt;
     ctx.clearRect(0, 0, W(), H());
     for (const p of parts) {
-      p.vy += 0.45 * devicePixelRatio * dt * 60; p.vx *= 0.99; p.x += p.vx * dt * 60; p.y += p.vy * dt * 60; p.r += p.vr;
+      p.vy += 0.45 * MG_DPR * dt * 60; p.vx *= 0.99; p.x += p.vx * dt * 60; p.y += p.vy * dt * 60; p.r += p.vr;
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.globalAlpha = Math.max(0, 1 - t / duration);
       ctx.fillStyle = p.col; ctx.fillRect(-p.w / 2, -p.hgt / 2, p.w, p.hgt * Math.abs(Math.cos(p.r * 2))); ctx.restore();
     }

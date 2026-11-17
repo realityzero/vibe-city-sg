@@ -1,20 +1,25 @@
 // City: drives the builder worker, owns chunk meshes, ground and water, exposes data for gameplay systems.
 import * as THREE from 'three';
-import { createFacadeMaterial, createRoofMaterial, createRoadMaterial, createStructMaterial, createGroundMaterial } from '../gfx/materials.js';
+import { createFacadeMaterial, createRoofMaterial, createRoadMaterial, createStructMaterial, createGroundMaterial, FACADE_REC, FACADE_REC_W } from '../gfx/materials.js';
 import { REFLECT_LAYER } from './water.js';
+import { nextTask } from '../core/nextTask.js';
 
 const NOBATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
 
-function disposeArray() { this.array = null; }
+// City geometry lives on the GPU only: nothing reads it on the CPU after upload (line of sight and collisions use
+// the physics world), so every array is dropped once uploaded. Indices are swapped for an empty array of the same
+// type rather than null: BatchedMesh reads index.array.BYTES_PER_ELEMENT every frame.
+function disposeArray() { this.bytesPerElement = this.array.BYTES_PER_ELEMENT; this.array = null; } // (size kept for tests/mobile/gpubuffers.mjs)
+function emptyIndex() { this.array = new this.array.constructor(0); }
 function toGeometry(g, freeOnUpload = true) {
   const geo = new THREE.BufferGeometry();
   for (const [name, a] of Object.entries(g.attributes)) {
-    const attr = new THREE.BufferAttribute(a.array, a.itemSize);
-    // positions stay on the CPU (raycasts for camera framing); everything else is freed once on the GPU
-    if (freeOnUpload && name !== 'position' && name !== 'normal') attr.onUpload(disposeArray);
+    const attr = new THREE.BufferAttribute(a.array, a.itemSize, !!a.normalized);
+    if (freeOnUpload) attr.onUpload(disposeArray);
     geo.setAttribute(name, attr);
   }
   geo.setIndex(new THREE.BufferAttribute(g.index, 1));
+  if (freeOnUpload) geo.index.onUpload(emptyIndex);
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
   return geo;
@@ -33,6 +38,7 @@ export class City {
     this.mats.foot.polygonOffsetFactor = -1; this.mats.foot.polygonOffsetUnits = -3;
     this.chunks = [];
     this.physChunks = [];
+    this.occlChunks = []; // camera-only sight blockers (see cityBuilder.worker.js occlTri)
   }
 
   async load(onProgress) {
@@ -47,8 +53,12 @@ export class City {
     const cv = document.createElement('canvas'); cv.width = maskImg.width; cv.height = maskImg.height;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(maskImg, 0, 0);
-    this.mask = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    // RGB planes only (alpha is always 255): a quarter less than the RGBA readback, and the canvas goes right away
+    const rgba = ctx.getImageData(0, 0, cv.width, cv.height).data, n = cv.width * cv.height, m = new Uint8Array(n * 3);
+    for (let i = 0, j = 0; i < n; i++, j += 4) { m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2]; }
+    this.mask = m;
     this.maskW = cv.width; this.maskH = cv.height;
+    cv.width = cv.height = 0;
     onProgress?.(0.05, 'Map data loaded');
     return data;
   }
@@ -58,7 +68,7 @@ export class City {
     const M = this.meta;
     const i = Math.round((x - M.xmin) / M.res - 0.5), j = Math.round((z - M.zmin) / M.res - 0.5);
     if (i < 0 || j < 0 || i >= this.maskW || j >= this.maskH) return ch === 0 ? 255 : 0;
-    return this.mask[(j * this.maskW + i) * 4 + ch];
+    return this.mask[(j * this.maskW + i) * 3 + ch];
   }
   isWater(x, z) { return this.maskAt(x, z) < 160; }
 
@@ -70,17 +80,28 @@ export class City {
         if (m.type === 'progress') onProgress?.(m.p, m.label);
         else if (m.type === 'error') { reject(new Error(m.message + '\n' + m.stack)); worker.terminate(); }
         else if (m.type === 'done') {
-          this._createMeshes(m);
+          worker.terminate();
           this.trees = m.trees;
           this.buildingInfo = m.buildingInfo;
           this.stats = m.stats;
-          worker.terminate();
-          resolve(m.stats);
+          this._facadeRecords(m.facadeRecords);
+          this._createMeshes(m).then(() => resolve(m.stats), reject);
         }
       };
       worker.onerror = e => reject(e);
-      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, chunkSize: 300 });
+      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
     });
+  }
+
+  // facade parameter records -> RGBA32F texture the facade shaders read per vertex (materials.js FACADE_REC)
+  _facadeRecords(recs) {
+    const texels = recs.length / 4, H = Math.max(1, Math.ceil(texels / FACADE_REC_W));
+    const data = new Float32Array(FACADE_REC_W * H * 4); data.set(recs);
+    const t = new THREE.DataTexture(data, FACADE_REC_W, H, THREE.RGBAFormat, THREE.FloatType);
+    t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.flipY = false; t.needsUpdate = true;
+    t.userData.releaseSource = true; t.name = 'facadeRecords';
+    FACADE_REC.value = t;
+    this.facadeRecordCount = texels / 2;
   }
 
   // ?nobatch: the old one-mesh-per-chunk-and-category layout (A/B and debugging)
@@ -101,15 +122,15 @@ export class City {
         if (CATS.includes(name)) { chunk.vis[name] = true; chunk.tris[name] = c[name].index.length / 3; chunk.sphere[name] = mesh.geometry.boundingSphere; }
       }
       if (c.phys) this.physChunks.push({ key: c.key, ...c.phys });
+      if (c.occl) this.occlChunks.push(c.occl);
       this.chunks.push(chunk);
     }
     this._createGround();
   }
 
-  _createMeshes(m) {
+  async _createMeshes(m) {
     // Walls, roofs, structures, roads and footways of every chunk go into one BatchedMesh per category: a single
     // multi-draw call per pass with per-chunk frustum culling and distance visibility (was ~450 draw calls per pass).
-    // Each chunk keeps a position-only Mesh (never rendered) for line-of-sight raycasts / BVHs.
     const CATS = ['walls', 'roofs', 'roads', 'foot', 'struct'];
     if (NOBATCH) return this._createPlainMeshes(m, CATS);
     const size = {};
@@ -125,7 +146,10 @@ export class City {
       if (bm.castShadow) bm.layers.enable(REFLECT_LAYER);
       this.batches[name] = bm;
     }
-    for (const c of m.chunks) {
+    // (in slices: ~0.5 s of main-thread work on a phone, taps get answered in between)
+    for (let ci = 0; ci < m.chunks.length; ci++) {
+      if (ci % 40 === 39) await nextTask();
+      const c = m.chunks[ci]; m.chunks[ci] = null; // let each chunk's arrays go as soon as they're copied into the batches
       const chunk = { key: c.key, center: new THREE.Vector3(c.x0 + c.size / 2, 0, c.z0 + c.size / 2), meshes: {}, inst: {}, vis: {}, tris: {}, sphere: {} };
       for (const name of CATS) {
         if (!c[name]) continue;
@@ -133,15 +157,6 @@ export class City {
         const bm = this.batches[name];
         chunk.inst[name] = bm.addInstance(bm.addGeometry(geo));
         chunk.vis[name] = true; chunk.tris[name] = c[name].index.length / 3; chunk.sphere[name] = geo.boundingSphere;
-        if (name === 'walls' || name === 'roofs' || name === 'struct') {
-          // raycast proxy: positions + index only
-          const rg = new THREE.BufferGeometry();
-          rg.setAttribute('position', geo.attributes.position); rg.setIndex(geo.index);
-          rg.boundingSphere = geo.boundingSphere; rg.boundingBox = geo.boundingBox;
-          const proxy = new THREE.Mesh(rg, this.mats[name]);
-          proxy.name = `${name}_${c.key}`;
-          chunk.meshes[name] = proxy;
-        }
       }
       // street-level detail: ordinary meshes, drawn for nearby chunks only (see update)
       for (const name of ['wallsNear', 'structNear']) {
@@ -154,12 +169,13 @@ export class City {
         chunk.meshes[name] = mesh;
       }
       if (c.phys) this.physChunks.push({ key: c.key, ...c.phys });
+      if (c.occl) this.occlChunks.push(c.occl);
       this.chunks.push(chunk);
     }
     for (const bm of Object.values(this.batches)) {
-      bm.computeBoundingBox(); bm.computeBoundingSphere();
-      // the merged vertex buffers live on the GPU only (BatchedMesh still reads the index type and positions)
-      for (const [k, attr] of Object.entries(bm.geometry.attributes)) if (k !== 'position') attr.onUpload(disposeArray);
+      bm.computeBoundingBox(); bm.computeBoundingSphere(); // (per-chunk bounds were cached by addGeometry)
+      for (const attr of Object.values(bm.geometry.attributes)) attr.onUpload(disposeArray);
+      bm.geometry.index.onUpload(emptyIndex);
       this.group.add(bm);
     }
     this._createGround();
@@ -194,16 +210,17 @@ export class City {
       quads[water ? 'shore' : 'land'].push(ax, az, bx, bz);
     }
     const build = q => {
-      const n = q.length / 4, pos = new Float32Array(n * 12), nor = new Float32Array(n * 12), idx = new Uint32Array(n * 6);
+      const n = q.length / 4, pos = new Float32Array(n * 12), nor = new Int8Array(n * 16), idx = new Uint32Array(n * 6);
       for (let i = 0; i < n; i++) {
-        const [ax, az, bx, bz] = q.slice(i * 4, i * 4 + 4);
-        pos.set([ax, 0, az, ax, 0, bz, bx, 0, bz, bx, 0, az], i * 12);
-        for (let k = 0; k < 4; k++) nor[i * 12 + k * 3 + 1] = 1;
-        idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6);
+        const ax = q[i * 4], az = q[i * 4 + 1], bx = q[i * 4 + 2], bz = q[i * 4 + 3], o = i * 12, b = i * 4, j = i * 6;
+        pos[o] = ax; pos[o + 2] = az; pos[o + 3] = ax; pos[o + 5] = bz; pos[o + 6] = bx; pos[o + 8] = bz; pos[o + 9] = bx; pos[o + 11] = az;
+        for (let k = 0; k < 4; k++) nor[i * 16 + k * 4 + 1] = 127; // straight up, packed like the worker's normals
+        idx[j] = b; idx[j + 1] = b + 1; idx[j + 2] = b + 2; idx[j + 3] = b; idx[j + 4] = b + 2; idx[j + 5] = b + 3;
       }
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 4, true));
       g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeBoundingSphere(); g.computeBoundingBox();
+      for (const a of Object.values(g.attributes)) a.onUpload(disposeArray); g.index.onUpload(emptyIndex);
       return g;
     };
     const mk = (q, shore) => {

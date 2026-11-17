@@ -66,10 +66,10 @@ export class SafeSpots {
     if (cache.has(start)) return cache.get(start);
     const goal = new Set();
     for (const sw of this.game.roadnet.sidewalksNear(x, z, 90)) {
-      const P = sw.path.p;
-      for (let i = 0; i < P.length - 1; i++) {
-        const L = Math.hypot(P[i + 1][0] - P[i][0], P[i + 1][2] - P[i][2]);
-        for (let s = 0; s <= L; s += S) { const t = L ? s / L : 0; goal.add(Math.round((P[i][0] + (P[i + 1][0] - P[i][0]) * t) / S) * 100003 + Math.round((P[i][2] + (P[i + 1][2] - P[i][2]) * t) / S)); }
+      const P = sw.path;
+      for (let i = 0; i < P.n - 1; i++) {
+        const ax = P.x(i), az = P.z(i), bx = P.x(i + 1), bz = P.z(i + 1), L = Math.hypot(bx - ax, bz - az);
+        for (let s = 0; s <= L; s += S) { const t = L ? s / L : 0; goal.add(Math.round((ax + (bx - ax) * t) / S) * 100003 + Math.round((az + (bz - az) * t) / S)); }
       }
     }
     const W = this.game.physics.world, vel = { x: 0, y: 0, z: 0 };
@@ -118,9 +118,9 @@ export class SafeSpots {
     }
     // then every 3 m along nearby sidewalks (or lane centres for vehicles), nearest first
     const net = this.game.roadnet, C = [];
-    const lines = vehicle ? net.lanesNear(pos.x, pos.z, radius).map(l => l.path?.p || l.p).filter(Boolean) : net.sidewalksNear(pos.x, pos.z, radius).map(s => s.path.p);
-    for (const P of lines) for (let i = 0; i < P.length - 1; i++) {
-      const ax = P[i][0], az = P[i][2], bx = P[i + 1][0], bz = P[i + 1][2], L = Math.hypot(bx - ax, bz - az);
+    const lines = vehicle ? net.lanesNear(pos.x, pos.z, radius).map(l => l.path) : net.sidewalksNear(pos.x, pos.z, radius).map(s => s.path);
+    for (const P of lines) for (let i = 0; i < P.n - 1; i++) {
+      const ax = P.x(i), az = P.z(i), bx = P.x(i + 1), bz = P.z(i + 1), L = Math.hypot(bx - ax, bz - az);
       for (let s = 0; s <= L; s += 3) { const t = L ? s / L : 0, x = ax + (bx - ax) * t, z = az + (bz - az) * t; C.push([x, z, (x - pos.x) ** 2 + (z - pos.z) ** 2]); }
     }
     C.sort((a, b) => a[2] - b[2]);

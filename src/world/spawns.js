@@ -7,6 +7,20 @@ import { Aircraft } from '../entities/aircraft.js';
 import { WATER_LEVEL } from '../core/constants.js';
 import { VEHICLE_SPECS } from '../entities/vehicles/index.js';
 
+// grid offsets (step apart, within [-r, r]^2) nearest first; equal distances keep the row-by-row scan order, so the
+// first hit is exactly the cell a full scan keeping the closest (first-found on ties) would pick — the searches can stop
+// there instead of testing every cell (the berth search was ~100 ms of the load on a phone)
+const _orders = new Map();
+function nearestFirst(r, step) {
+  const k = r * 64 + step; let o = _orders.get(k);
+  if (!o) {
+    o = []; for (let dz = -r; dz <= r; dz += step) for (let dx = -r; dx <= r; dx += step) o.push([dx, dz, dx * dx + dz * dz, o.length]);
+    o.sort((a, b) => a[2] - b[2] || a[3] - b[3]);
+    if (r <= 160) _orders.set(k, o); // the load-time searches; the rare wide ones (cheats, Claudia) don't keep MBs around
+  }
+  return o;
+}
+
 function helipadTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 512; const g = c.getContext('2d');
   g.fillStyle = '#2b3236'; g.fillRect(0, 0, 512, 512);
@@ -40,14 +54,14 @@ export class Spawns {
     park(612, -860, 'stinger', 0xc8141c);
     park(-386, 380, 'bike', 0xe2187f);
     park(-640, 870, 'sedan', 0xc9ccd0);
-    for (const s of this.slots) this.spawn(s);
     this.t = 0;
   }
+  /** the initial vehicles, one task each (spawnAll(brk) from the load; ten models at once were a ~0.4 s task on a phone) */
+  async spawnAll(brk) { for (const s of this.slots) { if (!s.v) this.spawn(s); await brk(); } }
 
   findWater(x, z, r) {
     const c = this.game.city;
-    let best = null, bd = Infinity;
-    for (let dz = -r; dz <= r; dz += 4) for (let dx = -r; dx <= r; dx += 4) {
+    for (const [dx, dz] of nearestFirst(r, 4)) {
       const px = x + dx, pz = z + dz;
       let ok = true;
       // open water: a 16 m clear disc
@@ -56,9 +70,9 @@ export class Spawns {
       // but reachable: some shore within 30 m
       let shore = false; for (let a = 0; a < 16 && !shore; a++) if (!c.isWater(px + Math.cos(a / 16 * 6.283) * 28, pz + Math.sin(a / 16 * 6.283) * 28)) shore = true;
       if (!shore) continue;
-      const d = dx * dx + dz * dz; if (d < bd) { bd = d; best = new THREE.Vector3(px, WATER_LEVEL, pz); }
+      return new THREE.Vector3(px, WATER_LEVEL, pz);
     }
-    return best;
+    return null;
   }
   // heading with the longest run of open water (so a fresh boat doesn't face the seawall)
   /** a mooring for `type` near (x,z): the hull (plus a margin) all on water and parallel to the shore, with a clear
@@ -69,10 +83,9 @@ export class Spawns {
     // solid quay: the physics ground (a conservative 4 m height field) sits back from the drawn waterline, so the
     // standing spot must have real ground under it, not just land in the mask
     const P = this.game.physics, solid = (x, z) => { const h = P.raycast({ x, y: 6, z }, { x: 0, y: -1, z: 0 }, 12); return h && h.point.y > -0.25; };
-    let best = null, bd = Infinity;
-    for (let dz = -r; dz <= r; dz += 3) for (let dx = -r; dx <= r; dx += 3) {
-      const px = x + dx, pz = z + dz, d2 = dx * dx + dz * dz;
-      if (d2 >= bd || !c.isWater(px, pz)) continue;
+    for (const [dx, dz] of nearestFirst(r, 3)) {
+      const px = x + dx, pz = z + dz;
+      if (!c.isWater(px, pz)) continue;
       // nearest land direction
       let nd = Infinity, na = 0;
       for (let a = 0; a < 24; a++) { const ang = a / 24 * Math.PI * 2, cx = Math.cos(ang), cz = Math.sin(ang); for (let t = 1; t <= reach; t += 0.75) if (!c.isWater(px + cx * t, pz + cz * t)) { if (t < nd) { nd = t; na = ang; } break; } }
@@ -86,9 +99,9 @@ export class Spawns {
       if (t >= reach) continue;
       const land = new THREE.Vector3(px + sx * (t + 0.6), 0, pz + sz * (t + 0.6));
       if (this.game.safe && !this.game.safe.clear(land.x, land.z, { pad: 0.2 })) continue;
-      bd = d2; best = { pos: new THREE.Vector3(px, WATER_LEVEL, pz), yaw: Math.atan2(-ax, -az) };
+      return { pos: new THREE.Vector3(px, WATER_LEVEL, pz), yaw: Math.atan2(-ax, -az) };
     }
-    return best;
+    return null;
   }
 
   openYaw(p) {

@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { U } from '../gfx/globals.js';
+import { mergeStatic } from '../gfx/mergeStatic.js';
 
 const CHINATOWN = /^(Pagoda Street|Temple Street|Smith Street|Trengganu Street|Sago Street|Mosque Street|Erskine Road|Club Street|Ann Siang Road|Keong Saik Road|Bukit Pasoh Road)$/;
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _p = new THREE.Vector3();
@@ -175,6 +176,7 @@ export class StreetProps {
       this.meshes.push(grp);
       placed.push([x, z]);
     }
+    mergeStatic(scene, this.meshes.filter(m => m.isGroup), 'xwayGantries'); // steel in one draw; each sign has its own texture
   }
 
   update() {

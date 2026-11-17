@@ -13,6 +13,7 @@ import { PartBuilder, roundedBox, box, M4 } from './geom.js';
 const cache = new Map();
 
 /** Geometry + atlas for a type at a LOD (cached, shared by every car of that type). */
+const atlases = new Map(); // car type -> Atlas shared by its LODs
 export function getTypeAssets(type, lod = 'high', opts = {}) {
   const key = `${type}|${lod}|${opts.rider ?? ''}`;
   if (cache.has(key)) return cache.get(key);
@@ -23,7 +24,8 @@ export function getTypeAssets(type, lod = 'high', opts = {}) {
   else if (SPECIAL[type]) A = SPECIAL[type](lod, opts);
   else {
     const design = DESIGNS[type]();
-    const car = assembleCar(design, lod);
+    const car = assembleCar(design, lod, { atlas: atlases.get(type) });
+    atlases.set(type, car.atlas);
     const b = design.body;
     A = {
       ...car, design,

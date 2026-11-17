@@ -6,6 +6,7 @@ import { Path } from './roadnet.js';
 import { Fireworks } from './fireworks.js';
 import { WATER_LEVEL } from '../core/constants.js';
 import { Marker } from './markers.js';
+import { mergeStatic } from '../gfx/mergeStatic.js';
 
 function mrtSignTexture() {
   const c = document.createElement('canvas'); c.width = 256; c.height = 256; const g = c.getContext('2d');
@@ -45,6 +46,7 @@ export class Ambient {
     const signMat = new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.3 });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0xc9ced2, roughness: 0.35, metalness: 0.6 });
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x8fb4c4, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.45 });
+    const kiosks = [];
     for (const [name, list] of groups) {
       const e = list[0];
       const sw = game.roadnet.nearestSidewalk(e.x, e.z, 40);
@@ -60,10 +62,11 @@ export class Ambient {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 4.2, 6), roofMat); pole.position.set(2.6, 2.1, 1.3); g.add(pole);
       const sign = new THREE.Mesh(new THREE.CircleGeometry(0.45, 24), signMat); sign.position.set(2.6, 4.0, 1.37); g.add(sign);
       const sign2 = sign.clone(); sign2.rotation.y = Math.PI; sign2.position.z = 1.23; g.add(sign2);
-      game.scene.add(g);
+      game.scene.add(g); kiosks.push(g);
       const entry = pos.clone().add(new THREE.Vector3(0, 0, -1.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw));
       this.stations.push({ name, pos: entry, signMat, cool: 0 });
     }
+    mergeStatic(game.scene, kiosks, 'mrtKiosks'); // (the glass panes stay per kiosk)
     this.signMat = signMat;
     this.mrtBusy = false;
     // ---------------- fireworks + planes

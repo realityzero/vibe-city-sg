@@ -111,26 +111,31 @@ const FACADE_REFLECTION_FRAG = /* glsl */`
       metalnessFactor = fMetal;
 `;
 
+// facade parameter records (8 floats each: aF1 then aF2, see the city builder's WALL_LAYOUT), 2 RGBA32F texels per
+// record in rows of FACADE_REC_W texels; set by City once the builder is done
+export const FACADE_REC = { value: null };
+export const FACADE_REC_W = 2048;
+const FACADE_VHEAD = /* glsl */`
+      attribute vec2 aWall; attribute float aRec; uniform highp sampler2D uRec;
+      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`;
+const FACADE_VBODY = /* glsl */`vWall = aWall;
+      { int r = int(aRec + 0.5) * 2; ivec2 t = ivec2(r % ${FACADE_REC_W}, r / ${FACADE_REC_W}); vF1 = texelFetch(uRec, t, 0); vF2 = texelFetch(uRec, t + ivec2(1, 0), 0); }`;
 export function createFacadeMaterial({ reflection = false } = {}) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.0 });
   if (reflection) return patch(mat, {
-    key: 'facade-refl-v2', specMul: 1.35, hf: false,
-    uniforms: COMMON_U(),
-    vertexHead: COMMON_VHEAD + /* glsl */`
-      attribute vec2 aWall; attribute vec4 aF1; attribute vec4 aF2;
-      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
-    vertexBody: COMMON_VBODY + `vWall = aWall; vF1 = aF1; vF2 = aF2;`,
+    key: 'facade-refl-v3', specMul: 1.35, hf: false,
+    uniforms: { ...COMMON_U(), uRec: FACADE_REC },
+    vertexHead: COMMON_VHEAD + FACADE_VHEAD,
+    vertexBody: COMMON_VBODY + FACADE_VBODY,
     fragHead: COMMON_HEAD + `varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
     fragAfterMetal: FACADE_REFLECTION_FRAG,
     fragAfterEmissive: `totalEmissiveRadiance += fEmis;`,
   });
   return patch(mat, {
-    key: 'facade-v3', specMul: 1.35,
-    uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir },
-    vertexHead: COMMON_VHEAD + /* glsl */`
-      attribute vec2 aWall; attribute vec4 aF1; attribute vec4 aF2;
-      varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;`,
-    vertexBody: COMMON_VBODY + `vWall = aWall; vF1 = aF1; vF2 = aF2;`,
+    key: 'facade-v4', specMul: 1.35,
+    uniforms: { ...COMMON_U(), uSigns: { value: makeSignAtlas() }, uInterior: { value: makeInteriorAtlas() }, uSunDirF: U.sunDir, uRec: FACADE_REC },
+    vertexHead: COMMON_VHEAD + FACADE_VHEAD,
+    vertexBody: COMMON_VBODY + FACADE_VBODY,
     fragHead: COMMON_HEAD + /* glsl */`
       varying vec2 vWall; varying vec4 vF1; varying vec4 vF2;
       uniform sampler2D uSigns; uniform sampler2D uInterior; uniform vec3 uSunDirF;

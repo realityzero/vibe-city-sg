@@ -3,6 +3,34 @@
 import * as THREE from 'three';
 
 const SIZE = 1024;
+// GPU copy scale: 0.5 on the Low preset (phones). Atlases are always painted at 1024 (layout and UVs unchanged), then
+// box-filtered down in linear light — exactly the GPU's own next mip level, which is all a ~630 px wide phone render
+// ever samples on a car — saving 4 MB per vehicle type.
+let GPU_SCALE = 1;
+export function setAtlasGpuScale(s) { GPU_SCALE = s; }
+const S2L = new Float32Array(256).map((_, i) => { const c = i / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+const L2S = v => { const c = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055; return Math.max(0, Math.min(255, Math.round(c * 255))); };
+// the same mapping without a pow per channel (a third of each vehicle type's warm-up): binary search over the linear
+// values where the rounded sRGB byte steps up, deferring to L2S itself within a hair of a step — identical bytes
+const STEP = new Float64Array(256).map((_, o) => { if (!o) return -Infinity; const c = (o - 0.5) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+const l2s = v => {
+  let lo = 0, hi = 255;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (v >= STEP[m]) lo = m; else hi = m - 1; }
+  return (lo < 255 && STEP[lo + 1] - v < 1e-9) || v - STEP[lo] < 1e-9 ? L2S(v) : lo;
+};
+function halve(src) {
+  const w = src.width, h = src.height, W = w >> 1, H = h >> 1;
+  const sd = src.getContext('2d').getImageData(0, 0, w, h).data;
+  const dst = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W, H) : Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = dst.getContext('2d'), out = ctx.createImageData(W, H), d = out.data;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const a = ((y * 2) * w + x * 2) * 4, b = a + 4, c = a + w * 4, e = c + 4, o = (y * W + x) * 4;
+    for (let k = 0; k < 3; k++) d[o + k] = l2s((S2L[sd[a + k]] + S2L[sd[b + k]] + S2L[sd[c + k]] + S2L[sd[e + k]]) * 0.25);
+    d[o + 3] = (sd[a + 3] + sd[b + 3] + sd[c + 3] + sd[e + 3] + 2) >> 2;
+  }
+  ctx.putImageData(out, 0, 0);
+  return dst;
+}
 export const REGIONS = {
   white: [0, 0, 16, 16],
   sideR: [0, 24, 1024, 264],    // right side (+x), canvas left = rear of car
@@ -42,7 +70,10 @@ export class Atlas {
   }
   texture() {
     if (this._tex) return this._tex;
-    const t = new THREE.CanvasTexture(this.canvas);
+    // (the paint canvas is emptied right away: later LODs repaint the same content, which becomes a no-op)
+    let src = this.canvas;
+    if (GPU_SCALE < 1) { src = halve(src); this.canvas.width = this.canvas.height = 0; }
+    const t = new THREE.CanvasTexture(src);
     t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
     t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
     this._tex = t;

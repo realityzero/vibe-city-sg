@@ -4,18 +4,57 @@
 //   SongPlayer - lookahead scheduler that turns bar events into instrument calls
 import { Tracker, makeImpulse } from './util.js';
 
+/**
+ * Convolution reverb that only exists while it can be heard. WebKit keeps the impulse response as FFT stages plus
+ * per-stage delay lines — ~7 MB per second of stereo IR per ConvolverNode, idle or not (the game's six reverbs held
+ * 82 MB of Safari's tab memory). The input node is permanent; the ConvolverNode is built when a user arrives
+ * (hold() for open-ended users such as a music session, extend(t) for a one-shot ending at t) and dropped LINGER s
+ * after the last user's tail has died out. Past the tail its output is exact silence, so dropping it is inaudible;
+ * a rebuilt one starts from the same all-zero state. Build cost: ~4 ms (Mac) per node, on first use only.
+ */
+const LINGER = 30;
+export class LazyReverb {
+  constructor(ctx, src, out, ir) { this.ctx = ctx; this.src = src; this.out = out; this.ir = ir; this.node = null; this.holds = 0; this.until = 0; this._timer = 0; }
+  /** an open-ended user: returns its release(tailFrom) */
+  hold() {
+    this._ensure(); this.holds++;
+    let done = false;
+    return (tailFrom = this.ctx.currentTime) => { if (done) return; done = true; this.holds--; this.extend(tailFrom); };
+  }
+  /** a user whose sound ends at audio time t */
+  extend(t) {
+    this._ensure();
+    this.until = Math.max(this.until, t + this.ir.duration + 0.5);
+    if (!this.holds) this._arm();
+  }
+  _ensure() {
+    if (this.node) return;
+    const c = this.node = this.ctx.createConvolver();
+    c.buffer = this.ir; this.src.connect(c); c.connect(this.out);
+  }
+  _arm() {
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => this._check(), (Math.max(0, this.until - this.ctx.currentTime) + LINGER) * 1000);
+  }
+  _check() {
+    if (this.holds || !this.node) return;
+    // currentTime stands still while the context is suspended (tab hidden): wait for the tail in audio time
+    if (this.ctx.currentTime < this.until) { this._arm(); return; }
+    const c = this.node; this.node = null;
+    try { this.src.disconnect(c); } catch { /* noop */ }
+    try { c.disconnect(); c.buffer = null; } catch { /* noop */ }
+  }
+}
+
 export function makeFxSet(ctx, out, { gated = true, hallSec = 2.6 } = {}) {
-  const hall = ctx.createConvolver();
-  hall.buffer = makeImpulse(ctx, { duration: hallSec, decay: 3.2, damping: 0.7, predelay: 0.02 });
   const hallIn = ctx.createGain();
   const hallHp = ctx.createBiquadFilter(); hallHp.type = 'highpass'; hallHp.frequency.value = 180;
-  hallIn.connect(hallHp); hallHp.connect(hall); hall.connect(out);
+  hallIn.connect(hallHp);
+  const reverbs = new Map([[hallIn, new LazyReverb(ctx, hallHp, out, makeImpulse(ctx, { duration: hallSec, decay: 3.2, damping: 0.7, predelay: 0.02 }))]]);
   let gatedIn = hallIn;
   if (gated) {
-    const gv = ctx.createConvolver();
-    gv.buffer = makeImpulse(ctx, { duration: 0.42, gated: true, damping: 0.3, predelay: 0.005 });
     gatedIn = ctx.createGain();
-    gatedIn.connect(gv); gv.connect(out);
+    reverbs.set(gatedIn, new LazyReverb(ctx, gatedIn, out, makeImpulse(ctx, { duration: 0.42, gated: true, damping: 0.3, predelay: 0.005 })));
   }
   const delayIn = ctx.createGain();
   const delay = ctx.createDelay(2.0); delay.delayTime.value = 0.375;
@@ -23,7 +62,7 @@ export function makeFxSet(ctx, out, { gated = true, hallSec = 2.6 } = {}) {
   const fbLp = ctx.createBiquadFilter(); fbLp.type = 'lowpass'; fbLp.frequency.value = 2600;
   delayIn.connect(delay); delay.connect(fbLp); fbLp.connect(fb); fb.connect(delay); fbLp.connect(out);
   return {
-    hall: hallIn, gated: gatedIn, delay: delayIn,
+    hall: hallIn, gated: gatedIn, delay: delayIn, reverbs,
     setDelay(sec) { delay.delayTime.setTargetAtTime(Math.min(1.9, sec), ctx.currentTime, 0.05); },
   };
 }
@@ -77,15 +116,17 @@ export class Session {
     const ins = insertKind ? makeInsert(insertKind, ctx, sys.bufs) : null;
     if (ins) { ins.output.connect(this.out); input = ins.input; this.nodes.push(ins.input, ins.output); this.persistent = ins.sources; }
     this.ch = {};
+    const used = new Set();
     for (const name in channels) {
       const cfg = channels[name];
       const g = ctx.createGain(); g.gain.value = cfg.gain ?? 0.5;
       g.connect(input);
       this.nodes.push(g);
-      const send = (amt, target) => { if (!amt || !target) return; const s = ctx.createGain(); s.gain.value = amt; g.connect(s); s.connect(target); this.nodes.push(s); };
+      const send = (amt, target) => { if (!amt || !target) return; const s = ctx.createGain(); s.gain.value = amt; g.connect(s); s.connect(target); this.nodes.push(s); const rv = fx.reverbs?.get(target); if (rv) used.add(rv); };
       send(cfg.rev, fx.hall); send(cfg.gated, fx.gated); send(cfg.dly, fx.delay);
       this.ch[name] = g;
     }
+    this._release = [...used].map(r => r.hold());
     this.stopped = false;
   }
   stop(fade = 0.08) {
@@ -97,6 +138,7 @@ export class Session {
     this.out.gain.setTargetAtTime(0, t, fade / 3);
     this.tr.stopAll(t + fade * 1.5);
     for (const s of this.persistent) { try { s.stop(t + fade * 1.5); } catch { /* noop */ } }
+    for (const r of this._release) r(t + fade * 1.5);
     setTimeout(() => {
       for (const n of this.nodes) { try { n.disconnect(); } catch { /* noop */ } }
       try { this.out.disconnect(); } catch { /* noop */ }

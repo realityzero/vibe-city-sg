@@ -1,5 +1,7 @@
 // "Chope Rampage": top-down hawker centre at lunch. Throw tissue packets onto empty seats before umbrella aunties claim them.
 import { h, mountShell, runShell, clamp, pick, sfx } from './common.js';
+// canvas pixel ratio capped at 2: a 3x phone screen would make each full-screen minigame canvas ~12 MB
+const MG_DPR = Math.min(2, window.devicePixelRatio || 1);
 
 const LW = 1280, LH = 720;            // logical playfield
 const GOAL = 8;
@@ -65,7 +67,7 @@ async function play(ctx, opts) {
   const g = cv.getContext('2d');
   let scale = 1, ox = 0, oy = 0;
   const resize = () => {
-    const d = devicePixelRatio, W = stage.clientWidth, H = stage.clientHeight;
+    const d = MG_DPR, W = stage.clientWidth, H = stage.clientHeight;
     cv.width = W * d; cv.height = H * d;
     scale = Math.min(W / LW, H / LH); ox = (W - LW * scale) / 2; oy = (H - LH * scale) / 2;
   };
@@ -318,7 +320,7 @@ function makeRenderer(g, get) {
   let fan = 0;
   return () => {
     const { scale, ox, oy, S, seats, tables, TOMMY } = get();
-    const d = devicePixelRatio;
+    const d = MG_DPR;
     fan += 0.06;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#0d0a08'; g.fillRect(0, 0, g.canvas.width, g.canvas.height);

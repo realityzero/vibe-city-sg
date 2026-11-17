@@ -26,9 +26,9 @@ export class Stunts {
     const cands = [];
     for (const sw of g.roadnet.sidewalks) {
       if (cands.length > 400) break;
-      const pts = sw.path.p; if (pts.length < 2) continue;
-      for (let i = 0; i < pts.length; i += 3) {
-        const x = pts[i][0], z = pts[i][2];
+      const pts = sw.path; if (pts.n < 2) continue;
+      for (let i = 0; i < pts.n; i += 3) {
+        const x = pts.x(i), z = pts.z(i);
         for (let a = 0; a < 8; a++) {
           const dx = Math.cos(a / 8 * Math.PI * 2), dz = Math.sin(a / 8 * Math.PI * 2);
           // ramp end at (x,z) heading (dx,dz): land behind for 50 m, water gap of 16-34 m, land again

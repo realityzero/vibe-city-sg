@@ -21,22 +21,29 @@ function offsetPolyline(pts, ys, off) {
 }
 
 export class Path {
-  // polyline in 3D with arc-length parametrisation
+  // polyline in 3D with arc-length parametrisation. Points are packed xyz in one Float64Array (n points; doubles so
+  // every coordinate, length and hash derived from them is unchanged): the network has ~600k points, and a little
+  // [x, y, z] array per point cost tens of MB of objects on phones.
   constructor(points /* [[x,y,z]] */) {
-    this.p = points;
-    this.cum = [0];
-    for (let i = 1; i < points.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][2] - points[i - 1][2]));
-    this.length = this.cum[this.cum.length - 1];
+    const n = this.n = points.length, xyz = this.xyz = new Float64Array(n * 3), cum = this.cum = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const q = points[i]; xyz[i * 3] = q[0]; xyz[i * 3 + 1] = q[1]; xyz[i * 3 + 2] = q[2];
+      if (i) cum[i] = cum[i - 1] + Math.hypot(q[0] - points[i - 1][0], q[2] - points[i - 1][2]);
+    }
+    this.length = n ? cum[n - 1] : 0;
   }
+  x(i) { return this.xyz[i * 3]; }
+  y(i) { return this.xyz[i * 3 + 1]; }
+  z(i) { return this.xyz[i * 3 + 2]; }
   sample(s, outPos, outDir) {
-    const c = this.cum, p = this.p;
+    const c = this.cum, p = this.xyz;
     s = Math.max(0, Math.min(this.length, s));
-    let lo = 0, hi = c.length - 1;
+    let lo = 0, hi = this.n - 1;
     while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (c[mid] <= s) lo = mid; else hi = mid; }
     const seg = c[hi] - c[lo] || 1; const f = (s - c[lo]) / seg;
-    const a = p[lo], b = p[hi];
-    outPos.set(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f);
-    if (outDir) outDir.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize();
+    const a = lo * 3, b = hi * 3;
+    outPos.set(p[a] + (p[b] - p[a]) * f, p[a + 1] + (p[b + 1] - p[a + 1]) * f, p[a + 2] + (p[b + 2] - p[a + 2]) * f);
+    if (outDir) outDir.set(p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]).normalize();
     return outPos;
   }
 }
@@ -136,13 +143,14 @@ export class RoadNet {
     }
     // lane spatial grid (for spawning & lookups)
     this.cell = 120;
+    this._stamp = 0; // query stamp for _near's de-duplication
     this.grid = new Map();
     const v = new THREE.Vector3();
     for (const l of this.lanes) {
       const seen = new Set();
       for (let s = 0; s <= l.path.length; s += 30) {
         l.path.sample(s, v); const k = this._k(v.x, v.z); if (seen.has(k)) continue; seen.add(k);
-        if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(l);
+        let a = this.grid.get(k); if (!a) this.grid.set(k, a = []); a.push(l);
       }
     }
     this.sideGrid = new Map();
@@ -150,11 +158,22 @@ export class RoadNet {
       const seen = new Set();
       for (let s = 0; s <= sw.path.length; s += 30) {
         sw.path.sample(s, v); const k = this._k(v.x, v.z); if (seen.has(k)) continue; seen.add(k);
-        if (!this.sideGrid.has(k)) this.sideGrid.set(k, []); this.sideGrid.get(k).push(sw);
+        let a = this.sideGrid.get(k); if (!a) this.sideGrid.set(k, a = []); a.push(sw);
       }
     }
   }
-  _k(x, z) { return `${Math.floor(x / this.cell)},${Math.floor(z / this.cell)}`; }
+  // numeric cell keys (a string per lookup was a steady drip of garbage: these run for every car and pedestrian)
+  _k(x, z) { return Math.floor(x / this.cell) * 100003 + Math.floor(z / this.cell); }
+  /** grid entries within r of (x,z), each once, in cell order. `out` (optional) is cleared and reused. */
+  _near(grid, x, z, r, out = []) {
+    out.length = 0; const c = this.cell, stamp = ++this._stamp;
+    for (let gx = Math.floor((x - r) / c); gx <= Math.floor((x + r) / c); gx++)
+      for (let gz = Math.floor((z - r) / c); gz <= Math.floor((z + r) / c); gz++) {
+        const a = grid.get(gx * 100003 + gz); if (!a) continue;
+        for (let i = 0; i < a.length; i++) { const l = a[i]; if (l._qs !== stamp) { l._qs = stamp; out.push(l); } }
+      }
+    return out;
+  }
 
   updateSignals(dt) { for (const n of this.signalNodes || (this.signalNodes = this.nodes.filter(n => n.signal))) n.signal.t = (n.signal.t + dt) % n.signal.cycle; }
   /** 'green' | 'amber' | 'red' for a lane approaching its end node */
@@ -166,36 +185,28 @@ export class RoadNet {
     return local < 18 ? 'green' : local < 21 ? 'amber' : 'red';
   }
 
-  lanesNear(x, z, r) {
-    const out = new Set(); const c = this.cell;
-    for (let gx = Math.floor((x - r) / c); gx <= Math.floor((x + r) / c); gx++)
-      for (let gz = Math.floor((z - r) / c); gz <= Math.floor((z + r) / c); gz++)
-        for (const l of this.grid.get(`${gx},${gz}`) || []) out.add(l);
-    return [...out];
-  }
-  sidewalksNear(x, z, r) {
-    const out = new Set(); const c = this.cell;
-    for (let gx = Math.floor((x - r) / c); gx <= Math.floor((x + r) / c); gx++)
-      for (let gz = Math.floor((z - r) / c); gz <= Math.floor((z + r) / c); gz++)
-        for (const l of this.sideGrid.get(`${gx},${gz}`) || []) out.add(l);
-    return [...out];
-  }
+  lanesNear(x, z, r, out) { return this._near(this.grid, x, z, r, out); }
+  sidewalksNear(x, z, r, out) { return this._near(this.sideGrid, x, z, r, out); }
 
   /** nearest lane point to (x,z): { lane, s, dist, pos, dir } */
   nearestLane(x, z, r = 80, filter) {
-    let best = null; const v = new THREE.Vector3(), d = new THREE.Vector3();
-    for (const l of this.lanesNear(x, z, r)) {
+    let bl = null, bs = 0, bd = Infinity;
+    const near = this.lanesNear(x, z, r, this._nearScratch || (this._nearScratch = []));
+    for (let q = 0; q < near.length; q++) {
+      const l = near[q];
       if (filter && !filter(l)) continue;
-      const P = l.path.p;
-      for (let i = 0; i < P.length - 1; i++) {
-        const ax = P[i][0], az = P[i][2], bx = P[i + 1][0], bz = P[i + 1][2];
+      const P = l.path.xyz, n = l.path.n;
+      for (let i = 0; i < n - 1; i++) {
+        const ax = P[i * 3], az = P[i * 3 + 2], bx = P[i * 3 + 3], bz = P[i * 3 + 5];
         const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
         const px = ax + dx * t, pz = az + dz * t; const dd = Math.hypot(px - x, pz - z);
-        if (!best || dd < best.dist) best = { lane: l, s: l.path.cum[i] + Math.sqrt(L2) * t, dist: dd };
+        if (!bl || dd < bd) { bl = l; bs = l.path.cum[i] + Math.sqrt(L2) * t; bd = dd; }
       }
     }
-    if (best) { best.pos = best.lane.path.sample(best.s, new THREE.Vector3(), d); best.dir = d.clone(); }
+    if (!bl) return null;
+    const best = { lane: bl, s: bs, dist: bd }, d = new THREE.Vector3();
+    best.pos = bl.path.sample(bs, new THREE.Vector3(), d); best.dir = d;
     return best;
   }
 
@@ -203,9 +214,9 @@ export class RoadNet {
   nearestSidewalk(x, z, r = 120) {
     let best = null; const v = new THREE.Vector3();
     for (const sw of this.sidewalksNear(x, z, r)) {
-      const P = sw.path.p;
-      for (let i = 0; i < P.length - 1; i++) {
-        const ax = P[i][0], az = P[i][2], bx = P[i + 1][0], bz = P[i + 1][2];
+      const P = sw.path.xyz, n = sw.path.n;
+      for (let i = 0; i < n - 1; i++) {
+        const ax = P[i * 3], az = P[i * 3 + 2], bx = P[i * 3 + 3], bz = P[i * 3 + 5];
         const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
         const px = ax + dx * t, pz = az + dz * t; const dd = Math.hypot(px - x, pz - z);
@@ -226,14 +237,14 @@ export class RoadNet {
     if (!st) return null;
     const pts = []; let lane = st.lane, s = st.s, acc = 0, guard = 0;
     while (acc < length && guard++ < 400) {
-      const P = lane.path.p;
-      for (let i = 0; i < P.length; i++) if (lane.path.cum[i] >= s) pts.push([P[i][0], P[i][2]]);
+      const LP = lane.path;
+      for (let i = 0; i < LP.n; i++) if (LP.cum[i] >= s) pts.push([LP.x(i), LP.z(i)]);
       acc += lane.path.length - s;
       const opts = lane.next.filter(n => n.lane.cls <= minCls && Math.abs(n.turn) < 2.5);
       if (!opts.length) break;
       const straight = opts.filter(o => Math.abs(o.turn) < 0.6);
       const nx = (straight.length && Math.random() < 0.6 ? straight : opts)[Math.floor(Math.random() * (straight.length && Math.random() < 0.6 ? straight.length : opts.length)) % (straight.length && Math.random() < 0.6 ? straight.length : opts.length)] || opts[0];
-      for (const q of nx.path.p) pts.push([q[0], q[2]]);
+      for (let i = 0; i < nx.path.n; i++) pts.push([nx.path.x(i), nx.path.z(i)]);
       lane = nx.lane; s = lane.s0;
     }
     return pts;
@@ -259,7 +270,7 @@ export class RoadNet {
       }
       return top;
     };
-    const h = l => { const p = l.path.p[l.path.p.length - 1]; return Math.hypot(p[0] - tx, p[2] - tz); };
+    const h = l => { const P = l.path, k = P.n - 1; return Math.hypot(P.x(k) - tx, P.z(k) - tz); };
     gS.set(a.lane, 0); push(a.lane, h(a.lane));
     let found = null, iter = 0;
     while (heapF.length && iter++ < 20000) {
@@ -277,7 +288,7 @@ export class RoadNet {
     if (!found) return null;
     const lanes = []; let c = found; while (c) { lanes.unshift(c); c = came.get(c); }
     const pts = [];
-    for (const l of lanes) for (let i = 0; i < l.path.p.length; i += Math.max(1, Math.floor(l.path.p.length / 6))) pts.push([l.path.p[i][0], l.path.p[i][2]]);
+    for (const l of lanes) for (let i = 0; i < l.path.n; i += Math.max(1, Math.floor(l.path.n / 6))) pts.push([l.path.x(i), l.path.z(i)]);
     pts.push([tx, tz]);
     return pts;
   }

@@ -46,8 +46,8 @@ export class Pedestrians {
     const sws = this.net.sidewalks;
     this.ends = [];
     for (const sw of sws) {
-      const a = sw.path.p[0], b = sw.path.p[sw.path.p.length - 1];
-      sw.ends = [[a[0], a[2]], [b[0], b[2]]];
+      const P = sw.path, k = P.n - 1;
+      sw.ends = [[P.x(0), P.z(0)], [P.x(k), P.z(k)]];
     }
     this.hotspots = (game.city.data.pois || []).filter(p => ['food_court', 'marketplace', 'mall', 'station', 'cafe', 'attraction', 'viewpoint', 'museum', 'restaurant'].includes(p.k)).map(p => ({ x: p.x, z: p.z }));
   }

@@ -3,6 +3,8 @@ import { h, mountShell, runShell, meter, clamp, pick, sleep, sfx, typeText, conf
 import { INVESTORS, slides as makeSlides, questions as makeQuestions, TIMEOUT_ANSWER, QTE_LINES, QTE_REACT, verdict } from './pitch-data.js';
 import { PORTRAITS, TOMMY_PODIUM } from './portraits.js';
 import { playSeq } from '../../missions/vodyn.js';
+// canvas pixel ratio capped at 2: a 3x phone screen would make each full-screen minigame canvas ~12 MB
+const MG_DPR = Math.min(2, window.devicePixelRatio || 1);
 
 const KEYS = ['merlion', 'sandhill', 'auntie'];
 
@@ -75,7 +77,7 @@ async function play(ctx, opts) {
   let cheer = 0.15;
   const flashes = [];
   const sizeCrowd = () => {
-    crowd.width = crowd.clientWidth * devicePixelRatio; crowd.height = crowd.clientHeight * devicePixelRatio;
+    crowd.width = crowd.clientWidth * MG_DPR; crowd.height = crowd.clientHeight * MG_DPR;
     heads.length = 0;
     for (let row = 0; row < 4; row++) {
       const n = 26 + row * 6;
@@ -87,7 +89,7 @@ async function play(ctx, opts) {
   scope.on(window, 'resize', sizeCrowd);
   const flash = n => { for (let i = 0; i < n; i++) flashes.push({ x: Math.random(), row: Math.floor(Math.random() * 4), t: 0, life: 0.25 + Math.random() * 0.5, delay: Math.random() * 0.8 }); };
   scope.loop((dt, t) => {
-    const W = crowd.width, H = crowd.height, d = devicePixelRatio;
+    const W = crowd.width, H = crowd.height, d = MG_DPR;
     C.clearRect(0, 0, W, H);
     for (const p of heads) {
       const y0 = H * (0.25 + p.row * 0.2);
@@ -405,7 +407,7 @@ function drawChart(scope, cv, s) {
   let t = 0;
   scope.loop(dt => {
     if (!cv.isConnected) return false;
-    const d = devicePixelRatio, W = cv.clientWidth * d, H = cv.clientHeight * d;
+    const d = MG_DPR, W = cv.clientWidth * d, H = cv.clientHeight * d;
     if (!W || !H) return;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
     t = Math.min(1, t + dt / 1.4);

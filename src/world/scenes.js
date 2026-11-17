@@ -54,7 +54,7 @@ export class Scenes {
   buildSatay() {
     const g = this.game, net = g.roadnet;
     const lps = { x: 167, z: 706 };
-    const lanes = net.lanes.filter(l => l.edge.n === 'Boon Tat Street' && Math.hypot(l.path.p[0][0] - lps.x, l.path.p[0][2] - lps.z) < 260);
+    const lanes = net.lanes.filter(l => l.edge.n === 'Boon Tat Street' && Math.hypot(l.path.x(0) - lps.x, l.path.z(0) - lps.z) < 260);
     if (!lanes.length) return;
     this.satayLanes = lanes;
     // tables along the street centreline, stalls with grills along one kerb

@@ -44,12 +44,47 @@ const TIPS = [
   'Durians are banned on the MRT. Durian startups are not. Yet.',
 ];
 
+// The synthwave floor: a plane hinged on the horizon, tilted 78° toward the viewer under a 40vh perspective, with
+// 6vh cells scrolling forward every 1.2 s. It used to be a CSS 3D-transformed div five screens wide — on a 3x phone
+// that alone was ~40 MB of compositing layer — so it's drawn here on one small canvas (same projection, line widths,
+// colours and fade-in mask; alphas a touch lower than the CSS ones, which the resampled 3D layer used to soften).
+function drawGrid(cv, t) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1), W = cv.clientWidth, H = cv.clientHeight;
+  if (!W || !H) return;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d'), vh = innerHeight / 100, d = 40 * vh, cs = 6 * vh, th = 78 * Math.PI / 180;
+  const cy = Math.cos(th), sz = Math.sin(th), Ymax = 36 * vh, cx = W / 2;
+  // local plane coords (x from the centre, y down the plane from the horizon) -> floor-relative screen coords
+  const P = (x, y) => { const k = d / (d - y * sz); return [cx + x * k, y * cy * k]; };
+  const mask = y => Math.min(1, y / (0.3 * Ymax));
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const off = ((t % 1.2) / 1.2) * cs;
+  // rows: 0.35vh thick, rgba(255,63,164,.9)
+  for (let y = off - cs; y < Ymax; y += cs) {
+    const y0 = Math.max(0, y), y1 = Math.min(Ymax, y + 0.35 * vh); if (y1 <= y0) continue;
+    const [, a] = P(0, y0), [, b] = P(0, y1); if (a > H) break;
+    g.fillStyle = `rgba(255,63,164,${0.72 * mask((y0 + y1) / 2)})`; g.fillRect(0, a, W, Math.max(b - a, 0.5 / dpr));
+  }
+  // columns: 0.3vh wide every 6vh, centred on the middle cell, rgba(255,63,164,.75), fading in toward the horizon
+  const kmax = Math.ceil((W * d / (d - Ymax * sz) / 2) / cs) + 1;
+  const ySplit = 0.3 * Ymax, [, sSplit] = P(0, ySplit), [, sEnd] = P(0, Ymax);
+  const grad = g.createLinearGradient(0, 0, 0, Math.max(1, sSplit));
+  for (let i = 0; i <= 6; i++) { const yy = ySplit * i / 6, [, sy] = P(0, yy); grad.addColorStop(Math.min(1, sy / Math.max(1, sSplit)), `rgba(255,63,164,${0.58 * mask(yy)})`); }
+  for (let k = -kmax; k <= kmax; k++) {
+    const x0 = -0.5 * cs + k * cs, x1 = x0 + 0.3 * vh;
+    const a = P(x0, 0), b = P(x1, 0), c = P(x1, Ymax), e = P(x0, Ymax);
+    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(e[0], e[1]); g.closePath();
+    g.fillStyle = grad; g.fill();
+    if (sEnd > sSplit) { g.save(); g.beginPath(); g.rect(0, sSplit, W, H); g.clip(); g.fillStyle = 'rgba(255,63,164,.58)'; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(e[0], e[1]); g.closePath(); g.fill(); g.restore(); }
+  }
+}
+
 export class TitleScreen {
   constructor(parent) {
     this.root = el('div', 'vc-title vc-hidden vc-interactive');
     this.root.innerHTML = `
       <div class="vc-sky"></div><div class="vc-stars-bg"></div><div class="vc-sunclip"><div class="vc-sun"></div></div>
-      <div class="vc-floor"><div class="vc-grid"></div></div>
+      <div class="vc-floor"><canvas class="vc-gridcv"></canvas></div>
       <div class="vc-reflect">${skylineSVG({ fill: '#2a0b3e', back: '#3a1450', edge: 'rgba(255,110,190,.3)', seed: 11 })}</div>
       <div class="vc-sunrefl"></div><div class="vc-horizon-glow"></div>
       <div class="vc-skyline">${skylineSVG({ fill: '#170826', back: '#3d1356', edge: 'rgba(255,120,200,.55)', windows: true, winColors: ['#ffd27a', '#ff9ad5'], lights: true, seed: 11 })}</div>
@@ -105,6 +140,9 @@ export class TitleScreen {
     this.sel = 0;
     this._mark([...this.menu.querySelectorAll('button:not([disabled])')]);
     this.root.classList.remove('vc-hidden', 'leaving');
+    // animate the floor grid while the title is up
+    const cv = this.root.querySelector('.vc-gridcv');
+    if (cv && !this._gridRaf) { const loop = now => { if (this.root.classList.contains('vc-hidden')) { this._gridRaf = 0; return; } drawGrid(cv, now / 1000); this._gridRaf = requestAnimationFrame(loop); }; this._gridRaf = requestAnimationFrame(loop); }
   }
   _openPanel(title, html) {
     this._closePanel();

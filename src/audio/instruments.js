@@ -354,7 +354,9 @@ export function createInstruments(ctx, bufs) {
     const b10 = Math.round(Math.max(0, Math.min(1, bright)) * 4);
     const key = midi * 10 + b10;
     let buf = ksCache.get(key);
-    if (buf) return buf;
+    if (buf) { ksCache.delete(key); ksCache.set(key, buf); return buf; } // most recently used last
+    // bounded (each note is a 2.2 s buffer, ~420 KB): a long radio session used to grow this without limit
+    if (ksCache.size >= 48) ksCache.delete(ksCache.keys().next().value);
     const sr = ctx.sampleRate, len = Math.floor(sr * 2.2);
     buf = ctx.createBuffer(1, len, sr);
     const d = buf.getChannelData(0);

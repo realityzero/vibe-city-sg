@@ -8,6 +8,11 @@
 .vc-root.vc-touchmode .vc-touch { display: block; }
 .vc-touch button { all: unset; box-sizing: border-box; pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 
+/* The overlay spans the screen above the (composited) WebGL canvas, so WebKit gives it a layer of its own — a whole
+   screen of backing store at device scale (~12 MB on an iPhone 12) just to hold a few buttons. Small layers for the
+   controls themselves leave the overlay with nothing to paint, and no backing store. */
+.vc-touch .btn, .vc-touch .stick, .vc-touch .sys { will-change: transform; }
+
 /* look / pinch surface under everything else */
 .vc-touch .surf { position: absolute; inset: 0; touch-action: none; display: none; }
 .vc-touch.play .surf { display: block; pointer-events: auto; }

@@ -21,6 +21,7 @@ import { Physics } from './physics/physics.js';
 import { Player } from './entities/player.js';
 import { Vehicle } from './entities/vehicle.js';
 import { VEHICLE_SPECS, getTypeAssets } from './entities/vehicles/index.js';
+import { setAtlasGpuScale } from './entities/vehicles/atlas.js';
 import { Traffic } from './entities/traffic.js';
 import { Pedestrians } from './entities/pedestrians.js';
 import { Wanted } from './entities/wanted.js';
@@ -42,8 +43,11 @@ import { Scenes } from './world/scenes.js';
 import { Hype } from './missions/hype.js';
 import { TouchControls, isTouchFirst } from './ui/touch.js';
 import { WATER_LEVEL } from './core/constants.js';
-import { prebuildBVH, idleBVH } from './core/visibility.js';
 import { bakeHeightField } from './gfx/heightfield.js';
+import { installTextureRelease, releasedTextureStats } from './gfx/texrelease.js';
+import { gpuOnly } from './gfx/geomrelease.js';
+import { nextTask } from './core/nextTask.js';
+installTextureRelease();
 
 const params = new URLSearchParams(location.search);
 const HOSPITAL = new THREE.Vector3(-1585, 0, 818);      // Singapore General Hospital, Outram
@@ -68,6 +72,27 @@ export class Game {
     this.camera.position.set(700, 60, 200);
     this.R.setupPost(this.scene, this.camera);
     addEventListener('resize', () => this.R.resize());
+    // iOS may drop the WebGL context (backgrounded, GPU memory pressure). Textures and geometry live only on the GPU
+    // (their CPU copies are freed after upload), so there is nothing to restore from: save and reload instead.
+    this.canvas.addEventListener('webglcontextlost', e => {
+      e.preventDefault();
+      if (this._ctxLost) return; this._ctxLost = true;
+      try { if (this.state === 'play' && this.worldReady && !this.missions?.active) this.save(); } catch { }
+      // a context that dies again right after each reload (the device can't spare the memory) must not reload forever:
+      // the third loss within a minute asks first
+      let n = 0;
+      try { const r = JSON.parse(sessionStorage.getItem('vc-ctxlost') || '{}'); n = Date.now() - (r.t || 0) < 60000 ? r.n || 0 : 0; sessionStorage.setItem('vc-ctxlost', JSON.stringify({ n: n + 1, t: Date.now() })); } catch { }
+      if (n >= 2) {
+        const d = document.createElement('div');
+        d.style.cssText = 'position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#08020f;color:#fff;font:600 15px/1.4 sans-serif;text-align:center;padding:24px';
+        d.innerHTML = '<div>The graphics memory ran out.<br>Close other tabs and apps, then try again.</div><button style="all:unset;padding:12px 26px;border-radius:99em;background:#ff3fa4;font-weight:800;letter-spacing:.1em">TRY AGAIN</button>';
+        d.querySelector('button').addEventListener('click', () => { try { sessionStorage.removeItem('vc-ctxlost'); } catch { } location.reload(); });
+        document.body.appendChild(d);
+        return;
+      }
+      const go = () => location.reload();
+      if (document.hidden) document.addEventListener('visibilitychange', () => { if (!document.hidden) go(); }, { once: true }); else setTimeout(go, 300);
+    });
     this.input = new Input(this.canvas);
     this.input.onLockLost = () => { if (this.state === 'play' && !this.paused && !this.mgPaused && !this.claudia?.isOpen && !this.photo?.on) this.togglePause(); };
     this.ui = new UI(document.getElementById('ui'));
@@ -90,6 +115,11 @@ export class Game {
     this._last = performance.now();
     this.fps = 60;
     window.__game = this;
+    for (const ev of ['touchend', 'click', 'keydown']) addEventListener(ev, () => { const c = this.audio?.ctx || this._audioCtx; if (c && c.state !== 'running' && !document.hidden) c.resume().catch(() => { }); }, { capture: true, passive: true });
+    // iOS: background tabs get suspended and often discarded — keep progress, silence audio while hidden
+    const away = () => { if (this.state === 'play' && this.worldReady && !this.missions?.active) try { this.save(); } catch { } };
+    document.addEventListener('visibilitychange', () => { const c = this.audio?.ctx; if (document.hidden) { away(); c?.suspend?.().catch(() => { }); } else if (c && this.state !== 'boot') c.resume().catch(() => { }); });
+    addEventListener('pagehide', away);
     // keyboard routing for menus
     addEventListener('keydown', e => {
       if (e.__uiHandled || e.__cheatTyping) return;
@@ -118,24 +148,53 @@ export class Game {
   pressStart() {
     return new Promise(resolve => {
       const d = document.createElement('div');
-      d.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:radial-gradient(ellipse at 50% 70%,#3a0f4a 0%,#12051f 55%,#05030a 100%);cursor:pointer;user-select:none';
+      d.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:radial-gradient(ellipse at 50% 70%,#3a0f4a 0%,#12051f 55%,#05030a 100%);cursor:pointer;user-select:none;-webkit-user-select:none';
       d.innerHTML = `<div style="font:700 13px/1 'Anton','Bebas Neue',Impact,sans-serif;letter-spacing:.5em;color:#fff;opacity:.85">GRAND THEFT AUTO</div>
         <div style="font:64px/1 'Mr Dafoe','Yellowtail',cursive;color:#ff7ad1;text-shadow:0 0 12px #ff3fa4,0 0 38px #ff3fa4">Vibe City</div>
         <div style="font:600 14px/1 'Barlow Condensed',sans-serif;letter-spacing:.6em;color:#7ff3ff;text-shadow:0 0 10px #2fe6ff">SINGAPORE</div>
         <div id="vc-press" style="margin-top:38px;font:600 15px/1 'Barlow Condensed',sans-serif;letter-spacing:.35em;color:#fff;animation:vcpress 1.3s ease-in-out infinite">${isTouchFirst() ? 'TAP TO START' : 'PRESS ANY KEY'}</div>
         <div style="position:absolute;bottom:22px;font:12px 'Inter',sans-serif;color:#a99cc8;opacity:.8">Headphones recommended · Map data © OpenStreetMap contributors</div>
         <style>@keyframes vcpress{0%,100%{opacity:.25}50%{opacity:1}}</style>`;
+      d.style.touchAction = 'manipulation';
       document.body.appendChild(d);
-      const go = async e => {
-        if (e?.type === 'keydown') e.preventDefault();
-        removeEventListener('keydown', go, true); d.removeEventListener('pointerdown', go);
-        await this.initAudio();
-        this.audio?.music?.('title');
-        d.style.transition = 'opacity .6s'; d.style.opacity = '0'; setTimeout(() => d.remove(), 650);
+      // iOS only unlocks audio inside an "activation" event: touchend / pointerup / click / keydown — not
+      // pointerdown or touchstart. The context is created right here, synchronously, and nothing is awaited before
+      // the splash goes away (a resume() outside a gesture never settles on iOS, which used to freeze this screen).
+      let done = false;
+      const go = e => {
+        if (done || (e.type === 'keydown' && ['Meta', 'Alt', 'Control', 'Shift'].includes(e.key))) return;
+        done = true;
+        if (e.type === 'keydown') e.preventDefault();
+        removeEventListener('keydown', go, true); d.removeEventListener('pointerup', go); d.removeEventListener('click', go);
+        // iOS sends its synthesized click after this pointerup, hit-tested anew: by then the title menu is under the
+        // finger (START GAME sits right there), so eat that one click
+        if (e.type === 'pointerup' && e.pointerType !== 'mouse') {
+          const eat = ev => { ev.preventDefault(); ev.stopPropagation(); };
+          addEventListener('click', eat, true); setTimeout(() => removeEventListener('click', eat, true), 500);
+        }
+        this.unlockAudio();
+        d.style.transition = 'opacity .6s'; d.style.opacity = '0'; d.style.pointerEvents = 'none'; setTimeout(() => d.remove(), 650);
         resolve();
+        this.initAudio().then(() => { if (this.state === 'title') this.audio?.music?.('title'); });
       };
-      addEventListener('keydown', go, true); d.addEventListener('pointerdown', go);
+      addEventListener('keydown', go, true); d.addEventListener('pointerup', go); d.addEventListener('click', go);
     });
+  }
+
+  /** create / resume the AudioContext synchronously inside a user gesture (see pressStart). Later gestures resume it
+   * again if iOS suspended or interrupted it (a call, Siri, the app switcher). */
+  unlockAudio() {
+    try {
+      if (!this._audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this._audioCtx = new AC({ latencyHint: 'interactive' });
+        // a one-sample silent buffer started in the gesture is what flips older iOS versions to "running"
+        const b = this._audioCtx.createBuffer(1, 1, 22050), src = this._audioCtx.createBufferSource();
+        src.buffer = b; src.connect(this._audioCtx.destination); src.start(0);
+      }
+      if (this._audioCtx.state !== 'running') this._audioCtx.resume().catch(() => { });
+    } catch (e) { console.warn('audio unlock failed', e); }
   }
 
   async start(mode) {
@@ -154,6 +213,8 @@ export class Game {
     if (save && mode !== 'new') this.applySave(save);
     this.state = 'play';
     this.input.lock();
+    // iOS's edge swipe goes back in history (out of the game): give it a same-page entry to pop instead
+    if (!this._backGuard) { this._backGuard = true; try { history.pushState({ vc: 1 }, ''); addEventListener('popstate', () => { if (this.state !== 'play') return; history.pushState({ vc: 1 }, ''); if (!this.paused && !this.ui.map.isOpen) this.togglePause(); }); } catch { } }
     this.events.emit('gameStart', { mode, save });
     if (!this._loopStarted) this.loop();
     if (params.get('mission') != null) this.missions.startById(params.get('mission'));
@@ -161,12 +222,15 @@ export class Game {
     else this.missions.onGameStart(mode, save);
   }
 
-  async initAudio() {
+  initAudio() {
+    return this._audioInit || (this._audioInit = this._initAudio());
+  }
+  async _initAudio() {
     if (this.audio) return;
     try {
       const mod = await import('./audio/index.js');
       this.audio = new mod.AudioSystem();
-      await this.audio.init();
+      await this.audio.init(this._audioCtx);
       this.applyVolumes();
       this.audio.radio.onChange = meta => { if (meta && this.player?.vehicle) this.ui.hud.flashRadio(meta.name, meta.color); else if (!meta) this.ui.hud.flashRadio('Radio Off', '#888'); };
       for (const v of this.vehicles) if (!v.engine && v.driver === 'player') v.engine = this.audio.createEngine({ type: v.spec.engineSound });
@@ -182,8 +246,27 @@ export class Game {
     if (this._showLoading) this.ui.showLoading(p, label);
   }
 
+  /** ?memmarks[=ms]: pause the world load at each step so the iPhone harness (tests/mobile) can read the process
+   * footprint step by step */
+  mark(label) {
+    performance.mark('vc:' + label); // load-step boundaries for tests/mobile/longtasks.mjs
+    if (params.has('steptimes')) { const now = performance.now(); console.log(`step ${label}: ${Math.round(now - (this._markT ?? now))} ms`); this._markT = now; }
+    // ?memhold=<step label>: pause 60 s at that step only
+    const ms = params.get('memhold') === label ? 60000 : params.has('memmarks') ? +params.get('memmarks') || 2500 : 0;
+    if (!ms) return null;
+    window.__memMark = label;
+    return new Promise(r => setTimeout(r, ms));
+  }
+
   async loadWorld() {
     const t0 = performance.now();
+    // hand the main thread back between load steps: taps on the splash / title / loading screen are answered within
+    // one step instead of after the whole load (several seconds on a phone)
+    const brk = nextTask;
+    await this.mark('start');
+    // a real task boundary first: until now the load ran on in boot()'s task (awaiting a non-promise only queues a
+    // microtask), so the splash could neither paint nor take its first tap until the first fetch
+    await brk();
     const prog = (p, l) => this.progressCb(p, l);
     prog(0.01, 'Booting physics (WebAssembly)');
     this.physics = new Physics();
@@ -196,9 +279,11 @@ export class Game {
     this.scene.add(this.water.mesh);
     this.R.onResize = (w, h) => this.water.resize(w, h);
     this.R.resize();
+    await brk(); // (the city's materials paint their sign and interior atlases)
     this.city = new City(this.scene);
     this.water.city = this.city; // cheap facade stand-ins in the reflection pass
     const data = await this.city.load(prog);
+    await this.mark('city data + mask');
     // landmarks first: they tell the city builder which OSM buildings to skip
     prog(0.08, 'Sculpting Marina Bay Sands');
     let landmarks = null;
@@ -206,40 +291,64 @@ export class Game {
       const mod = await import('./world/landmarks/index.js');
       landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high' });
       this.scene.add(landmarks.group);
+      gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));
     } catch (e) { console.warn('landmarks failed', e); }
     this.landmarks = landmarks;
+    await this.mark('landmarks');
     const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
     console.log('city', JSON.stringify(stats));
+    await this.mark('city built (worker gone)');
     await physP;
     prog(0.72, 'Solidifying concrete');
-    this.physics.addGround(this.city);
-    for (const c of this.city.physChunks) this.physics.addTrimesh(c.vertices, c.indices);
+    await this.physics.addGround(this.city, brk);
+    await brk();
+    for (let i = 0; i < this.city.physChunks.length; i++) { const c = this.city.physChunks[i]; this.physics.addTrimesh(c.vertices, c.indices); if (i % 60 === 59) await brk(); }
     this.city.physChunks = []; // Rapier keeps its own copy in WASM memory
+    for (let i = 0; i < this.city.occlChunks.length; i++) { const c = this.city.occlChunks[i]; this.physics.addSightBlocker(c.vertices, c.indices); if (i % 60 === 59) await brk(); }
+    this.city.occlChunks = [];
     for (const c of landmarks?.colliders || []) this.physics.addStatic(c);
     this.physics.beforeWorldStep = h => { for (const v of this.vehicles) v.physicsStep(h); };
     this.physics.onPostStep(() => { for (const v of this.vehicles) v.pose?.capture(); });
     this.physics.noInterp = params.has('nointerp'); // A/B: draw raw physics poses
     this.physics.world.step(); // build the query BVH so load-time raycasts (helipads, ramps, cutscene framing) see the city
+    await this.mark('physics');
     prog(0.78, 'Planting 60,000 trees');
-    await new Promise(r => setTimeout(r, 0));
-    this.roadnet = new RoadNet(this.city);
+    await nextTask();
+    { const t0 = performance.now(); this.roadnet = new RoadNet(this.city); console.log('roadnet', Math.round(performance.now() - t0) + 'ms'); }
     // no trees standing in a traffic lane (some generated/OSM trees sit on the carriageway — now that trunks are solid
     // they'd be invisible roadblocks for the AI and a wall for the player)
     {
       const T = this.city.trees, keep = [], t0 = performance.now();
-      for (let i = 0; i < T.length; i += 5) { const n = this.roadnet.nearestLane(T[i], T[i + 1], 6, l => l.cls <= 7); if (!n || n.dist > 1.9) for (let k = 0; k < 5; k++) keep.push(T[i + k]); }
+      for (let i = 0; i < T.length; i += 5) {
+        const n = this.roadnet.nearestLane(T[i], T[i + 1], 6, l => l.cls <= 7); if (!n || n.dist > 1.9) for (let k = 0; k < 5; k++) keep.push(T[i + k]);
+        if (i % 50000 === 49995) await brk();
+      }
       console.log('trees off the road:', (T.length - keep.length) / 5, Math.round(performance.now() - t0) + 'ms');
       this.city.trees = new Float32Array(keep);
     }
+    await this.mark('roadnet');
+    await brk();
+    await brk();
     this.veg = new Vegetation(this.scene, this.city.trees, { treeDist: this.R.q.treeDist, city: this.city });
+    await this.veg.ready;
     this.veg.nearDist = this.R.q.treeNear || 230;
     this.treeColliders = new TreeColliders(this, this.veg);
+    await this.mark('vegetation');
     prog(0.84, 'Painting lane markings');
+    await brk();
     this.props = new Props(this);
+    await this.mark('props');
+    await brk();
     this.streetProps = new StreetProps(this);
+    await this.mark('streetProps');
+    await brk();
     this.streetDetail = new StreetDetail(this);
+    await this.streetDetail.ready;
+    await this.mark('streetDetail');
+    await brk();
     this.safe = new SafeSpots(this);
+    await this.mark('safe spots');
     // far-field sun shadows + street-canyon sky occlusion from a top-down height map of the static city
     if (!params.has('nohf')) {
       const t0 = performance.now(), M = this.city.meta;
@@ -247,40 +356,60 @@ export class Game {
       this.heightField = bakeHeightField(this.R.renderer, this.scene, [this.city.group, this.landmarks?.group].filter(Boolean), { xmin: M.xmin - 600, xmax: M.xmax + 600, zmin: M.zmin - 450, zmax: M.zmax + 450 });
       console.log('heightField', this.heightField.w + 'x' + this.heightField.h, Math.round(performance.now() - t0) + 'ms');
     }
+    await this.mark('heightfield');
     prog(0.88, 'Hiring taxi uncles');
     this.cameraRig = new CameraRig(this, this.camera);
     this.cameraRig.sensitivity = this.settings.mouseSensitivity ?? 1;
     this.cameraRig.invertY = !!this.settings.invertY;
     this.player = new Player(this, { position: SAFEHOUSE.pos.clone(), facing: SAFEHOUSE.facing });
     this.player.teleport(SAFEHOUSE.pos, SAFEHOUSE.facing);
+    await brk();
     this.traffic = new Traffic(this, { target: this.R.q === QUALITY.low ? 50 : 100, radius: 270 });
+    await brk();
     this.peds = new Pedestrians(this, { max: this.R.q === QUALITY.low ? 80 : 150 });
     this.wanted = new Wanted(this);
     this.weather = new Weather(this);
+    await this.mark('player, traffic, peds');
     if (params.get('rain')) this.weather.force(parseFloat(params.get('rain')));
     prog(0.93, 'Writing pitch decks');
-    this.ui.radar.setMap(data, this.city.maskImg);
+    await brk();
+    await this.ui.radar.setMapAsync(data, this.city.maskImg, { data: this.city.mask, w: this.city.maskW, h: this.city.maskH });
+    this.city.maskImg = null; // the ground texture and the radar have their own copies now
+    await this.mark('radar map');
+    await brk();
     this.missions = new Missions(this);
     this.extras = new Extras(this);
     this.fx = new FX(this);
+    await this.mark('missions, extras, fx');
+    await brk();
     this.spawns = new Spawns(this);
+    await this.spawns.spawnAll(brk);
+    await this.mark('spawns');
+    await brk();
     this.cheats = new Cheats(this);
     this.stunts = new Stunts(this);
+    await brk();
     this.taxi = new Taxi(this);
     this.activities = new Activities(this);
     this.photo = new PhotoMode(this);
     this.services = new Services(this);
+    await this.mark('cheats … services');
+    await brk();
     this.ambient = new Ambient(this);
+    await this.mark('ambient');
+    await brk();
     this.autopilot = new Autopilot(this);
     this.claudia = new Claudia(this);
     this.scenes = new Scenes(this);
     this.hype = new Hype(this);
     this.simScale = 1;
     this.wireEvents();
+    await this.mark('missions & systems');
     await this.warmUp(prog);
+    await this.mark('warm-up done');
     this.worldReady = true;
     prog(1, 'Ready');
-    console.log('world ready in', Math.round(performance.now() - t0), 'ms');
+    console.log('world ready in', Math.round(performance.now() - t0), 'ms; texture sources released', JSON.stringify(releasedTextureStats()));
     if (params.get('pos')) { const v = params.get('pos').split(',').map(Number); this.player.teleport(new THREE.Vector3(v[0], 0, v[1]), v[2] || 0); }
   }
 
@@ -294,15 +423,19 @@ export class Game {
     // passes (shadow depth programs are keyed on it -> recompiles whenever water comes into view)
     this.scene.traverse(o => { if (o.isLight) o.layers.enable(REFLECT_LAYER); });
     const R = this.R.renderer, scene = this.scene, cam = this.camera;
-    const breathe = () => new Promise(r => setTimeout(r, 0));
+    const breathe = nextTask;
+    // everything static still waiting for its first upload goes GPU-only (gfx/geomrelease.js)
+    gpuOnly(scene);
     let t0 = performance.now();
     const T = {};
     prog(0.95, 'Polishing the cars');
     const types = Object.entries(VEHICLE_SPECS).filter(([, v]) => !v.kind && v.aiWeight > 0).map(([k]) => k);
-    for (const t of types) { try { this.traffic.renderer._type(t); getTypeAssets(t, 'high'); } catch (e) { console.warn('prewarm', t, e); } await breathe(); }
-    for (const t of ['heli_police']) { try { getTypeAssets(t, 'high'); } catch { } }
+    // each type's atlas goes to the GPU straight away, which frees its canvas (gfx/texrelease.js) before the next
+    // type paints one: building them all first used to hold ~350 MB of canvases at once
+    for (const t of types) { try { this.traffic.renderer._type(t); R.initTexture(getTypeAssets(t, 'high').texture); } catch (e) { console.warn('prewarm', t, e); } await breathe(); }
+    for (const t of ['heli_police']) { try { R.initTexture(getTypeAssets(t, 'high').texture); } catch { } }
     (1234.5).toLocaleString(); new Intl.NumberFormat().format(1);
-    T.cars = performance.now() - t0; t0 = performance.now();
+    T.cars = performance.now() - t0; await this.mark('warm-up: vehicles'); t0 = performance.now();
     // final lighting state at the spawn point
     cam.position.copy(this.player.position).add(new THREE.Vector3(0, 3, 8)); cam.lookAt(this.player.position); cam.updateMatrixWorld();
     this.sky.update(0, this.player.position);
@@ -323,7 +456,7 @@ export class Game {
       R.setRenderTarget(rt);
       if (R.compileAsync) await R.compileAsync(scene, cam); else R.compile(scene, cam);
       R.setRenderTarget(prevRT);
-      T.compile = performance.now() - t0; t0 = performance.now();
+      T.compile = performance.now() - t0; await this.mark('warm-up: shaders'); t0 = performance.now();
       prog(0.98, 'Uploading the city to the GPU');
       // geometry upload: tiny render target + top-down ortho camera covering the map, objects fed through layer 31 in batches
       const objs = [];
@@ -333,18 +466,25 @@ export class Game {
       ortho.position.set(0, 3000, 0); ortho.up.set(0, 0, -1); ortho.lookAt(0, 0, 0); ortho.updateMatrixWorld();
       ortho.top = -(box.min.z - 50); ortho.bottom = -(box.max.z + 50); ortho.updateProjectionMatrix();
       ortho.layers.set(31);
+      // the lights ride along on layer 31: without them this pass compiled a 0-light twin of every program (~80
+      // programs that play never uses — each a translated shader + Metal pipeline, ~0.6 MB on iOS)
+      const lights = []; scene.traverse(o => { if (o.isLight && !o.layers.isEnabled(31)) { lights.push(o); o.layers.enable(31); } });
       const fc = [], shadowAuto = R.shadowMap.autoUpdate; R.shadowMap.autoUpdate = false;
       for (let i = 0; i < objs.length; i += 400) {
         const batch = objs.slice(i, i + 400);
         for (const o of batch) { o.layers.enable(31); if (o.frustumCulled) { o.frustumCulled = false; fc.push(o); } }
+        // with the sun along, these programs sample its shadow map: render it once (first batch only — cheap) so its
+        // depth texture exists; WebKit rejects every draw that samples a never-rendered shadow map
+        if (i === 0) R.shadowMap.needsUpdate = true;
         R.setRenderTarget(rt); R.render(scene, ortho);
         for (const o of batch) o.layers.disable(31);
         await breathe();
       }
       for (const o of fc) o.frustumCulled = true;
+      for (const l of lights) l.layers.disable(31);
       R.setRenderTarget(prevRT); R.shadowMap.autoUpdate = shadowAuto;
       rt.dispose();
-      T.upload = performance.now() - t0; t0 = performance.now();
+      T.upload = performance.now() - t0; await this.mark('warm-up: GPU upload'); t0 = performance.now();
     } finally { for (const o of hidden) o.visible = false; }
     // one real frame with every optional post pass on, so their programs exist before they are first toggled
     // ...and with every shadow caster unculled and empty instance pools given one instance, so each depth-material
@@ -372,10 +512,6 @@ export class Game {
     sun.castShadow = sunCast; sun.intensity = sunI;
     passes.forEach((p, i) => { p.enabled = was[i]; });
     T.frame = performance.now() - t0; t0 = performance.now();
-    // line-of-sight BVHs for cutscene framing: the safehouse + mission locations now, everything else while the title is up
-    T.bvh = prebuildBVH(this, [this.player.position, ...(this.missions.list || []).flatMap(m => [m.giver?.pos, m.retry?.pos]).filter(Boolean), { x: 167, z: 706 }], 160);
-    T.bvhMs = performance.now() - t0;
-    idleBVH(this, () => this.state !== 'play' || this.paused);
     // a program's first use queries its uniform locations (and, with checkShaderErrors, its link/compile logs — a
     // synchronous wait on the driver): do that for every program now instead of on the first frames of play
     for (const p of R.info.programs) p.getUniforms();
@@ -384,6 +520,7 @@ export class Game {
 
   applyQuality() {
     const q = this.R.q;
+    setAtlasGpuScale(q === QUALITY.low ? 0.5 : 1); // vehicle liveries: phones never sample the top mip
     this.sky?.setShadowQuality(q.shadows, q.shadowRadius);
     this.R.renderer.shadowMap.enabled = this.settings.shadows !== false;
     if (this.water) this.water.setReflections(q.reflections);
@@ -574,10 +711,16 @@ export class Game {
     // Ticks are paced to a 60 Hz deadline: on 120/144 Hz displays the in-between callbacks are skipped (an M1/M2 GPU
     // can't draw this city at 120, and a steady 60 looks smoother than an uneven 70-90). Each 60 Hz slot that passes
     // without a tick counts as missed — that, not the frame-time average, drives dynamic resolution.
-    const STEP = 1000 / 60;
-    let due = NaN;
+    let STEP = 1000 / 60;
+    let due = NaN, rawPrev = 0, rawN = 0;
+    const raw = new Float32Array(31);
     const frame = now => {
       requestAnimationFrame(frame);
+      // raw callback cadence: iOS Low Power Mode caps rAF at 30 Hz (see Renderer.trackFrame); back to 60 slots as soon
+      // as the callbacks come at 60 again
+      if (rawPrev && now - rawPrev < 250) { raw[rawN++ % 31] = now - rawPrev; if (rawN % 31 === 0) { const s = Array.from(raw).sort((a, b) => a - b); this.R.rafMs = s[15]; if (this.R.slotMs && this.R.rafMs < 22) this.R.slotMs = null; } }
+      rawPrev = now;
+      STEP = this.R.slotMs || 1000 / 60;
       if (!Number.isFinite(due) || now - this._last > 250) { due = now; this._last = now - STEP; this.R.resetFrameStats?.(); }
       if (now + 1.5 < due) return; // early callback on a high-refresh display
       const missed = Math.max(0, Math.floor((now - due + 1.5) / STEP));
@@ -603,6 +746,8 @@ export class Game {
     this.touch?.update();
     if (this.state === 'title' || this.state === 'boot' && !this._showLoading) return; // opaque title/splash: no 3D needed
     if (!this.worldReady) {
+      // the loading screen is opaque: drawing the half-built city under it only slowed the load (and taps on it)
+      if (this._showLoading) return;
       // title backdrop: slow orbit over the bay while loading
       const t = U.time.value * 0.03;
       this.camera.position.set(700 + Math.cos(t) * 500, 120, 300 + Math.sin(t) * 500);

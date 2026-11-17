@@ -11,6 +11,7 @@ import { buildHelix } from './helix.js';
 import { buildHeritage } from './heritage.js';
 import { buildSkyline } from './skyline.js';
 import { buildCivic } from './civic.js';
+import { nextTask } from '../../core/nextTask.js';
 
 const BUILDERS = [
   ['mbs', buildMBS],
@@ -32,6 +33,9 @@ export async function createLandmarks({ THREE = THREE_NS, city, renderer, qualit
   const group = new THREE.Group(); group.name = 'landmarks';
   const exclusions = [], colliders = [], reflective = [], pois = [], updaters = [], perLandmark = {};
   for (const [name, build] of BUILDERS) {
+    // a task boundary between landmarks (awaiting a synchronous builder only queues a microtask, which lets no tap
+    // through): the whole set was one ~0.5 s task on a phone
+    await nextTask();
     const r = await build(city, quality, renderer);
     group.add(r.group);
     exclusions.push(...(r.exclusions || []));

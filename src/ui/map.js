@@ -1,5 +1,5 @@
 // Pannable / zoomable map view (used full-screen and inside the pause menu).
-import { drawBlip, drawPlayerArrow, BLIP_NAMES, COLORS } from './mapRender.js';
+import { drawBlip, drawPlayerArrow, BLIP_NAMES, COLORS, MAX_TILES, RADAR_TILES } from './mapRender.js';
 import { DISTRICT_LABELS, LANDMARKS } from './districts.js';
 import { el, clamp } from './util.js';
 
@@ -40,7 +40,7 @@ export class MapView {
     this.root.addEventListener('pointerdown', e => {
       if (e.button !== 0 || e.target !== this.canvas) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      this.root.setPointerCapture(e.pointerId);
+      try { this.root.setPointerCapture(e.pointerId); } catch { }
       clearTimeout(press?.t); press = null;
       if (pts.size === 2) { drag = { pinch: pinch() }; return; }
       drag = { x: e.clientX, y: e.clientY, cx: this.cx, cz: this.cz };
@@ -110,6 +110,7 @@ export class MapView {
 
   /** @param {{x?:number,z?:number,heading?:number,playerHeading?:number,blips?:Array,route?:Array,waypoint?:{x,z},onWaypoint?:Function,scale?:number}} s */
   show(s = {}) {
+    { const md = this.getMap(); if (md) md.cap = MAX_TILES; }
     this.hint.textContent = this.root.closest('.vc-touchmode') ? 'Drag to pan · Pinch to zoom · Long-press to set a waypoint' : 'Drag to pan · Scroll to zoom · Right-click to set a waypoint';
     this.state = { blips: [], ...s };
     if (s.waypoint !== undefined) this.waypoint = s.waypoint;
@@ -122,7 +123,7 @@ export class MapView {
     // first draw on the next animation frame: drawing synchronously here would force a layout of the just-unhidden panel
     if (!this._raf) this._raf = requestAnimationFrame(() => this._loop());
   }
-  hide() { cancelAnimationFrame(this._raf); this._raf = 0; }
+  hide() { cancelAnimationFrame(this._raf); this._raf = 0; const md = this.getMap(); if (md) { md.cap = RADAR_TILES; md.trim(); } }
   setBlips(blips) { this.state.blips = blips || []; }
 
   _loop() {

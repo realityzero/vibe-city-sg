@@ -65,7 +65,8 @@ export class UI {
     this._title = new TitleScreen(this.root);
     this._fadeEl = el('div', 'vc-fade'); this.root.appendChild(this._fadeEl);
 
-    this.radar.setMap = (city, ground) => { this.radar.setMapData(new MapData(city, ground)); };
+    this.radar.setMap = (city, ground, mask) => { this.radar.setMapData(new MapData(city, ground, mask)); };
+    this.radar.setMapAsync = async (city, ground, mask) => { this.radar.setMapData(await MapData.build(city, ground, mask)); };
     this.timer = this._makeTimer();
     this.counter = this._makeCounter();
     this.bar = this._makeBar();

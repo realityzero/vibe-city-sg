@@ -11,7 +11,7 @@
 // while dialogue plays. Lines without a recorded take are subtitle-only (speechSynthesis only with ?ttsfallback).
 import { makeNoiseBuffers, makeImpulse, makePanner, setPannerPos, smooth } from './util.js';
 import { createInstruments } from './instruments.js';
-import { makeFxSet, Session, SongPlayer } from './sequencer.js';
+import { makeFxSet, Session, SongPlayer, LazyReverb } from './sequencer.js';
 import { Radio } from './radio.js';
 import { CUES } from './cues.js';
 import { createSfx, UI_SFX, IMPORTANT_SFX, REVERB_SFX } from './sfx.js';
@@ -49,11 +49,12 @@ export class AudioSystem {
     this._state = { inVehicle: false, paused: false, indoor: false };
   }
 
-  async init() {
-    if (this.ctx) { if (this.ctx.state !== 'running') await this.ctx.resume().catch(() => {}); return; }
+  /** @param {AudioContext} [existing] a context already created (and unlocked) inside a user gesture */
+  async init(existing) {
+    if (this.ctx) { if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {}); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
+    if (!AC && !existing) return;
+    const ctx = this.ctx = existing || new AC({ latencyHint: 'interactive' });
     const g = v => { const n = ctx.createGain(); n.gain.value = v; return n; };
 
     this.comp = ctx.createDynamicsCompressor();
@@ -85,20 +86,20 @@ export class AudioSystem {
     this.inst = createInstruments(ctx, this.bufs);
     this.radioFx = makeFxSet(ctx, this.radioIn, { gated: true });
     this.cueFx = makeFxSet(ctx, this.cueIn, { gated: true });
-    this.sfxHall = ctx.createConvolver();
-    this.sfxHall.buffer = makeImpulse(ctx, { duration: 2.2, decay: 3, damping: 0.75, predelay: 0.03 });
-    this.sfxHall.connect(this.sfxBus);
+    this.sfxHallIn = ctx.createGain();
+    this.sfxHall = new LazyReverb(ctx, this.sfxHallIn, this.sfxBus, makeImpulse(ctx, { duration: 2.2, decay: 3, damping: 0.75, predelay: 0.03 }));
 
     this._sfx = createSfx(this);
     this.ambience = new Ambience(this);
 
     this.ready = true;
     this._timer = setInterval(() => this._tick(), 40);
-    if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+    // never awaited: outside a user gesture iOS leaves resume() pending until the next tap
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
     if (this._pendingCue) { const c = this._pendingCue; this._pendingCue = null; this.music(c); }
     if (this._state.inVehicle) this.radio.setAudible(true);
     if (this._zoneReq) this.setZoneMusic(this._zoneReq.name, this._zoneReq.gain);
-    // the Gardens zone reverb (3.2 s stereo impulse) is built in an idle slot now rather than on first approach
+    // the Gardens zone reverb's impulse (3.2 s stereo) is generated in an idle slot now rather than on first approach
     (window.requestIdleCallback || (f => setTimeout(f, 2000)))(() => { if (!this.zoneFx) this.zoneFx = makeFxSet(ctx, this.zoneIn, { gated: false, hallSec: 3.2 }); }, { timeout: 5000 });
     // voice-overs: decode a handful of common street barks in the background so the first ones play instantly
     this.voice.vo.load().then(() => this._prefetchBarks());
@@ -273,8 +274,9 @@ export class AudioSystem {
     else g.connect(bus);
     let send = null;
     const rv = REVERB_SFX[name];
-    if (rv) { send = ctx.createGain(); send.gain.value = rv; g.connect(send); send.connect(this.sfxHall); }
+    if (rv) { send = ctx.createGain(); send.gain.value = rv; g.connect(send); send.connect(this.sfxHallIn); this.sfxHall.extend(now + 1); }
     const end = fn(g, now + 0.005, opts) || now + 1;
+    if (rv) this.sfxHall.extend(end);
     a.push(end);
     const life = (end - now + 0.4) * 1000;
     setTimeout(() => { try { g.disconnect(); panner?.disconnect(); send?.disconnect(); } catch { /* noop */ } }, life);

@@ -248,11 +248,7 @@
 .vc-reflect { position: absolute; left: 0; right: 0; bottom: 34%; width: 100%; height: 40vh; transform: scaleY(-0.6); transform-origin: 50% 100%; opacity: .28; filter: blur(1.5px);
   -webkit-mask: linear-gradient(180deg, transparent 20%, #000 100%); mask: linear-gradient(180deg, transparent 20%, #000 100%); }
 .vc-floor { position: absolute; left: 0; right: 0; top: 66%; bottom: 0; perspective: 40vh; perspective-origin: 50% 0; overflow: hidden; }
-.vc-grid { position: absolute; left: -200%; right: -200%; top: 0; height: 36vh; transform-origin: 50% 0; transform: rotateX(78deg);
-  background-image: linear-gradient(rgba(255,63,164,.9) 0.35vh, transparent 0.35vh), linear-gradient(90deg, rgba(255,63,164,.75) 0.3vh, transparent 0.3vh);
-  background-size: 6vh 6vh; background-position: 50% 0; animation: vc-gridmove 1.2s linear infinite;
-  -webkit-mask: linear-gradient(180deg, transparent 0%, #000 30%); mask: linear-gradient(180deg, transparent 0%, #000 30%); }
-@keyframes vc-gridmove { to { background-position: 50% 6vh; } }
+.vc-gridcv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; } /* drawn by ui/screens.js drawGrid */
 .vc-horizon-glow { position: absolute; left: 0; right: 0; top: calc(66% - 1.2vh); height: 2.4vh; background: radial-gradient(ellipse at center, rgba(255,140,200,.9), rgba(255,63,164,0) 70%); filter: blur(4px); }
 .vc-palms { position: absolute; bottom: 0; height: 78vh; width: auto; }
 .vc-palms.l { left: -4vh; }

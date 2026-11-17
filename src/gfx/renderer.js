@@ -1,5 +1,6 @@
 // WebGL2 renderer + pmndrs post-processing (bloom, AgX tone mapping, SMAA, vignette) + dynamic resolution.
 import * as THREE from 'three';
+import { setPrimaryRenderer } from './texrelease.js';
 import './heightfog.js'; // altitude-aware haze for every material (patches three's fog chunks)
 import { VibeVisionEffect } from './vibevision.js';
 import { N8AOPostPass } from 'n8ao';
@@ -19,6 +20,7 @@ export class Renderer {
   constructor(canvas, quality = 'high') {
     this.canvas = canvas;
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true, logarithmicDepthBuffer: false });
+    setPrimaryRenderer(r); // texture sources are freed once this renderer has them (gfx/texrelease.js)
     r.outputColorSpace = THREE.SRGBColorSpace;
     // shader info-log reads force synchronous driver waits; keep them for development only
     r.debug.checkShaderErrors = !!import.meta.env?.DEV || new URLSearchParams(location.search).has('debug');
@@ -166,9 +168,21 @@ export class Renderer {
     D.bad = overloaded && !cpuBound ? D.bad + 1 : 0;
     D.good = ratio === 0 && (gpu90 === null || gpu90 < 12.5) ? D.good + 1 : 0;
     let scale = this.dynScale;
+    // iOS Low Power Mode caps rAF at 30 Hz: every other 60 Hz slot is "missed" whatever the resolution. Signature: a
+    // drop in resolution that left the miss ratio at ~1/2 with callbacks ~33 ms apart -> undo the drop and pace the
+    // loop to 30 Hz slots (the game loop goes back to 60 once callbacks arrive at 60 Hz again)
+    if (D.preDrop && now - D.changed > 1500) {
+      const half = r => Math.abs(r - 0.5) < 0.08;
+      if (half(ratio) && half(D.preDrop.ratio) && this.rafMs > 28) {
+        this.slotMs = 1000 / 30; scale = D.preDrop.scale; D.bad = D.good = 0; D.preDrop = null;
+        if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.start = now + 1000; }
+        return;
+      }
+      D.preDrop = null;
+    }
     if (D.bad >= 2 && now - D.changed > 3000) {
       if (now - D.lastUp < 6000) { scale = D.beforeUp; D.backoff = Math.min(64, D.backoff * 2); D.lastUp = -1e9; } // the probe up failed
-      else scale = Math.max(0.55, scale - (ratio > 0.2 ? 0.14 : 0.08));
+      else { D.preDrop = { scale, ratio }; scale = Math.max(0.55, scale - (ratio > 0.2 ? 0.14 : 0.08)); }
     } else if (scale < 1 && D.good >= D.backoff && now - D.changed > 6000) { D.beforeUp = scale; D.lastUp = now; scale = Math.min(1, scale + 0.05); }
     if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.bad = D.good = 0; D.start = now + 1000; D.slots = D.missed = 0; D.cpu.length = 0; }
   }

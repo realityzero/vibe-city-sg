@@ -13,6 +13,7 @@ import { withLampField } from '../gfx/lampfield.js';
 import { NOISE } from '../gfx/shaderlib.js';
 import { REFLECT_LAYER } from './water.js';
 import { WATER_LEVEL } from '../core/constants.js';
+import { nextTask } from '../core/nextTask.js';
 
 let seed = 99;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -710,7 +711,9 @@ function mipChain(data, w, h, coverage) {
   return levels;
 }
 
-function bakeImpostors(geos, leafTex, avg) {
+// async: a task per species and per mip chain (one go was a ~0.5 s task on a phone, taps waiting behind it)
+async function bakeImpostors(geos, leafTex, avg) {
+  const brk = nextTask;
   const W = IMP_COLS * IMP_CELL, H = IMP_ROWS * IMP_CELL, NW = IMP_COLS * IMP_NCELL, NH = IMP_ROWS * IMP_NCELL, S = IMP_CELL * IMP_SS;
   const alb = new Uint8Array(W * H * 4), nrm = new Uint8Array(NW * NH * 4);
   const r = new THREE.WebGLRenderer({ canvas: document.createElement('canvas'), antialias: false, alpha: true, powerPreference: 'high-performance' });
@@ -751,6 +754,7 @@ function bakeImpostors(geos, leafTex, avg) {
         else cellDown(pix, S * IMP_VIEWS, v * S, S, S / IMP_NCELL, nrm, NW, cx * IMP_NCELL, cy * IMP_NCELL, bgN, false);
       }
     }
+    await brk();
   }
   r.setRenderTarget(null);
   rt.dispose(); mat.dispose(); r.dispose(); r.forceContextLoss();
@@ -761,7 +765,8 @@ function bakeImpostors(geos, leafTex, avg) {
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.needsUpdate = true;
     return t;
   };
-  return { albedo: tex(alb, W, H, true, true), normal: tex(nrm, NW, NH, false, false), sp };
+  const albedo = tex(alb, W, H, true, true); await brk();
+  return { albedo, normal: tex(nrm, NW, NH, false, false), sp };
 }
 
 // ---------------------------------------------------------------- materials
@@ -1023,6 +1028,7 @@ function petalTexture() {
 const NEAR_SCALE = 0.6, FADE_BAND = 18;
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere(), _q = new THREE.Quaternion();
 
+const NO_IMP_CULL = typeof location !== 'undefined' && new URLSearchParams(location.search).has('noimpcull'); // A/B: every tree, every frame
 export class Vegetation {
   constructor(scene, trees /* Float32Array x,z,type,scale,rot */, { treeDist = 1300, city = globalThis.__game?.city } = {}) {
     this.scene = scene;
@@ -1032,6 +1038,11 @@ export class Vegetation {
     this.lastPos = new THREE.Vector3(1e9, 0, 0);
     this.treeDist = treeDist;
     this.nearDist = 230;
+    // the build runs in slices with the main thread handed back in between (it's ~0.75 s on a phone): await .ready
+    this.ready = this._init(trees, city);
+  }
+  async _init(trees, city) {
+    const scene = this.scene, brk = nextTask;
     const N = trees.length / 5;
     this.count = N;
     this.types = new Uint8Array(N);   // species (mesh) index
@@ -1046,7 +1057,9 @@ export class Vegetation {
       const sp = speciesOf(t, x, z);
       this.types[i] = sp; this.pos[i * 2] = x; this.pos[i * 2 + 1] = z; this.scale[i] = trees[i * 5 + 3]; perType[sp]++;
     }
+    await brk();
     const lean = roadLean(this.types, this.pos, city);
+    await brk();
     this.leaning = 0;
     for (let i = 0; i < N; i++) {
       const x = this.pos[i * 2], z = this.pos[i * 2 + 1], sp = this.types[i], sc = this.scale[i], rot = trees[i * 5 + 4];
@@ -1059,16 +1072,21 @@ export class Vegetation {
       m.toArray(this.matrices, i * 16);
       iA[i * 4] = x; iA[i * 4 + 1] = z; iA[i * 4 + 2] = rot; iA[i * 4 + 3] = sc; iB[i * 4] = sp; iB[i * 4 + 1] = sy; iB[i * 4 + 2] = lx; iB[i * 4 + 3] = lz;
     }
+    await brk();
     this.cell = 50;
     this.grid = new Map();
-    for (let i = 0; i < N; i++) { const k = this._key(this.pos[i * 2], this.pos[i * 2 + 1]); if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(i); }
+    for (let i = 0; i < N; i++) { const k = this._key(this.pos[i * 2], this.pos[i * 2 + 1]); let l = this.grid.get(k); if (!l) this.grid.set(k, l = []); l.push(i); }
     initClumps();
+    await brk();
     const atlas = leafAtlas();
+    await brk();
     let t0 = performance.now();
-    const geos = KINDS.map(buildNear);
+    const geos = [];
+    for (const k of KINDS) { geos.push(buildNear(k)); await brk(); }
     this.buildMs = { geo: Math.round(performance.now() - t0) }; t0 = performance.now();
-    const imp = bakeImpostors(geos, atlas.tex, atlas.avg);
+    const imp = await bakeImpostors(geos, atlas.tex, atlas.avg);
     this.buildMs.bake = Math.round(performance.now() - t0);
+    await brk();
     const matNear = treeMaterial(atlas.tex, this.uFade);
     const depthNear = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: atlas.tex, alphaTest: 0.42, side: THREE.DoubleSide });
     this.meshes = [];
@@ -1103,9 +1121,16 @@ export class Vegetation {
     for (const z of [0, 1]) for (const [x, y] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) cp.push(x, y, z);
     ig.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
     ig.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
-    ig.setAttribute('iA', new THREE.InstancedBufferAttribute(iA, 4));
-    ig.setAttribute('iB', new THREE.InstancedBufferAttribute(iB, 4));
-    ig.instanceCount = N;
+    // the cards beyond the draw distance (uFar, from the main camera) collapse to nothing in the vertex shader; only the
+    // trees within reach are fed to the GPU — a compacted copy, refreshed as the camera moves (see _impostorRange).
+    // Same pixels; on a phone's 600 m tree distance that's a few percent of the city's 60k trees per frame.
+    this._iAll = { iA, iB };
+    const iAs = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), iBs = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4);
+    iAs.setUsage(THREE.DynamicDrawUsage); iBs.setUsage(THREE.DynamicDrawUsage);
+    ig.setAttribute('iA', iAs);
+    ig.setAttribute('iB', iBs);
+    ig.instanceCount = 0;
+    this._impCenter = new THREE.Vector2(1e9, 1e9); this._impFar = -1;
     ig.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     const shared = { uFade: this.uFade, uFar: this.uFar, uCamMain: this.uCam };
     this.impostors = new THREE.Mesh(ig, impostorMaterial(imp.albedo, imp.normal, imp.sp, shared));
@@ -1129,10 +1154,32 @@ export class Vegetation {
   // and frustum spheres so membership that is a frame or two old never leaves holes; the fade itself is per pixel on
   // the GPU. Trees within the near range (+10 m) come first in each pool: the shadow pass only draws that prefix (the
   // rest of the guard band is faded out in colour and casts through the impostors).
+  /** impostor instances: every tree within uFar + 60 m of (x, z); called whenever the camera has moved 40 m, so a
+   * tree within uFar of the camera is always in the list */
+  _impostorRange(x, z) {
+    const R = NO_IMP_CULL ? 1e7 : this.uFar.value + 60, R2 = R * R, c = NO_IMP_CULL ? 1e6 : this.cell, { iA, iB } = this._iAll, g = this.impostors.geometry;
+    const oA = g.attributes.iA, oB = g.attributes.iB, A = oA.array, B = oB.array, P = this.pos;
+    let n = 0;
+    if (NO_IMP_CULL) { A.set(iA); B.set(iB); n = this.count; }
+    else for (let gx = Math.floor((x - R) / c); gx <= Math.floor((x + R) / c); gx++)
+      for (let gz = Math.floor((z - R) / c); gz <= Math.floor((z + R) / c); gz++) {
+        const l = this.grid.get(gx * 100003 + gz); if (!l) continue;
+        for (let k = 0; k < l.length; k++) {
+          const i = l[k], dx = P[i * 2] - x, dz = P[i * 2 + 1] - z; if (dx * dx + dz * dz > R2) continue;
+          for (let q = 0; q < 4; q++) { A[n * 4 + q] = iA[i * 4 + q]; B[n * 4 + q] = iB[i * 4 + q]; }
+          n++;
+        }
+      }
+    g.instanceCount = n;
+    for (const a of [oA, oB]) { a.clearUpdateRanges(); a.addUpdateRange(0, Math.max(4, n * 4)); a.needsUpdate = true; }
+    this._impCenter.set(x, z); this._impFar = this.uFar.value;
+  }
+
   update(dt, camera, force = false) {
     camera.updateMatrixWorld();
     const cp = camera.position;
     this.uCam.value.copy(cp);
+    if (this._impFar !== this.uFar.value || Math.hypot(cp.x - this._impCenter.x, cp.z - this._impCenter.y) > 40) this._impostorRange(cp.x, cp.z);
     this._age += dt;
     const moved2 = cp.distanceToSquared(this.lastPos), qd = Math.abs(_q.copy(camera.quaternion).dot(this._lastQ)), dfov = Math.abs(camera.fov - this._lastFov);
     const urgent = force || moved2 > 100 || qd < 0.99905 || dfov > 1;

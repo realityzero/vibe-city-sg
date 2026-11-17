@@ -31,6 +31,8 @@ const SYS = [['pause', 'II', 'Escape'], ['cam', 'CAM', 'KeyV'], ['ai', 'AI', 'Sl
 const LOOK_GAIN = 2.4;   // touch px -> mouse px (a third of the screen turns ~100°)
 const PINCH_GAIN = 0.012; // pinch px -> wheel steps
 
+// WebKit throws if the pointer is no longer active (a finger lifted mid-dispatch)
+const capture = (e, id) => { try { e.setPointerCapture(id); } catch { } };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
 export class TouchControls {
@@ -84,7 +86,7 @@ export class TouchControls {
   bind(b, action, hold, key) {
     b.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
-      b.setPointerCapture?.(e.pointerId); b.classList.add('on');
+      capture(b, e.pointerId); b.classList.add('on');
       if (typeof action === 'function') return action();
       this.key(action, true, key);
       if (!hold) this.key(action, false, key);
@@ -98,7 +100,7 @@ export class TouchControls {
     const s = this.surf, inp = this.input;
     s.addEventListener('pointerdown', e => {
       e.preventDefault();
-      s.setPointerCapture?.(e.pointerId);
+      capture(s, e.pointerId);
       const x = e.clientX, y = e.clientY;
       // the radar is a map button
       const r = this.game.ui.radar?.wrap?.getBoundingClientRect();
@@ -179,9 +181,9 @@ export class TouchControls {
   update() {
     if (!this.on) return;
     const g = this.game, p = g.player, v = p?.vehicle;
-    const play = g.state === 'play' && !g.paused && !g.mgPaused && !g.ui.map.isOpen && !g.photo?.on && !g.claudia?.isOpen && p.state !== 'dead';
+    const play = !!p && g.state === 'play' && !g.paused && !g.mgPaused && !g.ui.map.isOpen && !g.photo?.on && !g.claudia?.isOpen && p.state !== 'dead';
     const ctl = play && p.controlsEnabled && g.input.enabled;
-    const mode = v ? (v.isAircraft || v.spec.kind === 'drone' ? 'air' : v.isBoat ? 'boat' : 'car') : p.swimming ? 'swim' : 'foot';
+    const mode = v ? (v.isAircraft || v.spec.kind === 'drone' ? 'air' : v.isBoat ? 'boat' : 'car') : p?.swimming ? 'swim' : 'foot';
     if (mode !== this.mode) { this.releaseAll(); this.mode = mode; this.buildCluster(mode); this.root.dataset.mode = mode; }
     const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub ? 'sub' : ''}`;
     if (flags !== this.flags) {

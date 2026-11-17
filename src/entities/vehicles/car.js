@@ -25,7 +25,8 @@ export const C = {
 };
 
 export function assembleCar(design, lod = 'high', opts = {}) {
-  const atlas = new Atlas();
+  // the atlas painting doesn't depend on the LOD: every LOD of a type shares one atlas (one texture on the GPU)
+  const atlas = opts.atlas || new Atlas();
   const pb = new PartBuilder(atlas);
   const body = buildBody(pb, design.body, lod);
   if (design.prePaint) design.prePaint(atlas);

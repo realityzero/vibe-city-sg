@@ -2,7 +2,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { WATER_LEVEL } from '../core/constants.js';
 
-export const G = { STATIC: 1, CHAR: 2, VEHICLE: 4, TRAFFIC: 8, PED: 16, PROP: 32, SHORE: 64 };
+const GROUND_TAPS = [-1, -1, 1, -1, -1, 1, 1, 1, 0, 0]; // (x,z) offsets of the 5 mask samples per ground vertex
+export const G = { STATIC: 1, CHAR: 2, VEHICLE: 4, TRAFFIC: 8, PED: 16, PROP: 32, SHORE: 64, SIGHT: 128 };
 export const groups = (member, filter) => (member << 16) | filter;
 export const FILTER = {
   static: groups(G.STATIC, 0xffff),
@@ -13,6 +14,9 @@ export const FILTER = {
   traffic: groups(G.TRAFFIC, G.VEHICLE | G.CHAR | G.TRAFFIC),
   wheels: groups(G.VEHICLE, G.STATIC),
   cameraRay: groups(G.STATIC, G.STATIC),
+  // sight blockers nothing collides with (pitched roofs, ceilings...), and the line-of-sight rays that also see them
+  sight: groups(G.SIGHT, G.SIGHT),
+  sightRay: groups(G.STATIC | G.SIGHT, G.STATIC | G.SIGHT),
 };
 
 export class Physics {
@@ -30,7 +34,8 @@ export class Physics {
     this.contactHandlers = new Map(); // collider handle -> fn(otherHandle, force)
   }
 
-  addGround(city) {
+  /** brk (optional, an awaitable yield): hand the main thread back between the slices of work — returns a promise then */
+  async addGround(city, brk = null) {
     // heightfield at 4 m: land 0, ponds -0.6, water deep
     const M = city.meta, step = 4;
     const ncols = Math.ceil((M.xmax - M.xmin) / step), nrows = Math.ceil((M.zmax - M.zmin) / step);
@@ -39,9 +44,10 @@ export class Physics {
       const x = M.xmin + c * step, z = M.zmin + r * step;
       // conservative: land only if all 4 samples around are land (prevents driving on water edges)
       let mn = 255;
-      for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]) mn = Math.min(mn, city.maskAt(x + ox * 1.2, z + oz * 1.2));
+      for (let k = 0; k < 10; k += 2) mn = Math.min(mn, city.maskAt(x + GROUND_TAPS[k] * 1.2, z + GROUND_TAPS[k + 1] * 1.2));
       h[c * (nrows + 1) + r] = mn > 200 ? 0 : mn > 100 ? -0.6 : WATER_LEVEL - 5;
     }
+    if (brk) await brk();
     // under every ordinary (non-bridge) carriageway the ground is land, even where the conservative mask test dips
     // toward a nearby river/bay edge — otherwise wheels drop into invisible 1-2 m hollows under continuous asphalt
     for (const rd of city.data.roads) {
@@ -59,11 +65,13 @@ export class Physics {
         }
       }
     }
+    if (brk) await brk();
     const sx = ncols * step, sz = nrows * step;
     const desc = RAPIER.ColliderDesc.heightfield(nrows, ncols, h, { x: sx, y: 1, z: sz })
       .setTranslation(M.xmin + sx / 2, 0, M.zmin + sz / 2).setFriction(1.0).setCollisionGroups(FILTER.static);
     this.ground = this.world.createCollider(desc);
-    this.addShoreShelf(city, h, ncols, nrows, step);
+    this.ground._shape = null; // Rapier's JS-side cache of the shape (here a 6 MB copy of the heights): rebuilt on demand
+    await this.addShoreShelf(city, h, ncols, nrows, step, brk);
     // world boundary walls
     const bx = (M.xmin + M.xmax) / 2, bz = (M.zmin + M.zmax) / 2, hx = (M.xmax - M.xmin) / 2, hz = (M.zmax - M.zmin) / 2;
     for (const [x, z, ex, ez] of [[bx, M.zmin - 5, hx + 10, 5], [bx, M.zmax + 5, hx + 10, 5], [M.xmin - 5, bz, 5, hz + 10], [M.xmax + 5, bz, 5, hz + 10]])
@@ -74,10 +82,11 @@ export class Physics {
    * foot Tommy would sink through the pavement before the edge and swim under it after. Characters (only — cars keep
    * the conservative field) get a flat shelf at y=0 over every drawn-land 1 m square of those sloping cells, which
    * puts the quay edge where it is drawn: walk off it and you drop into the water. */
-  addShoreShelf(city, h, ncols, nrows, step) {
+  async addShoreShelf(city, h, ncols, nrows, step, brk = null) {
     const M = city.meta, n = 4, sub = step / n, verts = [], idx = [];
     const H = (c, r) => h[c * (nrows + 1) + r];
     for (let c = 0; c < ncols; c++) for (let r = 0; r < nrows; r++) {
+      if (brk && r === 0 && c % 120 === 119) await brk();
       if (!H(c, r) && !H(c + 1, r) && !H(c, r + 1) && !H(c + 1, r + 1)) continue;
       const x0 = M.xmin + c * step, z0 = M.zmin + r * step;
       for (let sr = 0; sr < n; sr++) {
@@ -94,12 +103,19 @@ export class Physics {
       }
     }
     this.shoreQuads = idx.length / 6;
-    if (idx.length) this.shore = this.world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(verts), new Uint32Array(idx)).setFriction(1.0).setCollisionGroups(FILTER.shore));
+    if (idx.length) { this.shore = this.world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(verts), new Uint32Array(idx)).setFriction(1.0).setCollisionGroups(FILTER.shore)); this.shore._shape = null; }
   }
 
   addTrimesh(vertices, indices) {
     const desc = RAPIER.ColliderDesc.trimesh(vertices, indices).setCollisionGroups(FILTER.static).setFriction(0.6); // double-sided: generated walls/roofs have mixed winding
-    return this.world.createCollider(desc);
+    const c = this.world.createCollider(desc); c._shape = null; // (JS copy of the mesh; WASM has its own)
+    return c;
+  }
+
+  /** a trimesh only line-of-sight rays (FILTER.sightRay) hit */
+  addSightBlocker(vertices, indices) {
+    const c = this.world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices).setCollisionGroups(FILTER.sight)); c._shape = null;
+    return c;
   }
 
   addStatic(c) {
@@ -111,7 +127,8 @@ export class Physics {
     else if (c.type === 'trimesh') desc = RAPIER.ColliderDesc.trimesh(c.vertices, c.indices);
     if (!desc) return null;
     desc.setCollisionGroups(FILTER.static);
-    return this.world.createCollider(desc);
+    const col = this.world.createCollider(desc); if (c.type === 'trimesh') col._shape = null;
+    return col;
   }
 
   onStep(fn) { this.stepCallbacks.push(fn); }

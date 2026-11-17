@@ -33,6 +33,7 @@ class LightMap {
     for (let i = 0; i < W * H; i++) px[i] = Math.round(Math.sqrt(Math.min(1, e[i] / 4)) * 255);
     const tex = this.tex || (this.tex = new THREE.DataTexture(px, W, H, THREE.RedFormat, THREE.UnsignedByteType));
     tex.image.data = px; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true; tex.flipY = false; tex.needsUpdate = true;
+    tex.userData.releaseSource = true; // (both uploads happen before the first frame)
     STREET.lamp.value = tex; STREET.lampOrigin.value.set(this.x0, this.z0); STREET.lampSize.value.set(W * this.res, H * this.res);
   }
 }

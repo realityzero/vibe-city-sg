@@ -1,8 +1,12 @@
 // Shared map rendering for the radar and the full-screen map.
 // - `base`: whole-city raster at 0.5 px/m (one pixel per ground.png texel), recoloured mask + buildings + roads.
 // - hi-res tiles (TILE_M metres at TILE_PX px) rendered lazily from spatially bucketed vector features, LRU cached.
+import { nextTask } from '../core/nextTask.js';
 export const TILE_M = 256, TILE_PPM = 2, TILE_PX = TILE_M * TILE_PPM;
-const MAX_TILES = 40;
+// hi-res tile cache (512 px canvases, ~1 MB each): fewer on phones, where canvases count against the tab's memory
+// tile cache: 40 while the full-screen map is open, 12 otherwise — the radar shows a handful, and driving around used to
+// fill all 40 (each a 512 px canvas: 1 MB of GPU-process memory on iOS)
+export const MAX_TILES = 40, RADAR_TILES = 12;
 
 export const COLORS = {
   water: [12, 66, 108], pond: [20, 84, 128], land: [27, 22, 50], park: [30, 74, 52], wood: [24, 62, 44], pitch: [40, 92, 58],
@@ -16,10 +20,28 @@ const ROAD = {
   8: ['#5a5282', null, 0.8], 9: ['#463f6a', null, 0.5],
 };
 const ORDER = [9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+// ground class -> colour (classes from the mask in MapData._recolor)
+const GROUND_PAL = [COLORS.water, COLORS.pond, COLORS.park, COLORS.wood, COLORS.pitch, COLORS.plaza, COLORS.sidewalk, COLORS.parking, COLORS.apron, COLORS.land];
 
 export class MapData {
   /** @param {object} city parsed city.json  @param {HTMLImageElement|ImageBitmap} ground ground.png */
-  constructor(city, ground) {
+  /** @param mask optional { data: Uint8Array RGB planes, w, h } — the game's CPU copy of the ground mask, used instead
+   * of drawing the image and reading it back when the sizes match */
+  constructor(city, ground, mask) {
+    this._meta(city);
+    this._recolor(ground, mask);
+    this._bucket(city);
+    this._base();
+  }
+  /** same as the constructor, in slices with the main thread handed back in between (load time on phones) */
+  static async build(city, ground, mask) {
+    const brk = nextTask, d = Object.create(MapData.prototype);
+    d._meta(city); d._recolor(ground, mask); await brk();
+    d._bucket(city); await brk();
+    await d._base(brk);
+    return d;
+  }
+  _meta(city) {
     const m = city.meta;
     this.xmin = m.xmin; this.zmin = m.zmin; this.xmax = m.xmax; this.zmax = m.zmax;
     this.res = m.res || 2;
@@ -28,42 +50,48 @@ export class MapData {
     this.H = m.h || Math.ceil((m.zmax - m.zmin) * this.ppm);
     this.tilesX = Math.ceil((this.xmax - this.xmin) / TILE_M);
     this.tilesZ = Math.ceil((this.zmax - this.zmin) / TILE_M);
-    this.ground = this._recolor(ground);
-    this._bucket(city);
+    this.tiles = new Map();                        // key -> canvas (insertion order = LRU)
+    this.cap = RADAR_TILES;                        // MAX_TILES while the full map is open (MapView.show/hide)
+    this.pending = new Set();
+  }
+  /** the whole-city raster; with brk (an awaitable yield) it is painted in slices — one go was a ~0.5 s task on a
+   * phone during the load, with taps on the loading screen left waiting */
+  _base(brk) {
     this.base = document.createElement('canvas');
     this.base.width = this.W; this.base.height = this.H;
     const ctx = this.base.getContext('2d');
-    ctx.drawImage(this.ground, 0, 0);
+    ctx.putImageData(this._groundPixels(ctx, 0, 0, this.W, this.H), 0, 0);
     ctx.setTransform(this.ppm, 0, 0, this.ppm, -this.xmin * this.ppm, -this.zmin * this.ppm);
-    this._drawFeatures(ctx, this.buildings, this.roads, this.ppm);
-    this.tiles = new Map();                        // key -> canvas (insertion order = LRU)
-    this.pending = new Set();
+    const steps = this._features(ctx, this.buildings, this.roads, this.ppm);
+    if (!brk) { for (const _ of steps); return; }
+    return (async () => { await brk(); for (const _ of steps) await brk(); })();
   }
 
-  _recolor(img) {
-    const c = document.createElement('canvas');
-    c.width = this.W; c.height = this.H;
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(img, 0, 0, this.W, this.H);
-    const id = ctx.getImageData(0, 0, this.W, this.H), d = id.data;
-    const C = COLORS;
-    for (let i = 0; i < d.length; i += 4) {
-      const r = d[i], g = d[i + 1], b = d[i + 2];
-      let col;
-      if (r < 64) col = C.water;
-      else if (r < 200) col = C.pond;
-      else if (g >= 230) col = C.park;
-      else if (g >= 150) col = C.wood;
-      else if (g >= 80) col = C.pitch;
-      else if (b >= 250) col = C.plaza;
-      else if (b >= 210) col = C.sidewalk;
-      else if (b >= 190) col = C.parking;
-      else if (b >= 100) col = C.apron;
-      else col = C.land;
-      d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
+  // Ground classes per base pixel (index into GROUND_PAL): 1 byte a pixel on the CPU instead of a second whole-city
+  // canvas (~25 MB of GPU-process memory on iOS). The base map gets the colours once; tiles rebuild just their small
+  // source region from the classes (see _renderTile).
+  _recolor(img, mask) {
+    const W = this.W, H = this.H, n = W * H, cls = new Uint8Array(n);
+    let src, step = 3;
+    if (mask && mask.w === W && mask.h === H) src = mask.data; // the game's CPU copy of ground.png: no draw + readback
+    else {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, W, H); src = ctx.getImageData(0, 0, W, H).data; step = 4;
+      c.width = c.height = 0;
     }
-    ctx.putImageData(id, 0, 0);
-    return c;
+    for (let i = 0, j = 0; i < n; i++, j += step) {
+      const r = src[j], g = src[j + 1], b = src[j + 2];
+      cls[i] = r < 64 ? 0 : r < 200 ? 1 : g >= 230 ? 2 : g >= 150 ? 3 : g >= 80 ? 4 : b >= 250 ? 5 : b >= 210 ? 6 : b >= 190 ? 7 : b >= 100 ? 8 : 9;
+    }
+    this.cls = cls;
+    return null;
+  }
+  /** ImageData of ground colours for base pixels [x0, x0 + w) x [z0, z0 + h) */
+  _groundPixels(ctx, x0, z0, w, h) {
+    const id = ctx.createImageData(w, h), d = id.data, cls = this.cls, W = this.W;
+    for (let y = 0; y < h; y++) for (let x = 0, o = y * w * 4, i = (z0 + y) * W + x0; x < w; x++, o += 4, i++) { const c = GROUND_PAL[cls[i]]; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255; }
+    return id;
   }
 
   _bucket(city) {
@@ -98,21 +126,27 @@ export class MapData {
   }
 
   /** ctx must already carry a world->pixel transform with uniform scale `ppm` (px per metre). */
-  _drawFeatures(ctx, buildings, roads, ppm) {
+  _drawFeatures(ctx, buildings, roads, ppm) { for (const _ of this._features(ctx, buildings, roads, ppm)); }
+  /** draws the features, yielding between slices of the work (same calls, same order, whether or not anyone waits) */
+  *_features(ctx, buildings, roads, ppm) {
     // buildings
     const bp = new Path2D(), tall = new Path2D();
+    let n = 0;
     for (const b of buildings) {
       const path = b.h > 60 ? tall : bp;
       const p = b.p;
       path.moveTo(p[0], p[1]);
       for (let i = 2; i < p.length; i += 2) path.lineTo(p[i], p[i + 1]);
       path.closePath();
+      if (++n % 3000 === 0) yield;
     }
+    yield;
     ctx.fillStyle = COLORS.building; ctx.fill(bp);
     ctx.fillStyle = COLORS.buildingTall; ctx.fill(tall);
     if (ppm >= 1) {
       ctx.lineWidth = 0.8 / ppm; ctx.strokeStyle = COLORS.buildingEdge; ctx.stroke(bp); ctx.stroke(tall);
     }
+    yield;
     // roads: casing pass then fill pass, grouped by style so we only change state per group
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const groups = new Map();
@@ -125,7 +159,9 @@ export class MapData {
       const p = r.p;
       g.path.moveTo(p[0], p[1]);
       for (let i = 2; i < p.length; i += 2) g.path.lineTo(p[i], p[i + 1]);
+      if (++n % 4000 === 0) yield;
     }
+    yield;
     const list = [...groups.values()].sort((a, b) => (ORDER.indexOf(a.c) + a.b * 20) - (ORDER.indexOf(b.c) + b.b * 20));
     for (const g of list) {
       if (!g.st[1]) continue;
@@ -133,6 +169,7 @@ export class MapData {
       ctx.lineWidth = (g.wpx + Math.max(1, ppm * 1.4) * (g.b ? 2 : 1)) / ppm;
       ctx.stroke(g.path);
     }
+    yield;
     for (const g of list) {
       ctx.strokeStyle = g.st[0];
       ctx.globalAlpha = g.c >= 8 ? 0.8 : 1;
@@ -165,10 +202,15 @@ export class MapData {
     return n;
   }
 
+  /** drop the least recently used tiles down to n (their canvases go now) */
+  trim(n = RADAR_TILES) {
+    while (this.tiles.size > n) { const k = this.tiles.keys().next().value, c = this.tiles.get(k); this.tiles.delete(k); c.width = c.height = 0; }
+  }
+
   _renderTile(k) {
     const tx = k % this.tilesX, tz = (k / this.tilesX) | 0;
     let c;
-    if (this.tiles.size >= MAX_TILES) { const oldK = this.tiles.keys().next().value; c = this.tiles.get(oldK); this.tiles.delete(oldK); }
+    if (this.tiles.size >= this.cap) { const oldK = this.tiles.keys().next().value; c = this.tiles.get(oldK); this.tiles.delete(oldK); }
     else { c = document.createElement('canvas'); c.width = TILE_PX; c.height = TILE_PX; }
     const ctx = c.getContext('2d');
     const x0 = this.xmin + tx * TILE_M, z0 = this.zmin + tz * TILE_M;
@@ -177,7 +219,18 @@ export class MapData {
     ctx.setTransform(TILE_PPM, 0, 0, TILE_PPM, -x0 * TILE_PPM, -z0 * TILE_PPM);
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     const sx = (x0 - this.xmin) * this.ppm, sz = (z0 - this.zmin) * this.ppm, sw = TILE_M * this.ppm;
-    ctx.drawImage(this.ground, sx - 1, sz - 1, sw + 2, sw + 2, x0 - this.res, z0 - this.res, TILE_M + 2 * this.res, TILE_M + 2 * this.res);
+    // the ground for this tile, upscaled with smoothing from its base-resolution source region (1 px margin), clipped
+    // to the map like drawImage clips a source rect (destination shrunk to match)
+    {
+      const ax = Math.max(0, sx - 1), az = Math.max(0, sz - 1), bx = Math.min(this.W, sx + sw + 1), bz = Math.min(this.H, sz + sw + 1);
+      if (bx > ax && bz > az) {
+        const src = this._srcCanvas || (this._srcCanvas = document.createElement('canvas'));
+        if (src.width !== bx - ax || src.height !== bz - az) { src.width = bx - ax; src.height = bz - az; }
+        const sctx = src.getContext('2d'); sctx.putImageData(this._groundPixels(sctx, ax, az, bx - ax, bz - az), 0, 0);
+        const k = this.res; // metres per base pixel
+        ctx.drawImage(src, 0, 0, bx - ax, bz - az, this.xmin + ax * k, this.zmin + az * k, (bx - ax) * k, (bz - az) * k);
+      }
+    }
     ctx.save();
     ctx.beginPath(); ctx.rect(x0, z0, TILE_M, TILE_M); ctx.clip();
     this._drawFeatures(ctx, this.bB[k], this.bR[k], TILE_PPM);
@@ -214,7 +267,7 @@ export class MapData {
       for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) list.push([tx, tz, Math.abs(tx - ctx0) + Math.abs(tz - ctz0)]);
       list.sort((a, b) => a[2] - b[2]);
       // never request more tiles than the cache can hold (that would thrash); base raster covers the rest
-      if (list.length > MAX_TILES - 6) list.length = 0;
+      if (list.length > this.cap - 3) list.length = 0;
       for (const [tx, tz] of list) {
         const t = this.tile(tx, tz);
         if (t) ctx.drawImage(t, this.xmin + tx * TILE_M, this.zmin + tz * TILE_M, TILE_M, TILE_M);
