@@ -114,10 +114,10 @@ export class Walkways {
     return this._onEdges(x, z, edges, pad);
   }
 
-  /** somewhere a person can stand: on land, outside buildings, off the carriageway, clear of props */
+  /** somewhere a person can stand: on land, outside buildings, off the carriageway, clear of trees and props */
   standable(x, z) {
     const g = this.game;
-    return !g.city.isWater(x, z) && !g.safe.insideBuilding(x, z, 0.45) && !this.onRoad(x, z) && g.safe.clear(x, z, { pad: 0.45 });
+    return !g.city.isWater(x, z) && !g.safe.insideBuilding(x, z, 0.45) && !this.onRoad(x, z) && !g.treeColliders?.trunkNear(x, z, 1.1) && g.safe.clear(x, z, { pad: 0.45 });
   }
 
   /** walks with a point within r of (x,z), each once. `out` is cleared and reused. */

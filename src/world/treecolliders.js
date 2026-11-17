@@ -25,6 +25,17 @@ export class TreeColliders {
     this._cand = [];
   }
 
+  /** is a tree trunk within r of (x,z)? (any tree, collider or not: for placing people) */
+  trunkNear(x, z, r) {
+    const pos = this.veg.pos;
+    for (let gx = Math.floor((x - r) / CELL); gx <= Math.floor((x + r) / CELL); gx++)
+      for (let gz = Math.floor((z - r) / CELL); gz <= Math.floor((z + r) / CELL); gz++) {
+        const a = this.grid.get(gx * 100003 + gz); if (!a) continue;
+        for (const i of a) if (Math.hypot(pos[i * 2] - x, pos[i * 2 + 1] - z) < r) return true;
+      }
+    return false;
+  }
+
   update(dt) {
     this.t -= dt;
     const p = this.game.player, v = p.vehicle;

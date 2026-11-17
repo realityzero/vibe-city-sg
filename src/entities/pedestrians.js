@@ -222,7 +222,7 @@ export class Pedestrians {
     return p;
   }
   /** a free spot for one more person near (x,z) */
-  freeSpot(x, z) { const g = this.game; return !g.city.isWater(x, z) && !g.safe.insideBuilding(x, z, 0.35) && !this.walkways.onRoad(x, z, 0.4); }
+  freeSpot(x, z) { const g = this.game; return !g.city.isWater(x, z) && !g.safe.insideBuilding(x, z, 0.35) && !this.walkways.onRoad(x, z, 0.4) && !g.treeColliders?.trunkNear(x, z, 0.9); }
 
   /** open pedestrian paving (squares, promenades): strollers criss-crossing it, people waiting, small groups */
   spawnPlaza() {
@@ -297,7 +297,7 @@ export class Pedestrians {
     const cs = Math.cos(h.yaw), sn = Math.sin(h.yaw), at = (lx, lz) => [h.x + lx * cs + lz * sn, h.z - lx * sn + lz * cs];
     const face = h.yaw + Math.PI; // the shelter opens to the road
     const seats = [-1.5, -0.4, 0.7].filter(() => Math.random() < 0.45);
-    for (const lx of seats) { const [x, z] = at(lx, -0.72); const p = this.addMember(c, this.pickVariant(x, z, this.game.sky.time), x, z, face, Math.random() < 0.4 ? A.sit_eat : A.sit); p.sitting = true; p.look.acc &= ~CROWD_ACC.trolley; }
+    for (const lx of seats) { const [x, z] = at(lx, -0.72); if (!this.freeSpot(x, z)) continue; const p = this.addMember(c, this.pickVariant(x, z, this.game.sky.time), x, z, face, Math.random() < 0.4 ? A.sit_eat : A.sit); p.sitting = true; p.look.acc &= ~CROWD_ACC.trolley; }
     for (let i = 0, n = Math.floor(Math.random() * 3); i < n; i++) {
       const [x, z] = at(rnd(-2.2, 2.4), rnd(0.2, 1.1));
       if (this.freeSpot(x, z)) this.addMember(c, this.pickVariant(x, z, this.game.sky.time), x, z, face + rnd(-0.6, 0.6), Math.random() < 0.5 ? A.idle_phone : A.idle);
@@ -348,20 +348,21 @@ export class Pedestrians {
   /** something worth filming happened at pos: the people around turn, raise their phones and record */
   spectacle(pos, kind, followPlayer = false) {
     const V = this.viewer; if (Math.hypot(pos.x - V.x, pos.z - V.z) > this.keep) return;
-    let n = 0, voice = null;
+    const near = [];
     for (const p of this.peds) {
-      if (p.pose || p.script || p.hailing || !['walk', 'idle', 'stand'].includes(p.state)) continue;
+      if (p.pose || p.script || p.hailing || p.crossing || !['walk', 'idle', 'stand'].includes(p.state)) continue;
       const d = Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z);
       if (d > 45) continue;
-      if (kind === 'explosion' && d < 10) { this.flee(p, pos, 4); continue; }
-      if (Math.random() > (kind === 'stunt' ? 0.75 : 0.6)) continue;
-      p.film = { x: pos.x, z: pos.z, follow: followPlayer, delay: rnd(0.3, 2), back: p.state, yaw: p.yaw };
-      p.state = 'film'; p.t = rnd(6, 12); n++;
-      if (!voice || d < voice.d) voice = { p, d };
+      if (kind === 'explosion' && d < 10) this.flee(p, pos, 4);
+      else if (Math.random() < (kind === 'stunt' ? 0.75 : 0.6)) near.push([d, p]);
     }
-    if (!n) return;
-    this.game.events.emit('filmed', { count: n, pos: pos.clone(), kind });
-    if (voice && kind !== 'hit') this.game.bark?.('hit', voice.p.pos, 3, { text: kind === 'stunt' ? 'You think this one Vice City is it?' : 'Walao, so fast for what?' });
+    if (!near.length) return;
+    // the nearest dozen or so get their phones out; the rest carry on
+    near.sort((a, b) => a[0] - b[0]);
+    const filmers = near.slice(0, 16);
+    for (const [, p] of filmers) { p.film = { x: pos.x, z: pos.z, follow: followPlayer, delay: rnd(0.3, 2), back: p.state, yaw: p.yaw }; p.state = 'film'; p.t = rnd(6, 12); }
+    this.game.events.emit('filmed', { count: filmers.length, pos: pos.clone(), kind });
+    if (kind !== 'hit') this.game.bark?.(kind === 'stunt' ? 'hit' : 'nearmiss', filmers[0][1].pos, 3, { text: kind === 'stunt' ? 'You think this one Vice City is it?' : 'Wah, so fast for what?' });
   }
 
   flee(p, from, t = 4) { p.state = 'flee'; p.t = t; p.fleeFrom = (p.fleeFrom || new THREE.Vector3()).copy(from); }

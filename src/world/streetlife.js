@@ -142,9 +142,9 @@ export class StreetLife {
     return null;
   }
 
-  /** people near (x,z) going about their business, nearest first (recruits for a scene) */
+  /** people near (x,z) walking along a footpath (not mid-crossing), nearest first: recruits for a scene */
   bystanders(x, z, r, n, exclude = []) {
-    return this.peds.peds.filter(p => !p.pose && !p.script && !p.hailing && !p.cluster && p.state === 'walk' && !exclude.includes(p) && Math.hypot(p.pos.x - x, p.pos.z - z) < r)
+    return this.peds.peds.filter(p => !p.pose && !p.script && !p.hailing && !p.cluster && p.state === 'walk' && !p.target && !exclude.includes(p) && Math.hypot(p.pos.x - x, p.pos.z - z) < r)
       .sort((a, b) => Math.hypot(a.pos.x - x, a.pos.z - z) - Math.hypot(b.pos.x - x, b.pos.z - z)).slice(0, n);
   }
 
@@ -215,7 +215,7 @@ export class StreetLife {
     this.film(this.bystanders(s.x, s.z, 20, 2), () => flock[0].c.pos, 10);
     let t = 0;
     return {
-      at: new THREE.Vector3().lerpVectors(a, b, 0.5),
+      at: a,
       update: dt => {
         t += dt;
         const obstacles = g.traffic?.obstacles;
