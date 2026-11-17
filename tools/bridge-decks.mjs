@@ -175,6 +175,21 @@ export function elevateBridges(roadsRaw, isWaterAt) {
         L.how[end] = how; L.span[end] = r;
       }
     }
+    // stairs often hang off a short landing way: the lift carries on down a single path of ground footways (up to the
+    // length a stair needs), or the landing's foot would drag the deck down into a notch
+    if (md === 'foot') {
+      const wayLen = r => { let l = 0; for (let i = 1; i < r.pts.length; i++) l += Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]); return l; };
+      const queue = [...links.values()].filter(L => L.how.includes('attach') && !(L.how[0] && L.how[1]));
+      while (queue.length) {
+        const L = queue.pop(), depth = (L.depth || 0) + wayLen(L.r);
+        if (depth > 12) continue;
+        const next = touch.get(kp(L.how[0] ? L.r.pts[L.r.pts.length - 1] : L.r.pts[0])).filter(o => o.r !== L.r && !o.r.bridge && o.r.foot);
+        if (next.length !== 1 || links.has(next[0].r) || !isEnd(next[0].r, next[0].i)) continue;
+        const N = { r: next[0].r, how: [null, null], span: [null, null], depth }, end = next[0].i === 0 ? 0 : 1;
+        N.how[end] = 'attach'; N.span[end] = L.span[0] || L.span[1];
+        links.set(N.r, N); queue.push(N);
+      }
+    }
     // a ground way between two spans (both its ends on a deck) joins them into one structure; one long enough to come
     // down to the ground in between does so (it is at grade there, by OSM)
     const below = roadCrossings(spans, roadsRaw), roadRoots = new Set([...below.keys()].map(find));
@@ -279,8 +294,8 @@ export function elevateBridges(roadsRaw, isWaterAt) {
 }
 
 /**
- * Checks the final ways (pts, y, bridge, drive, hw): no deck may dip to the ground between raised neighbours, step
- * at a shared vertex, or climb steeper than its grade. Returns a list of problems (empty = fine).
+ * Checks the final ways (pts, y, bridge, drive, hw): no deck may dip to the ground between raised neighbours, notch,
+ * step at a shared vertex, or climb steeper than its grade. Returns a list of problems (empty = fine).
  */
 export function validateBridges(roads) {
   const bad = [], at = new Map();
@@ -298,6 +313,17 @@ export function validateBridges(roads) {
     let high = 0;
     for (const o of l) for (const dir of [-1, 1]) if (reach(o.r, o.i, dir) > 3) high++;
     if (high >= 2) bad.push(`dip ${fmt(r.pts[i])}: deck at ${r.y[i].toFixed(1)} m between raised spans (${l.map(o => o.r.name || o.r.hw).join(', ')})`);
+  }
+  // notch: a deck vertex 1.5 m below the deck on both sides of it within 15 m (a stair or side path dragging it down)
+  for (const r of roads) {
+    if (!r.bridge) continue;
+    const S = [0]; for (let i = 1; i < r.pts.length; i++) S.push(S[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
+    for (let i = 1; i < r.pts.length - 1; i++) {
+      let L = 0, R = 0;
+      for (let j = i - 1; j >= 0 && S[i] - S[j] < 15; j--) L = Math.max(L, r.y[j]);
+      for (let j = i + 1; j < r.pts.length && S[j] - S[i] < 15; j++) R = Math.max(R, r.y[j]);
+      if (Math.min(L, R) - r.y[i] > 1.5) { bad.push(`notch ${fmt(r.pts[i])} ${r.name || r.hw}: ${r.y[i].toFixed(1)} m between ${L.toFixed(1)} and ${R.toFixed(1)}`); break; }
+    }
   }
   // gradient and kinks along every deck (slack for the rounding to decimetres)
   for (const r of roads) {
