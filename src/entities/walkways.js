@@ -24,21 +24,22 @@ export class Walkways {
     this.grid = new Map(); // cell -> walks ready to use
     this.raw = new Map();  // cell -> lines not vetted yet: { sw } road sidewalks, { r } footways
     this._stamp = 0; this._seg = { t: 0 }; this._near = []; this._edges = [];
-    // polylines are read in place: a sidewalk's Path (xyz, stride 3), a footway's [x0,z0,x1,z1,...] (stride 2)
-    for (const sw of game.roadnet.sidewalks) this._register(this.raw, { sw, p: sw.path.xyz, st: 3, done: false });
+    // polylines are read in place: a sidewalk's points are its window [i0, i1) of the road network's shared path store
+    // (xyz, stride 3), a footway's [x0,z0,x1,z1,...] its own array (stride 2)
+    for (const sw of game.roadnet.sidewalks) { const P = sw.path; this._register(this.raw, { sw, p: P.st.xyz, i0: P.o * 3, i1: (P.o + P.n) * 3, st: 3, done: false }); }
     for (const r of game.city.data.roads) {
       if ((r.c !== 8 && r.c !== 9) || r.y || r.b) continue; // elevated / bridge footways: stairs and decks are not modelled
-      this._register(this.raw, { r, p: r.p, st: 2, done: false });
+      this._register(this.raw, { r, p: r.p, i0: 0, i1: r.p.length, st: 2, done: false });
     }
   }
 
-  /** add item to every cell its polyline (item.p, stride item.st, z at +st-1) passes through */
-  _register(grid, item, p = item.p, st = item.st) {
-    const seen = new Set(), zo = st - 1;
-    for (let i = 0; i < p.length; i += st) {
+  /** add item to every cell its polyline (item.p from i0 to i1, stride item.st, z at +st-1) passes through */
+  _register(grid, item) {
+    const { p, st, i0, i1 } = item, seen = new Set(), zo = st - 1;
+    for (let i = i0; i < i1; i += st) {
       const x = p[i], z = p[i + zo];
       seen.add(cellKey(Math.floor(x / CELL), Math.floor(z / CELL)));
-      if (i + st < p.length) { // long segments cross cells without a vertex in them
+      if (i + st < i1) { // long segments cross cells without a vertex in them
         const bx = p[i + st], bz = p[i + st + zo], n = Math.ceil(Math.hypot(bx - x, bz - z) / (CELL / 2));
         for (let s = 1; s < n; s++) { const f = s / n; seen.add(cellKey(Math.floor((x + (bx - x) * f) / CELL), Math.floor((z + (bz - z) * f) / CELL))); }
       }
@@ -66,11 +67,11 @@ export class Walkways {
 
   _vet(item) {
     item.done = true;
-    const g = this.game, city = g.city, safe = g.safe, { sw, r, p, st } = item, zo = st - 1, cross = !!r?.x;
+    const g = this.game, city = g.city, safe = g.safe, { sw, r, p, st, i0, i1 } = item, zo = st - 1, cross = !!r?.x;
     // carriageways this line could touch (one lookup per line, then a few segments per sample); a sidewalk is
     // beside its own street by construction
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
-    for (let i = 0; i < p.length; i += st) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + zo]); z1 = Math.max(z1, p[i + zo]); }
+    for (let i = i0; i < i1; i += st) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + zo]); z1 = Math.max(z1, p[i + zo]); }
     const edges = this._edges; edges.length = 0;
     if (!cross) for (const l of g.roadnet.lanesNear((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + 30, this._near)) if (!l.edge.y && l.edge !== sw?.edge && !edges.includes(l.edge)) edges.push(l.edge);
     const ok = (x, z) => !city.isWater(x, z) && !safe.insideBuilding(x, z, sw ? 0 : 0.3) && !this._onEdges(x, z, edges, sw ? 0.3 : 0.2);
@@ -78,14 +79,14 @@ export class Walkways {
     const flush = () => {
       let len = 0; for (let i = 1; i < run.length; i++) len += Math.hypot(run[i][0] - run[i - 1][0], run[i][2] - run[i - 1][2]);
       if (len >= MIN_RUN) {
-        const path = new Path(run), k = path.n - 1;
+        const path = Path.fromPoints(run), k = path.n - 1;
         const w = sw ? { path, foot: false, edge: sw.edge, side: sw.side, half: 0.55 } : { path, foot: true, cross, half: Math.max(0.15, Math.min(2.5, (r.w || 2) / 2 - 0.5)) };
         w.ends = [[path.x(0), path.z(0)], [path.x(k), path.z(k)]];
         this._register(this.grid, w, path.xyz, 3);
       }
       run = [];
     };
-    for (let i = 0; i + st < p.length; i += st) {
+    for (let i = i0; i + st < i1; i += st) {
       const ax = p[i], az = p[i + zo], bx = p[i + st], bz = p[i + st + zo], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / STEP));
       for (let s = i === 0 ? 0 : 1; s <= n; s++) {
         const f = s / n, x = ax + (bx - ax) * f, z = az + (bz - az) * f;
@@ -137,8 +138,8 @@ export class Walkways {
     const seg = this._seg, res = this._snap || (this._snap = { w: null, s: 0, d: 0 });
     for (const w of this.near(x, z, r, this._nearW || (this._nearW = []))) {
       if (filter && !filter(w)) continue;
-      const P = w.path.xyz, n = w.path.n, cum = w.path.cum;
-      for (let i = 0; i < n - 1; i++) {
+      const pa = w.path, P = pa.st.xyz, cum = pa.st.cum, o0 = pa.o; // the path's window of its store
+      for (let i = o0; i < o0 + pa.n - 1; i++) {
         const d2 = segDist2(x, z, P[i * 3], P[i * 3 + 2], P[i * 3 + 3], P[i * 3 + 5], seg);
         if (d2 < bd) { bd = d2; best = w; res.s = cum[i] + (cum[i + 1] - cum[i]) * seg.t; }
       }
@@ -161,8 +162,8 @@ export class Walkways {
       }
       if (!o.foot && !w.foot) continue;
       // T-junction: the end touches the middle of another walk
-      const P = o.path.xyz, n = o.path.n, cum = o.path.cum;
-      for (let i = 0; i < n - 1; i++) {
+      const pa = o.path, P = pa.st.xyz, cum = pa.st.cum, o0 = pa.o; // the path's window of its store
+      for (let i = o0; i < o0 + pa.n - 1; i++) {
         if (segDist2(endX, endZ, P[i * 3], P[i * 3 + 2], P[i * 3 + 3], P[i * 3 + 5], seg) > 4) continue;
         const s = cum[i] + (cum[i + 1] - cum[i]) * seg.t;
         if (s > 1.5 && s < o.path.length - 1.5) { cands.push(o, s, Math.random() < 0.5 ? 1 : -1); break; }
