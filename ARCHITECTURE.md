@@ -60,7 +60,12 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   cloud raymarch ran for every pixel. The water reflection renders only when an occlusion query says water was on screen
   last frame, or roads are wet (then it mirrors about the street plane, `REFL.road`); the city swaps to cheap facade
   materials for it (`city.setReflectionMaterials`). Every light is also on `REFLECT_LAYER` (one light state for all
-  passes: no 0-light program variants, sunlit reflections, stable shadow-depth program keys).
+  passes: no 0-light program variants, sunlit reflections, stable shadow-depth program keys). On Low the reflection is
+  *lite* (`reflections: 'lite'`): quarter resolution, water only, built from one camera pose over 8 frames (an eighth
+  of the mirrored city each — dealt per pose by triangles in its frustum, the city batches as two halves of alternate
+  chunks) into a back buffer swapped in when complete, and smeared into vertical streaks by the water shader — the bay
+  at night mirrors the lit city for ~0.2-0.3 ms a frame on an M2 instead of ~1.3 ms. `tests/scratch/waterab.mjs` (A/B cost), `reflcheck.mjs` (per-slice cost),
+  `watermotion.mjs` (contact sheets of the water in motion).
 - One `scene.updateMatrixWorld()` per frame; renders inside the frame run with `matrixWorldAutoUpdate = false`.
 - The ground plane is cut into 24 m cells: all-land cells use a shader without `discard` (so early depth rejection skips
   it under roads, pavements and buildings — `discard` disables early-Z on Apple GPUs), cells touching water use the
@@ -70,7 +75,7 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
 - **Height field** (`gfx/heightfield.js`): the static city rendered once from straight above into a 2.5 m/px height
   texture at load. City materials (`patch()` in materials.js) ray-march it toward the sun beyond the shadow map's box
   (far-field shadows to ~0.9 km) and sample it for street-canyon sky occlusion; tree impostors take the sun term per
-  vertex. `?nohf` disables it.
+  vertex, the water its far-field sun shadow (no hard-edged shadow-map box on the bay). `?nohf` disables it.
 - **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude. Its
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the

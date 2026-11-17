@@ -375,5 +375,6 @@ export function buildMBS(city, quality) {
     }
   }
 
-  return { group, exclusions: ex, colliders, pois, reflective: meshes, update };
+  // (the beams mirror in the bay too)
+  return { group, exclusions: ex, colliders, pois, reflective: [...meshes, beams], update };
 }
