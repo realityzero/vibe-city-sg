@@ -33,10 +33,12 @@ export class PathStore {
   trim() { if (this.n < this.cum.length) { this.xyz = resized(this.xyz, this.n * 3); this.cum = resized(this.cum, this.n); } }
 }
 
+const NO_BENDS = new Float64Array(0);
+
 export class Path {
   // polyline in 3D with arc-length parametrisation: points o .. o+n-1 of a PathStore (written before construction)
   constructor(store, o, n) {
-    this.st = store; this.o = o; this.n = n;
+    this.st = store; this.o = o; this.n = n; this._bends = null;
     const P = store.xyz, c = store.cum;
     c[o] = 0;
     for (let i = o + 1; i < o + n; i++) c[i] = c[i - 1] + hypot(P[i * 3] - P[i * 3 - 3], P[i * 3 + 2] - P[i * 3 - 1]);
@@ -52,6 +54,25 @@ export class Path {
   z(i) { return this.st.xyz[(this.o + i) * 3 + 2]; }
   /** arc length at point i */
   arc(i) { return this.st.cum[this.o + i]; }
+  /** Where the path bends, for speed planning: [from s, to s, total turn (rad), length (m), ...]. Vertices less than
+   * 4 m apart form one bend (a finely sampled arc: its turn over its length); a lone vertex is a kink of length 0.
+   * Bends under ~2° are left out. Worked out the first time a car looks (only paths near the player ever are). */
+  bends() {
+    if (this._bends) return this._bends;
+    const P = this.st.xyz, o = this.o, out = [];
+    let sa = 0, sb = 0, th = 0, k = 0;
+    const close = () => { if (th > 0.035) out.push(sa, sb, th, k > 1 ? (sb - sa) * k / (k - 1) : 0); th = 0; k = 0; };
+    for (let i = 1; i < this.n - 1; i++) {
+      const q = (o + i) * 3, ax = P[q] - P[q - 3], az = P[q + 2] - P[q - 1], bx = P[q + 3] - P[q], bz = P[q + 5] - P[q + 2];
+      const t = Math.abs(Math.atan2(ax * bz - az * bx, ax * bx + az * bz)), s = this.arc(i);
+      if (t < 0.005) continue;
+      if (k && s - sb > 4) close();
+      if (!k) sa = s;
+      sb = s; th += t; k++;
+    }
+    close();
+    return (this._bends = out.length ? Float64Array.from(out) : NO_BENDS);
+  }
   sample(s, outPos, outDir) {
     const c = this.st.cum, p = this.st.xyz;
     s = Math.max(0, Math.min(this.length, s));
@@ -84,6 +105,13 @@ function offsetPath(st, p, ys, off, reverse = false) {
   return new Path(st, o0, n);
 }
 
+/** A junction's two-phase traffic signal: its time in the 46 s cycle follows the network's clock (one add a frame, not
+ * one per signalised junction — there are ~1200). */
+class Signal {
+  constructor(net, t0) { this.net = net; this.t0 = t0; this.cycle = 46; }
+  get t() { return (this.t0 + this.net.signalClock) % this.cycle; }
+}
+
 export class RoadNet {
   constructor(city) {
     const g = city.data.graph;
@@ -91,10 +119,11 @@ export class RoadNet {
     this.lanes = [];
     this.sidewalks = [];
     this.edges = g.edges;
-    // every lane and sidewalk point, plus room for the junction connectors (~2.6 a lane, 9 points each)
+    this.signalClock = 0; // s: every junction's signal runs off it (see Signal)
+    // every lane and sidewalk point, plus room for the junction connectors (~2.6 a lane, mostly straight: 5 points)
     let pts = 0, lanes = 0;
     for (let i = 0; i < g.edges.length; i++) { const e = g.edges[i]; lanes += e.lf + e.lb; pts += (e.p.length >> 1) * (e.lf + e.lb + (e.c <= 6 && !e.y ? 2 : 0)); }
-    this.paths = new PathStore(pts + Math.ceil(lanes * 2.6 * 9));
+    this.paths = new PathStore(pts + Math.ceil(lanes * 2.6 * 6));
     // (separate steps with index loops: the network is built once, mostly by unoptimised code, where every iterator
     // step and every double result is an object)
     for (let i = 0; i < g.edges.length; i++) this._edge(g.edges[i]);
@@ -158,7 +187,7 @@ export class RoadNet {
         }
         if (turn < -0.5 && o.idx !== 0 && o.nLanes > 1) continue;
         if (turn > 0.5 && o.idx !== o.nLanes - 1 && o.nLanes > 1) continue;
-        l.next.push({ lane: o, path: this._bezier(), turn });
+        l.next.push({ lane: o, path: this._connector(turn), turn });
       }
     }
     // dead ends: allow U-turn connectors so traffic never gets stuck
@@ -176,13 +205,24 @@ export class RoadNet {
     }
   }
 
-  /** cubic bezier connector from lane end (_p1, _d1) to lane start (_p2, _d2), handles along the lane directions */
-  _bezier() {
-    const p1 = _p1, d1 = _d1, p2 = _p2, d2 = _d2;
-    const h1 = p1.distanceTo(p2) * 0.45, h2 = -p1.distanceTo(p2) * 0.45;
+  /** Connector from lane end (_p1, _d1) to lane start (_p2, _d2): a cubic Bézier with its handles along both lanes.
+   * In a turn they reach towards the point where the two lane lines cross, sized so the curve is a near-circular arc
+   * of the radius the junction allows (left turns, from the kerb lane, come out tighter than right turns across the
+   * junction); sampled every ~7° of turn. Near-straight links (a road continuing, a lane shifting) use 0.45 chord. */
+  _connector(turn) {
+    const p1 = _p1, d1 = _d1, p2 = _p2, d2 = _d2, chord = p1.distanceTo(p2), th = Math.abs(turn);
+    let h1 = chord * 0.45, h2 = h1;
+    const dx = p2.x - p1.x, dz = p2.z - p1.z, cr = d1.x * d2.z - d1.z * d2.x;
+    if (th > 0.25 && th < 2.6 && Math.abs(cr) > 1e-3) {
+      // lane lines p1 + d1 * l1 and p2 - d2 * l2 cross at l1, l2; a circular arc's handles are k * its tangent legs.
+      // Left turns run along the kerb: 30% longer handles bow them out a little, so the inside wheels (the rear ones cut
+      // in) stay off it
+      const l1 = (dx * d2.z - dz * d2.x) / cr, l2 = (d1.x * dz - d1.z * dx) / cr;
+      if (l1 > 0.5 && l2 > 0.5 && l1 < chord * 2 && l2 < chord * 2) { const k = 4 / 3 * Math.tan(th / 4) / Math.tan(th / 2) * (turn < 0 ? 1.3 : 1); h1 = l1 * k; h2 = l2 * k; }
+    }
     const c1x = p1.x + d1.x * h1, c1y = p1.y + d1.y * h1, c1z = p1.z + d1.z * h1;
-    const c2x = p2.x + d2.x * h2, c2y = p2.y + d2.y * h2, c2z = p2.z + d2.z * h2;
-    const st = this.paths, N = 8, o0 = st.alloc(N + 1), xyz = st.xyz;
+    const c2x = p2.x - d2.x * h2, c2y = p2.y - d2.y * h2, c2z = p2.z - d2.z * h2;
+    const st = this.paths, N = Math.max(4, Math.min(16, Math.ceil(th / 0.13))), o0 = st.alloc(N + 1), xyz = st.xyz;
     for (let k = 0; k <= N; k++) {
       const t = k / N, it = 1 - t, q = (o0 + k) * 3;
       xyz[q] = it * it * it * p1.x + 3 * it * it * t * c1x + 3 * it * t * t * c2x + t * t * t * p2.x;
@@ -208,7 +248,7 @@ export class RoadNet {
         let a = Math.atan2(_d2.z, _d2.x) - ax; a = Math.abs(((a % Math.PI) + Math.PI * 1.5) % Math.PI - Math.PI / 2);
         l.phase = a < Math.PI / 4 ? 1 : 0; // 0 aligned with ref axis, 1 perpendicular
       }
-      n.signal = { t: Math.random() * 46, cycle: 46 };
+      n.signal = new Signal(this, Math.random() * 46);
     }
   }
 
@@ -238,7 +278,7 @@ export class RoadNet {
     return out;
   }
 
-  updateSignals(dt) { for (const n of this.signalNodes || (this.signalNodes = this.nodes.filter(n => n.signal))) n.signal.t = (n.signal.t + dt) % n.signal.cycle; }
+  updateSignals(dt) { this.signalClock += dt; }
   /** 'green' | 'amber' | 'red' for a lane approaching its end node */
   signalFor(lane) {
     const n = this.nodes[lane.to]; if (!n.signal) return 'none';
