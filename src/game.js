@@ -10,6 +10,7 @@ import { RoadNet } from './world/roadnet.js';
 import { Props } from './world/props.js';
 import { StreetProps } from './world/streetprops.js';
 import { StreetDetail } from './world/streetdetail.js';
+import { NightGlow } from './world/nightglow.js';
 import { SafeSpots } from './world/safespot.js';
 import { TreeColliders } from './world/treecolliders.js';
 import { Weather } from './world/weather.js';
@@ -349,6 +350,9 @@ export class Game {
     this.streetDetail = new StreetDetail(this);
     await this.streetDetail.ready;
     await this.mark('streetDetail');
+    this.nightGlow = new NightGlow(this);
+    await this.nightGlow.ready;
+    await this.mark('nightGlow');
     await brk();
     this.safe = new SafeSpots(this);
     await this.mark('safe spots');
@@ -806,6 +810,7 @@ export class Game {
     this.props?.update(dt);
     this.streetProps?.update(dt);
     this.streetDetail?.update(dt);
+    this.nightGlow?.update();
     this.landmarks?.update?.(dt, { time: this.sky.time, night: U.night.value, rain: U.rain.value, camera: this.camera, playerPos: focus, flyerSpeed: this.flyerSpeed || 1 });
     this.updateAudio(dt);
     this.updateHud(dt);
