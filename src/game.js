@@ -823,8 +823,8 @@ export class Game {
     this.R.gpuEnd();
   }
 
-  // Singlish speech bubble + voice above a world position
-  bark(kind, pos, cooldown = 2.5) {
+  // Singlish speech bubble + voice above a world position (text: a specific line; voice: the speaker's role)
+  bark(kind, pos, cooldown = 2.5, { text: line, voice } = {}) {
     const now = performance.now();
     if (now - (this._barkT || 0) < cooldown * 1000) return;
     this._barkT = now;
@@ -835,10 +835,10 @@ export class Game {
       police: ['Stop the vehicle!', 'Sir, step out of the car!', 'You are under arrest, lah!'],
     };
     const list = LINES[kind] || LINES.hit;
-    const text = list[Math.floor(Math.random() * list.length)];
+    const text = line || list[Math.floor(Math.random() * list.length)];
     const v = pos.clone().setY(pos.y + 2.1).project(this.camera);
     if (v.z < 1 && Math.abs(v.x) < 1 && Math.abs(v.y) < 1) this.ui.bark?.(text, (v.x * 0.5 + 0.5) * innerWidth, (-v.y * 0.5 + 0.5) * innerHeight);
-    this.audio?.bark?.(kind, { position: pos, text });
+    this.audio?.bark?.(kind, { position: pos, text, voice });
   }
 
   updateVehicleFx(dt) {
@@ -900,6 +900,7 @@ export class Game {
     if (P.vehicle === v) { P.exitVehicle(true); P.damage(95, 'exploded'); }
     else { const d = P.position.distanceTo(v.position); if (d < 10) P.damage(55 * (1 - THREE.MathUtils.smoothstep(d, 2, 10)), 'explosion'); }
     this.wanted.crime(1, 'Explosion', v.position);
+    this.events.emit('explosion', v.position);
   }
 
   updateAudio(dt) {
