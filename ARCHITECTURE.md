@@ -69,6 +69,46 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   Bay; `tests/gpuframe.mjs` measures per-feature render cost (interleaved A/B), `tests/gpuprof.mjs` per-draw GPU time,
   `tests/cpuprof.mjs` the hottest functions and per-system cost inside `Game.tick`.
 
+## Phones (iPhone 12 / iOS Safari): memory and touch
+iOS kills a Safari tab whose footprint passes roughly 1.5 GB on a 4 GB phone (less under pressure) — the symptom is a
+reload a few seconds into the load. What counts: the WebContent process (JS heap, typed arrays, WASM, **Web Worker
+threads**) plus what the GPU process allocates for the tab (textures, vertex buffers, IOSurfaces: 2D canvases and
+composited layers at device scale, ~12 MB per full-screen layer on an iPhone 12). JavaScriptCore lets garbage pile up
+for a while, so allocation *churn* during the load matters as well as what stays alive.
+- **City worker** (`cityBuilder.worker.js`): growable typed buffers start small (every chunk owns ~40) and grow / trim
+  with `ArrayBuffer.transfer` (old memory released at once, not at the next GC); vertices go through the positional
+  writers (`wv/sv/rv/dv`, `p1..p4`) — no object or array literal, spread or string key per vertex. Its output is
+  checked bit-identical with `tests/mobile/workerhash.mjs`; `tests/mobile/workermem.mjs` / `workerallocs.mjs` measure it.
+- Static textures drop their canvases / bitmaps after upload (`gfx/texrelease.js`); static geometry drops its arrays
+  (`gfx/geomrelease.js`) and stores unit normals as normalized `Int8x4` (also the worker's output). Vehicle atlases go
+  to the GPU at half size on Low (`setAtlasGpuScale`) — what a ~630 px wide phone render samples anyway.
+- Convolution reverbs exist only while something plays through them (`LazyReverb`): WebKit keeps ~7 MB per second of
+  stereo impulse response per `ConvolverNode`, playing or not.
+- Nothing 3D is drawn under the opaque loading screen. The warm-up upload pass keeps the lights in (no 0-light twin of
+  every program; each program is ~0.6 MB on iOS) and renders the shadow map once on its first batch (WebKit rejects
+  draws that sample a never-rendered shadow map).
+- Loading runs in task-sized slices so taps on the splash / title / loading screen are answered: `await nextTask()`
+  (`core/nextTask.js`, a MessageChannel task boundary — nested `setTimeout(0)` is clamped to 4 ms, ~1 s over a load)
+  between steps and inside the heavy ones. `await someSyncFunction()` only queues a microtask and lets no input through.
+- Static props scattered over the city (MRT kiosks, ERP / expressway gantries) are merged per material into one mesh
+  each (`gfx/mergeStatic.js`): ~120 fewer draw calls a frame. Transparent parts stay separate (sorted per mesh).
+- Static geometry normals: 8-bit normalized; facades 16-bit (glass mirrors the sky) and packed so each wall keeps its
+  `wallId` bin (the facade shader seeds weathering from the wall's orientation). `?f32normals` for A/B.
+- Cutscene line of sight (`core/visibility.js`) uses the physics world plus *sight-only* colliders the city builder
+  emits for what nothing collides with (pitched roofs, gables, arcade / void-deck ceilings, covered walkways):
+  `FILTER.sightRay` sees them, driving and walking don't.
+- Radar tiles: 12 cached during play, 40 while the full-screen map is open (trimmed when it closes).
+- Touch: the splash answers `pointerup`/`click`/`keydown` (iOS unlocks audio only in those), eats the ghost click that
+  follows, and creates the AudioContext synchronously in the gesture. Small touch controls get their own layers so the
+  full-screen overlay has no backing store.
+- Harness (`tests/mobile/`, WebKit = Safari's engine, iPhone 12 profile): `iphone.mjs` (cold start with real taps:
+  splash, title, loading, intro, stick, look, JUMP; memory per phase; `--pressure` sends WebKit's low-memory signal
+  every second as iOS does near the limit), `loadsteps.mjs` (live memory per load step, `--cats` for GPU-process
+  categories), `longtasks.mjs` / `cpuwindow.mjs` (load tasks at 1.6x CPU throttle ≈ A14), `visual.mjs` (PSNR A/B of
+  fixed views against a variant or another build), `gpusplit.mjs` (frame cost by subsystem at phone settings),
+  `gpubuffers.mjs`, `drawcalls.mjs`, `textures.mjs`, `programs.mjs`, `uilayers.mjs`, `census.mjs`, `allocs.mjs`,
+  `workermem.mjs` / `workerallocs.mjs` / `workerhash.mjs`, `steptimes.mjs` (load time at 1.6x), `wkattr.mjs`.
+
 ## Physics, driving and placement
 - Physics steps at a fixed 60 Hz. Bodies are drawn at `lerp(previous, current, alpha)` (`PoseInterp` in physics.js,
   captured in `onPostStep`), so motion is smooth at any refresh rate; Tommy is seated after the vehicles sync. Vehicle
