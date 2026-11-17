@@ -225,7 +225,9 @@ export class City {
     };
     const mk = (q, shore) => {
       const m = new THREE.Mesh(build(q), createGroundMaterial(tex, M, { shore }));
-      m.receiveShadow = true; m.layers.enable(REFLECT_LAYER); m.name = shore ? 'groundShore' : 'ground';
+      // (not on REFLECT_LAYER: a sheet facing up is never seen from under the mirror plane — ~90k triangles a
+      // reflection for nothing)
+      m.receiveShadow = true; m.name = shore ? 'groundShore' : 'ground';
       // drawn after everything opaque that covers it (roads, footways, buildings, trees)
       m.renderOrder = 0.4; m.matrixAutoUpdate = false;
       this.group.add(m); return m;
