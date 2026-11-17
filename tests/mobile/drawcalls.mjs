@@ -1,9 +1,10 @@
 // Draw calls per frame by object and pass (main / shadow / reflection / post) at phone settings, while driving.
-//   node tests/mobile/drawcalls.mjs [x] [z] [--foot]   (--foot: stay at the spawn on foot instead of driving)
+//   node tests/mobile/drawcalls.mjs [x] [z] [--foot] [--url http://127.0.0.1:4173/]   (--foot: stay at the spawn on foot)
 import { launch } from './lib.mjs';
-const [x = '-60', z = '1000'] = process.argv.slice(2);
+const ai = process.argv.indexOf('--url'), URL0 = ai > 0 ? process.argv[ai + 1] : 'http://127.0.0.1:4173/';
+const [x = '-60', z = '1000'] = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--url');
 const h = await launch('chromium', { exclusive: false });
-await h.page.goto('http://127.0.0.1:4173/?skipTitle&newgame&freeroam=8&q=low&fixedres', { waitUntil: 'load' });
+await h.page.goto(URL0 + '?skipTitle&newgame&freeroam=8&q=low&fixedres', { waitUntil: 'load' });
 await h.page.waitForFunction(() => window.__game?.worldReady && __game.state === 'play', null, { timeout: 300000 });
 if (!process.argv.includes('--foot')) await h.page.evaluate(([x, z]) => { const g = __game; void g.debugTp(+x, +z, 0); void g.debugCar('infernus'); g.autopilot.engage({ x: 900, z: 250 }); }, [x, z]);
 await h.page.waitForTimeout(6000);
