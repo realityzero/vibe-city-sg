@@ -170,8 +170,10 @@ function waterJets(jets) {
       #include <common>
       #include <logdepthbuf_pars_vertex>
       attribute vec4 seed, launch, vel; attribute vec2 drop; uniform float uTime, uPxH;
-      varying float vA;
+      varying float vA, vGlint;
       void main() {
+        // a few droplets at a time catch the light and flash
+        vGlint = step(0.86, fract(seed.w * 17.0 + uTime * (0.6 + seed.x)));
         float uLand = vel.w, uWater = drop.y;
         float life = uLand * 1.25;
         float t = fract(uTime / life + seed.x) * life;
@@ -192,14 +194,14 @@ function waterJets(jets) {
       }`,
     fragmentShader: /* glsl */`
       #include <logdepthbuf_pars_fragment>
-      varying float vA; uniform float uNight;
+      varying float vA, vGlint; uniform float uNight;
       void main() {
         #include <logdepthbuf_fragment>
         vec2 c = gl_PointCoord - 0.5; float d = dot(c, c);
         if (d > 0.25) discard;
-        float a = (1.0 - d * 4.0) * 0.55 * vA;
-        // unlit spray: at night it catches the floodlights on the deck (warm white)
-        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.85, 0.78, 0.66), uNight);
+        float a = (1.0 - d * 4.0) * (0.2 + 0.5 * vGlint) * vA;
+        // unlit spray: at night it catches the floodlights on the deck (warm white); glints go past white for the bloom
+        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.6, 0.55, 0.46), uNight) * (1.05 + 1.6 * vGlint);
         gl_FragColor = vec4(col, a);
       }`,
   });
@@ -209,15 +211,28 @@ function waterJets(jets) {
   const tubeMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: { uTime: U.time, uNight: U.night },
-    vertexShader: '#include <common>\n#include <logdepthbuf_pars_vertex>\nvarying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);\n#include <logdepthbuf_vertex>\n}',
+    vertexShader: /* glsl */`#include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec2 vUv; varying vec3 vN, vV;
+      void main(){
+        vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalMatrix * normal; vV = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
+      }`,
+    // a rope of water, not a solid arc: clear through its middle, white where the sheet is seen edge-on, with aerated
+    // streaks racing along it (past white: they catch the bloom)
     fragmentShader: /* glsl */`#include <logdepthbuf_pars_fragment>
-      varying vec2 vUv; uniform float uTime, uNight;
+      varying vec2 vUv; varying vec3 vN, vV; uniform float uTime, uNight;
       float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
       void main(){
         #include <logdepthbuf_fragment>
-        float n = h(floor(vec2(vUv.x * 6.0, vUv.y * 40.0 - uTime * 30.0)));
-        float a = (0.35 + 0.35 * n) * (1.0 - vUv.y * 0.35);
-        vec3 col = mix(vec3(0.95,0.97,1.0), vec3(0.88,0.8,0.68), uNight);
+        float rim = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+        float n = h(floor(vec2(vUv.x * 8.0, vUv.y * 48.0 - uTime * 34.0)));
+        float streak = smoothstep(0.7, 1.0, n);
+        float along = vUv.y * 0.25; // 0 at the mouth, 1 at the water
+        float a = (0.05 + 0.45 * rim * rim + 0.25 * streak) * (1.0 - along * 0.75);
+        vec3 col = mix(vec3(0.9, 0.96, 1.0), vec3(0.62, 0.56, 0.48), uNight) * (0.95 + 0.5 * rim + 1.3 * streak);
         gl_FragColor = vec4(col, a); }`,
   });
   const stream = new THREE.Mesh(mergeGeometries(tubes, false), tubeMat);
@@ -302,7 +317,7 @@ export function buildMerlion(city, quality, renderer, env = {}) {
     const dir = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     jets.push({
       mouth: mouth.clone().applyMatrix4(F), v0: dir.multiplyScalar(7.2 * Math.sqrt(s.scale)).add(new THREE.Vector3(0, 1.6 * Math.sqrt(s.scale), 0)),
-      count: s.hero ? 700 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1,
+      count: s.hero ? 500 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1,
     });
     pois.push({ id: s.id, name: s.name, x: s.x, y: 0, z: s.z });
     colliders.push({ type: 'cylinder', center: [s.x, 4.3 * s.scale, s.z], radius: 2.5 * s.scale, halfHeight: 4.3 * s.scale });

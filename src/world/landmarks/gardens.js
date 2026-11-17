@@ -265,7 +265,10 @@ export function buildGardens(city, quality) {
 
   // ---- exclusions: OSM supertree parts, skyway (rendered here), domes
   const grove = city.buildings.filter(b => b.c === 0x76c82e);
-  const exclusions = exclusionsForBuildings([...grove, ...domeExclusions]);
+  // two untagged garden structures by the grove (a 45 m curved screen, a round kiosk) the city drew as 4-storey
+  // brick shophouses in the middle of the gardens
+  const fillers = city.buildings.filter(b => b.id === 7200 || b.id === 6838);
+  const exclusions = exclusionsForBuildings([...grove, ...domeExclusions, ...fillers]);
 
   const colliders = trees.map(([x, z, h]) => ({ type: 'cylinder', center: [x, h * 0.3, z], radius: 2.6 * h / ST_H, halfHeight: h * 0.3 }));
   for (const d of [fd, cf]) if (d) { const c = areaCentroid(ringOf(d)); colliders.push({ type: 'cylinder', center: [c[0], 12, c[1]], radius: d === fd ? 45 : 38, halfHeight: 12 }); }

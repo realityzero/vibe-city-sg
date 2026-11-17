@@ -1,13 +1,10 @@
-// Heritage & Chinatown landmarks: The Fullerton Hotel (Doric colonnade), Lau Pa Sat (octagonal Victorian market +
-// clock tower), Raffles Hotel (white colonial, red roofs), Cavenagh & Anderson bridges, Buddha Tooth Relic Temple,
-// Sri Mariamman Temple gopuram, Clarke Quay riverside canopies.
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+// Heritage & Chinatown landmarks: Lau Pa Sat (octagonal Victorian market + clock tower), Raffles Hotel (white colonial,
+// red roofs), Cavenagh & Anderson bridges, Buddha Tooth Relic Temple, Sri Mariamman Temple gopuram.
 import {
-  THREE, U, Bucket, materials, facadeMaterial, nightGlowMaterial, extrudeFootprint, ringOf, areaCentroid, signedArea, centroidOf,
-  exclusionsForBuildings, circlePoly, rng, lerp, strut, tubeAlong, canvasTexture, pointInRing,
+  THREE, Bucket, materials, facadeMaterial, nightGlowMaterial, extrudeFootprint, ringOf, areaCentroid, signedArea, centroidOf,
+  exclusionsForBuildings, rng, strut, tubeAlong, canvasTexture, pointInRing,
 } from './common.js';
 
-const FULLERTON = [[413.3, 86], [413.2, 78.7], [413.1, 71.5], [417.3, 64.9], [432.7, 38.8], [438.3, 29.5], [443.9, 23.1], [462.3, 23.7], [470.8, 28.7], [470.9, 33.4], [473.4, 33.9], [474.2, 56.6], [479.7, 56.6], [479.6, 62.2], [487.9, 62.3], [491.2, 69.9], [492.3, 79.1], [491.8, 90.5], [487.9, 101.4], [479.2, 101.3], [479, 106.7], [473, 106.7], [470.9, 137], [468.3, 137.2], [467.9, 142.3], [464.2, 142.4], [465.1, 147.3], [455.1, 149.3], [445.2, 151.3], [444.3, 146.3], [440.3, 147.2], [434.3, 134], [431.6, 135.3], [413.7, 95.7], [417.5, 93.5]];
 const LAUPASAT = [[128, 700.1], [135.6, 727.4], [163.1, 742.6], [187.7, 733], [200.7, 711.6], [198.7, 697.4], [196.9, 685], [184.3, 677.5], [171.9, 670], [154.6, 673.7], [142, 676.4], [134.6, 689]];
 const BUDDHA = [[-498.5, 609.3], [-557.1, 577.4], [-564.2, 590.3], [-572.3, 605], [-514.1, 636.6], [-512.8, 634.3], [-502.3, 639.9], [-495.7, 627.3], [-489.3, 616.2], [-499.3, 610.7]];
 const CAVENAGH = { a: [357.4, 20.4], b: [388.1, 74.3], h: 2.2 };
@@ -44,42 +41,6 @@ function hipRoof(ring, y0, rise, shrink = 0.35, overhang = 1.04) {
   }
   g.computeVertexNormals();
   return g;
-}
-
-function fullerton(B) {
-  const M = materials();
-  const granite = facadeMaterial({ wall: 0xd9d1bf, glass: 0x3a3f44, cell: [3.9, 4.4], frame: [0.28, 0.25, 0.22], lit: 0.65, seed: 31, warm: 0xffd9a0, litIntensity: 2.0, wallRough: 0.8, glassMetal: 0.5 });
-  B.add(granite, extrudeFootprint(FULLERTON, 0, 25));
-  B.add(M.stone, extrudeFootprint(insetRing(FULLERTON, 1.012), 25, 26.6));            // cornice
-  B.add(granite, extrudeFootprint(insetRing(FULLERTON, 0.965), 26.6, 30.5));          // attic storey
-  B.add(M.stone, extrudeFootprint(insetRing(FULLERTON, 0.975), 30.5, 31.3));
-  // rooftop glass lighthouse pavilion
-  const c = areaCentroid(FULLERTON);
-  const lh = new THREE.CylinderGeometry(4, 4, 4, 16); lh.translate(c[0] + 18, 33, c[1] - 4); B.add(M.darkGlass, lh);
-  const lhr = new THREE.ConeGeometry(4.6, 2, 16); lhr.translate(c[0] + 18, 36, c[1] - 4); B.add(M.roofGrey, lhr);
-  // giant Doric colonnade on the waterfront facades (east: bay, north: river)
-  const col = new THREE.CylinderGeometry(0.62, 0.72, 15, 14); col.translate(0, 14.5, 0);
-  const cap = new THREE.BoxGeometry(1.8, 0.6, 1.8); cap.translate(0, 22.3, 0);
-  const pedestal = new THREE.BoxGeometry(1.9, 1.4, 1.9); pedestal.translate(0, 6.3, 0);
-  for (const e of edgesOf(FULLERTON)) {
-    if (e.l < 10) continue;
-    const faceEast = e.n[0] > 0.55, faceNorth = e.n[1] < -0.55, faceSouth = e.n[1] > 0.55;
-    if (!faceEast && !faceNorth && !faceSouth) continue;
-    const nCols = Math.floor(e.l / 4.6);
-    const ang = Math.atan2(e.d[0], e.d[1]);
-    for (let i = 0; i < nCols; i++) {
-      const t = (i + 0.5) / nCols;
-      const x = e.p[0] + e.d[0] * e.l * t + e.n[0] * 1.6, z = e.p[1] + e.d[1] * e.l * t + e.n[1] * 1.6;
-      for (const g of [col, cap, pedestal]) { const gg = g.clone(); gg.rotateY(ang); gg.translate(x, 0, z); B.add(M.stone, gg); }
-    }
-    // entablature band in front of the columns
-    const band = new THREE.BoxGeometry(e.l, 2.2, 2.4); band.rotateY(ang + Math.PI / 2);
-    band.translate((e.p[0] + e.q[0]) / 2 + e.n[0] * 1.3, 23.7, (e.p[1] + e.q[1]) / 2 + e.n[1] * 1.3);
-    B.add(M.stone, band);
-    const podium = new THREE.BoxGeometry(e.l, 5.6, 2.6); podium.rotateY(ang + Math.PI / 2);
-    podium.translate((e.p[0] + e.q[0]) / 2 + e.n[0] * 1.3, 2.8, (e.p[1] + e.q[1]) / 2 + e.n[1] * 1.3);
-    B.add(M.stone, podium);
-  }
 }
 
 function lauPaSat(B) {
@@ -216,87 +177,9 @@ function gopuram(B, base) {
   for (let i = -2; i <= 2; i++) { const k = new THREE.ConeGeometry(0.28, 1.2, 8); k.translate(i * 0.9, y + 2.2, 0); k.rotateY(ang); k.translate(c[0], 0, c[1]); B.add(materials().gold, k); }
 }
 
-// Clarke Quay: the godown blocks on the river painted their real bright colours (the city builder draws them), and the
-// riverside walk in front of them shaded by translucent "lily pad" umbrellas that glow at night in slowly cycling pinks,
-// blues and violets with a brighter rim.
-const CQ_FRONT = [[-434.6, -276.5], [-444.8, -280.4], [-453.2, -287.3], [-463, -313.1], [-466.1, -329.3], [-468.7, -342.4], [-470.1, -349.8], [-474.3, -391.2], [-477.6, -403], [-489, -414.5], [-503, -425.5], [-514.2, -435.1], [-539, -455.5]];
-const CQ_PAINT = [[1038, 0xa8d83c], [1039, 0xf28c2c], [1040, 0xe24a9e], [1041, 0xf4c63a], [8356, 0x30c2c6], [8358, 0x9a62d6], [13, 0xf2683c]];
-const UMB_SPACING = 12.5, UMB_H = 3.8;
-
-function umbrellaMaterial() {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xf3f1f6, roughness: 0.5, metalness: 0.0, side: THREE.DoubleSide, transparent: true, opacity: 0.4, depthWrite: false });
-  mat.onBeforeCompile = sh => {
-    sh.uniforms.uNight = U.night; sh.uniforms.uTime = U.time;
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float phase;\nvarying float vRim, vPhase;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRim = uv.y; vPhase = phase;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uNight, uTime;\nvarying float vRim, vPhase;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat rim = smoothstep(0.86, 0.97, vRim);\ndiffuseColor.a = mix(diffuseColor.a, 0.95, rim);')
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-{
-  // hue drifting between blue, violet and pink, each umbrella a little out of step with its neighbours
-  float h = mix(0.6, 0.95, 0.5 + 0.5 * sin(6.2832 * (uTime * 0.02 + vPhase)));
-  vec3 c = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-  c = mix(vec3(1.0), c, 0.78);
-  totalEmissiveRadiance = c * (0.16 + 1.8 * rim) * uNight;
-}`);
-  };
-  mat.customProgramCacheKey = () => 'lmumbrella';
-  return mat;
-}
-
-/** Umbrellas along the riverside walk in front of the godowns: each sized to the walk between the building frontage and
- * the quay edge, centred on it. Returns { mesh, spots: [{x, z, r}] }. */
-function clarkeQuayUmbrellas(B, city, isWater) {
-  const xs = CQ_FRONT.map(p => p[0]), zs = CQ_FRONT.map(p => p[1]);
-  const box = [Math.min(...xs) - 40, Math.max(...xs) + 40, Math.min(...zs) - 40, Math.max(...zs) + 40];
-  const rings = city.buildings.filter(b => { const [x, z] = centroidOf(ringOf(b)); return x > box[0] && x < box[1] && z > box[2] && z < box[3] && !(b.m > 3); }).map(ringOf);
-  const walkable = (x, z) => !isWater(x, z) && !rings.some(r => pointInRing(x, z, r));
-  const spots = [];
-  let s0 = 0;
-  for (let i = 0; i < CQ_FRONT.length - 1; i++) {
-    const [ax, az] = CQ_FRONT[i], [bx, bz] = CQ_FRONT[i + 1], l = Math.hypot(bx - ax, bz - az);
-    const dx = (bx - ax) / l, dz = (bz - az) / l;
-    let s = s0;
-    for (; s < l; s += UMB_SPACING) {
-      const px = ax + dx * s, pz = az + dz * s;
-      // the river side of the frontage, then the walk across it: the run of open ground that ends at the water
-      let wx = -dz, wz = dx;
-      const reach = sgn => { for (let k = 1; k <= 30; k++) if (isWater(px + wx * sgn * k, pz + wz * sgn * k)) return k; return 99; };
-      if (reach(-1) < reach(1)) { wx = -wx; wz = -wz; }
-      let a = null, e = null;
-      for (let t = -20; t <= 30; t += 0.5) {
-        const x = px + wx * t, z = pz + wz * t;
-        if (isWater(x, z)) { if (a !== null) e = t - 1.2; break; } // (stop short of the quay wall)
-        if (walkable(x, z)) { if (a === null) a = t; } else a = null;
-      }
-      if (a === null || e === null || e - a < 6) continue;
-      const r = Math.min(4.3, (e - a) / 2 - 0.4), m = (a + e) / 2;
-      const x = px + wx * m, z = pz + wz * m;
-      if (spots.some(p => Math.hypot(p.x - x, p.z - z) < p.r + r + 1)) continue;
-      spots.push({ x, z, r });
-    }
-    s0 = s - l;
-  }
-  // a shallow translucent dome with a lip (uv.y: 0 at the pole, 1 at the rim), on a slim pole
-  const prof = []; for (let i = 0; i <= 8; i++) { const t = i / 8; prof.push(new THREE.Vector2(Math.max(0.05, t), 1.1 * (1 - t * t) - (t > 0.92 ? (t - 0.92) * 2.5 : 0))); }
-  const parts = [];
-  spots.forEach((p, i) => {
-    const g = new THREE.LatheGeometry(prof, 20); g.scale(p.r, 1, p.r); g.translate(p.x, UMB_H, p.z);
-    g.setAttribute('phase', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill((i * 0.37) % 1), 1));
-    parts.push(g);
-    B.add(materials().darkSteel, new THREE.CylinderGeometry(0.1, 0.13, UMB_H + 0.9, 6).translate(p.x, (UMB_H + 0.9) / 2, p.z));
-  });
-  const mesh = parts.length ? new THREE.Mesh(mergeGeometries(parts, false), umbrellaMaterial()) : null;
-  if (mesh) { mesh.name = 'clarke-quay-umbrellas'; mesh.receiveShadow = true; }
-  return { mesh, spots };
-}
-
-export function buildHeritage(city, quality, renderer, env = {}) {
+export function buildHeritage(city) {
   const M = materials();
   const B = new Bucket();
-  fullerton(B);
   const lps = lauPaSat(B);
   const rafflesList = raffles(B, city);
   bridges(B, M);
@@ -305,42 +188,31 @@ export function buildHeritage(city, quality, renderer, env = {}) {
   let gopBase = { c: [-401.2, 484.2], ang: 0 };
   if (gop) { const r = ringOf(gop); const c = centroidOf(r); const dx = r[1][0] - r[0][0], dz = r[1][1] - r[0][1]; gopBase = { c, ang: Math.atan2(-dz, dx) }; }
   gopuram(B, gopBase);
-  const umbrellas = env.isWater ? clarkeQuayUmbrellas(B, city, env.isWater) : { mesh: null, spots: [] };
   const meshes = B.build({ name: 'heritage' });
   const group = new THREE.Group(); group.name = 'Heritage';
   meshes.forEach(m => group.add(m));
-  if (umbrellas.mesh) group.add(umbrellas.mesh);
 
-  // exclusions: Fullerton parts + outline, Lau Pa Sat parts, Raffles wings, Buddha Tooth, gopuram base
+  // exclusions: Lau Pa Sat parts, Raffles wings, Buddha Tooth, gopuram base
   const byIds = ids => city.buildings.filter(b => ids.includes(b.id));
   const nearC = (x, z, r, filt = () => true) => city.buildings.filter(b => { const c = centroidOf(ringOf(b)); return Math.hypot(c[0] - x, c[1] - z) < r && filt(b); });
   const exList = [
-    ...byIds([5838, 5840, 5932, 5933, 5934, 5935, 5936, 5937, 6879]),
+    ...byIds([5932, 5933, 5934, 5935, 5936, 5937, 6879]),
     ...nearC(lps[0], lps[1], 36, b => b.h < 15),
     ...rafflesList,
-    ...city.buildings.filter(b => /Buddha Tooth|^The Fullerton Hotel$/.test(b.n || '')),
+    ...city.buildings.filter(b => /Buddha Tooth/.test(b.n || '')),
   ];
-  const exclusions = [FULLERTON, LAUPASAT, BUDDHA, ...exclusionsForBuildings(exList)];
+  const exclusions = [LAUPASAT, BUDDHA, ...exclusionsForBuildings(exList)];
   const colliders = [];
-  for (const ring of [FULLERTON, LAUPASAT, BUDDHA]) { const c = areaCentroid(ring); const r = Math.sqrt(Math.abs(signedArea(ring)) / Math.PI) * 0.9; colliders.push({ type: 'cylinder', center: [c[0], 10, c[1]], radius: r, halfHeight: 10 }); }
-  // trimesh colliders for the irregular footprints are more precise; provide Fullerton walls as trimesh
-  {
-    const g = extrudeFootprint(FULLERTON, 0, 25);
-    colliders.splice(0, 1, { type: 'trimesh', vertices: new Float32Array(g.attributes.position.array), indices: new Uint32Array([...Array(g.attributes.position.count).keys()]) });
-  }
+  for (const ring of [LAUPASAT, BUDDHA]) { const c = areaCentroid(ring); const r = Math.sqrt(Math.abs(signedArea(ring)) / Math.PI) * 0.9; colliders.push({ type: 'cylinder', center: [c[0], 10, c[1]], radius: r, halfHeight: 10 }); }
   return {
-    group, exclusions, colliders, reflective: [...meshes, umbrellas.mesh].filter(Boolean), // (glowing umbrellas on the river)
-    paint: CQ_PAINT,
-    clearings: umbrellas.spots.map(p => ({ x: p.x, z: p.z, r: p.r + 1 })),
+    group, exclusions, colliders, reflective: meshes,
     pois: [
-      { id: 'fullerton', name: 'The Fullerton Hotel', x: 490, y: 0, z: 85 },
       { id: 'laupasat', name: 'Lau Pa Sat', x: lps[0], y: 0, z: lps[1] },
       { id: 'raffles', name: 'Raffles Hotel', x: 640, y: 0, z: -835 },
       { id: 'cavenagh', name: 'Cavenagh Bridge', x: 372.7, y: 2, z: 47.4 },
       { id: 'anderson', name: 'Anderson Bridge', x: 447, y: 2, z: -33 },
       { id: 'buddhatooth', name: 'Buddha Tooth Relic Temple', x: -530, y: 0, z: 608 },
       { id: 'mariamman', name: 'Sri Mariamman Temple', x: gopBase.c[0], y: 0, z: gopBase.c[1] },
-      { id: 'clarkequay', name: 'Clarke Quay', x: -470, y: 0, z: -360 },
     ],
   };
 }
