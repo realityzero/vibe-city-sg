@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
-    "data": "node tools/fetch-osm.mjs && node tools/build-city.mjs"
+    "data": "node tools/fetch-osm.mjs && node tools/build-city.mjs && node tools/building-uses.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

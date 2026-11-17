@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { elevateBridges, validateBridges } from './bridge-decks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cache = join(here, 'cache');
@@ -409,84 +410,11 @@ for (const el of roadEls) {
   roadsRaw.push({ el, t, pts, drive, foot, cls, hw, lf, lb, width, oneway, bridge, layer, covered: t.covered === 'yes', name: t.name || '', footType: t.footway || '' });
 }
 
-// bridge elevation profiles: chain connected bridge ways and ramp over their exits
-for (const r of roadsRaw) r.y = new Array(r.pts.length).fill(0);
+// bridge decks (tools/bridge-decks.mjs): deck profiles on the spans, ramps lifted onto the ground ways that meet them
 {
-  const kp = p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`;
-  const nodeUse = new Map(); // key -> list of roads touching (any vertex)
-  for (const r of roadsRaw) for (const p of r.pts) { const k = kp(p); if (!nodeUse.has(k)) nodeUse.set(k, new Set()); nodeUse.get(k).add(r); }
-  const bridges = roadsRaw.filter(r => r.bridge);
-  const parent = new Map(); const find = r => { while (parent.get(r) !== r) { parent.set(r, parent.get(parent.get(r))); r = parent.get(r); } return r; };
-  for (const b of bridges) parent.set(b, b);
-  for (const b of bridges) for (const p of [b.pts[0], b.pts[b.pts.length - 1]]) for (const o of nodeUse.get(kp(p))) if (o !== b && o.bridge && o.layer === b.layer && o.drive === b.drive) parent.set(find(o), find(b));
-  const groups = new Map();
-  for (const b of bridges) { const g = find(b); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(b); }
-  for (const grp of groups.values()) {
-    // vertex graph within the group
-    const verts = new Map(); // key -> {p, adj:[[key,dist]], exit}
-    let total = 0, overWater = 0, samples = 0;
-    for (const r of grp) {
-      for (let i = 0; i < r.pts.length; i++) {
-        const k = kp(r.pts[i]);
-        if (!verts.has(k)) verts.set(k, { p: r.pts[i], adj: [], exit: false, d: Infinity });
-        if (i > 0) {
-          const k0 = kp(r.pts[i - 1]); const d = Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]);
-          verts.get(k).adj.push([k0, d]); verts.get(k0).adj.push([k, d]); total += d;
-          const n = Math.max(1, Math.round(d / 4));
-          for (let s = 0; s < n; s++) { const f = (s + 0.5) / n; samples++; if (isWaterAt(r.pts[i - 1][0] + f * (r.pts[i][0] - r.pts[i - 1][0]), r.pts[i - 1][1] + f * (r.pts[i][1] - r.pts[i - 1][1]))) overWater++; }
-        }
-      }
-      for (const p of [r.pts[0], r.pts[r.pts.length - 1]]) {
-        const users = nodeUse.get(kp(p));
-        const inGroup = [...users].filter(o => grp.includes(o)).length;
-        const outside = [...users].some(o => !grp.includes(o));
-        if (outside || inGroup === 1) verts.get(kp(p)).exit = true;
-      }
-    }
-    const waterFrac = samples ? overWater / samples : 0;
-    const layer = Math.max(1, grp[0].layer);
-    let Hh;
-    if (!grp[0].drive) Hh = waterFrac > 0.3 ? 2.2 : 5.4;          // footbridges
-    else if (waterFrac > 0.3 && layer <= 1) Hh = 1.6;             // low river bridges
-    else Hh = Math.min(22, 6.8 * layer);
-    if (grp.some(r => /Benjamin Sheares/i.test(r.name))) Hh = 27; // the real deck is ~29 m above Marina Bay
-    const ramp = grp.some(r => /Benjamin Sheares/i.test(r.name)) ? Math.min(380, total / 2.3) : Math.max(10, Math.min(waterFrac > 0.3 && layer <= 1 ? total / 2 : 90, total / 2.2));
-    // multi-source dijkstra from exits (simple O(n^2) — groups are small)
-    const q = [];
-    for (const [k, v] of verts) if (v.exit) { v.d = 0; q.push(k); }
-    if (!q.length) { const first = verts.keys().next().value; verts.get(first).d = 0; q.push(first); }
-    while (q.length) {
-      let bi = 0; for (let i = 1; i < q.length; i++) if (verts.get(q[i]).d < verts.get(q[bi]).d) bi = i;
-      const k = q.splice(bi, 1)[0]; const v = verts.get(k);
-      for (const [k2, d] of v.adj) { const v2 = verts.get(k2); if (v.d + d < v2.d) { v2.d = v.d + d; q.push(k2); } }
-    }
-    const prof = d => { const f = Math.min(1, d / ramp); return Hh * (f * f * (3 - 2 * f)); };
-    for (const r of grp) {
-      // densify so ramps are smooth
-      const np = [r.pts[0]];
-      for (let i = 1; i < r.pts.length; i++) {
-        const a = r.pts[i - 1], b = r.pts[i]; const d = Math.hypot(b[0] - a[0], b[1] - a[1]); const n = Math.min(20, Math.floor(d / 12));
-        for (let s = 1; s <= n; s++) { const f = s / (n + 1); np.push([a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])]); }
-        np.push(b);
-      }
-      // distance for inserted points: interpolate between original vertex distances
-      const dOrig = r.pts.map(p => verts.get(kp(p)).d);
-      const y = [];
-      let oi = 0, acc = 0, segLen = 0;
-      // walk np and map back by cumulative length along original segments
-      const cum = [0]; for (let i = 1; i < r.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
-      let s = 0;
-      for (let i = 0; i < np.length; i++) {
-        if (i > 0) s += Math.hypot(np[i][0] - np[i - 1][0], np[i][1] - np[i - 1][1]);
-        while (oi < cum.length - 2 && cum[oi + 1] < s - 1e-6) oi++;
-        const f = cum[oi + 1] > cum[oi] ? Math.min(1, Math.max(0, (s - cum[oi]) / (cum[oi + 1] - cum[oi]))) : 0;
-        // distance to exits is min over both directions along the segment
-        const dA = dOrig[oi] + (s - cum[oi]), dB = dOrig[Math.min(oi + 1, dOrig.length - 1)] + (cum[Math.min(oi + 1, cum.length - 1)] - s);
-        y.push(prof(Math.min(dA, dB, f < 0.001 ? dOrig[oi] : Infinity)));
-      }
-      r.pts = np; r.y = y; r.bridgeH = Hh;
-    }
-  }
+  const { inserts, stats } = elevateBridges(roadsRaw, isWaterAt);
+  for (const [after, r] of inserts) roadsRaw.splice(roadsRaw.indexOf(after) + 1, 0, r);
+  console.log('bridges', JSON.stringify(stats));
 }
 
 // sidewalk paving in the ground mask along drivable roads (not on bridges)
@@ -510,6 +438,11 @@ const roads = roadsRaw.map(r => {
   return o;
 });
 console.timeEnd('roads');
+// every deck must stand: no dip to the ground mid-structure, no step where spans meet, no ramp steeper than its grade
+{
+  const bad = validateBridges(roadsRaw.map(r => ({ ...r, pts: r.pts.map(([x, z]) => [r1(x), r1(z)]), y: r.y.map(r1) })));
+  if (bad.length) { console.error(`bridge decks: ${bad.length} problems\n  ${bad.join('\n  ')}`); process.exit(1); }
+}
 
 // ---------- traffic graph (drivable, non-service) ----------
 const graph = (() => {

@@ -1,14 +1,15 @@
 // Memory of the city-builder Web Worker on its own: WebKit, a blank same-origin page that runs just the worker build,
 // sampling the WebContent process footprint every 200 ms (a worker is a thread of the tab's process: iOS counts its
 // memory against the tab). Prints the peak and a coarse timeline.
-//   node tests/mobile/workermem.mjs [--pressure] [--chromium]
+//   node tests/mobile/workermem.mjs [--pressure] [--chromium] [--url http://127.0.0.1:4173/]  (worker file from ./dist)
 import { launch, pagePids, footprintMB } from './lib.mjs';
 import fs from 'fs';
 import { execFile } from 'child_process';
 const worker = fs.readdirSync('dist/assets').find(f => /^cityBuilder\.worker-.*\.js$/.test(f));
 const engine = process.argv.includes('--chromium') ? 'chromium' : 'webkit';
+const URL0 = process.argv.includes('--url') ? process.argv[process.argv.indexOf('--url') + 1] : 'http://127.0.0.1:4173/';
 const h = await launch(engine);
-await h.page.goto('http://127.0.0.1:4173/data/ground.png' /* same origin, no game */, { waitUntil: 'load' }).catch(() => { });
+await h.page.goto(new URL('data/ground.png', URL0).href /* same origin, no game */, { waitUntil: 'load' }).catch(() => { });
 const pids = await pagePids(h);
 const base = await footprintMB(pids.content);
 let pressure = process.argv.includes('--pressure');

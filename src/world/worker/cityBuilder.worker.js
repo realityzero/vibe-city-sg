@@ -913,9 +913,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], chunkSize = 300, qua
       // pillars
       for (let d = 0; d < l; d += 2) {
         const sAt = S + d; const yy = ya + (yb - ya) * (d / l);
-        if (yy > 3.5 && sAt - lastPillar > 32) {
-          lastPillar = sAt; const px = ax + dx * d / l, pz = az + dz * d / l;
-          if (isDrive) { boxGeo(s, px - rx * hw * 0.45, -1.6, pz - rz * hw * 0.45, 0.7, yy - thick + 1.6, 0.7, concrete); if (hw > 6) boxGeo(s, px + rx * hw * 0.45, -1.6, pz + rz * hw * 0.45, 0.7, yy - thick + 1.6, 0.7, concrete); }
+        // taller decks stand on stouter, further-apart piers (the 27 m Benjamin Sheares viaduct ~2.7 m, every ~43 m)
+        if (yy > 3.5 && sAt - lastPillar > Math.max(32, yy * 1.6)) {
+          lastPillar = sAt; const px = ax + dx * d / l, pz = az + dz * d / l, ph = 0.7 + yy * 0.025;
+          if (isDrive) { boxGeo(s, px - rx * hw * 0.45, -1.6, pz - rz * hw * 0.45, ph, yy - thick + 1.6, ph, concrete); if (hw > 6) boxGeo(s, px + rx * hw * 0.45, -1.6, pz + rz * hw * 0.45, ph, yy - thick + 1.6, ph, concrete); }
           else boxGeo(s, px, -1.6, pz, 0.25, yy - thick + 1.6, 0.25, concrete);
         }
       }
