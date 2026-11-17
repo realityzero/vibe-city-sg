@@ -30,6 +30,7 @@ import { UI, districtAt } from './ui/index.js';
 import { Missions } from './missions/manager.js';
 import { Extras } from './missions/extras.js';
 import { Spawns } from './world/spawns.js';
+import { Boats } from './world/boats.js';
 import { FX } from './world/fx.js';
 import { Juice } from './world/juice.js';
 import { Cheats, CHEATS } from './missions/cheats.js';
@@ -393,7 +394,8 @@ export class Game {
     await brk();
     this.spawns = new Spawns(this);
     await this.spawns.spawnAll(brk);
-    await this.mark('spawns');
+    this.boats = new Boats(this);
+    await this.mark('spawns, boats');
     await brk();
     this.cheats = new Cheats(this);
     this.stunts = new Stunts(this);
@@ -789,6 +791,7 @@ export class Game {
       this.extras.update(simDt);
       this.weather.update(simDt);
       this.spawns.update(simDt);
+      this.boats.update(simDt);
       this.cheats.update(simDt);
       this.stunts.update(simDt);
       this.taxi.update(simDt);
