@@ -31,12 +31,15 @@ export class CameraRig {
     this.blend = null; // { off, quat, t, dur }: a cutscene's last shot, handing over to the follow view
     this.occluders = new Occluders(game);
     // phone-sized screens: the chase view sits further back and higher, or the car fills half the screen. A wide phone
-    // in landscape (19.5:9) also sees no more across than a 16:9 screen: every FOV here is vertical, and at 62 deg a
-    // 2.16:1 screen spans ~105 deg horizontally (~118 at speed) — small subjects, stretched edges. camera.zoom narrows
-    // whatever FOV is set (follow view, cutscenes, photo mode); camera.getEffectiveFOV() is the vertical FOV seen.
+    // in landscape (19.5:9) also sees no more across than a 16:9 screen while playing: every FOV here is vertical, and
+    // at 62 deg a 2.16:1 screen spans ~105 deg horizontally (~118 at speed) — small subjects, stretched edges.
+    // camera.zoom narrows the follow view's FOV; camera.getEffectiveFOV() is the vertical FOV seen. Shots that frame a
+    // subject (cutscenes, photo mode, test views: the override) keep the vertical FOV they were framed with and see
+    // wider instead — narrowed, the Flyer lost the top of its wheel.
     const fit = () => {
       this.compact = Math.min(innerWidth, innerHeight) < 520;
-      camera.zoom = this.compact ? Math.max(1, innerWidth / innerHeight / MAX_ASPECT) : 1;
+      this.capZoom = this.compact ? Math.max(1, innerWidth / innerHeight / MAX_ASPECT) : 1;
+      camera.zoom = this.override ? 1 : this.capZoom;
       camera.updateProjectionMatrix();
     };
     fit(); addEventListener('resize', fit);
@@ -65,6 +68,7 @@ export class CameraRig {
   update(dt, input) {
     const cam = this.camera;
     if (this.override) {
+      if (cam.zoom !== 1) { cam.zoom = 1; cam.updateProjectionMatrix(); } // (from the shot's first frame)
       this.setNear(cam.position.y > 25 ? 2.0 : 0.3);
       const o = this.override;
       // (run here, after the world has moved this frame: a tracking shot stays locked to the interpolated car)
@@ -78,6 +82,11 @@ export class CameraRig {
       return;
     }
     this._look = null;
+    // back in play: narrow to the capped view as the hand-over from a shot runs
+    if (cam.zoom !== this.capZoom) {
+      cam.zoom = Math.abs(this.capZoom - cam.zoom) < 0.002 ? this.capZoom : cam.zoom + (this.capZoom - cam.zoom) * ease(2.5, dt);
+      cam.updateProjectionMatrix();
+    }
     const p = this.game.player;
     const veh = p.vehicle;
     const m = input.mouse;

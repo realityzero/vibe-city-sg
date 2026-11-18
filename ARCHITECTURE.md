@@ -149,8 +149,10 @@ for a while, so allocation *churn* during the load matters as well as what stays
   canvas has no depth buffer. `?notaa` (FXAA instead) and `?noupscale` switch them off for A/B;
   `tests/scratch/phoneimgshots.mjs` (stills of variants on the same frame),
   `taamotion.mjs` (consecutive frames stepped at 1/60 s: crawl and ghosting), `passcost.mjs` / `phoneimgab.mjs`
-  (cost). Wide phones see no more across than a 16:9 screen (`camera.zoom` from `CameraRig`; FOVs stay vertical — read
-  `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels. Geometry thinner than a pixel is
+  (cost). Wide phones see no more across than a 16:9 screen while playing (`camera.zoom` from `CameraRig`; FOVs stay
+  vertical — read `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels; shots that frame a
+  subject (`cameraRig.override`: cutscenes, photo mode, test views) keep the vertical FOV they were framed with and
+  see wider instead, easing back into the cap as play resumes. Geometry thinner than a pixel is
   pre-filtered rather than left to alias: a ribbon at least a pixel wide with opacity = true coverage (Flyer spokes),
   coverage-anti-aliased lines (MBS lasers), alpha blending to the mip-averaged coverage (Supertree lattice), an average
   normal + wider roughness once facets are a few pixels big (Esplanade shades).
