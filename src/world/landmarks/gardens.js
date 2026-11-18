@@ -26,12 +26,13 @@ function latticeTexture() {
   }, { srgb: false });
 }
 function foliageTexture() {
-  // the trunks' vertical gardens: ferns, bromeliads and orchids in many greens, with purple / pink / yellow flowers
+  // the trunks' vertical gardens: ferns, bromeliads and orchids in many greens, with purple / pink / yellow flowers,
+  // clumped on the planting panels with the dark frame showing between them
   return canvasTexture(256, 256, (ctx, w, h) => {
     const R = rng(77);
-    ctx.fillStyle = '#3f6f2e'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#16200f'; ctx.fillRect(0, 0, w, h);
     const cols = ['#4f8a34', '#5f9e3c', '#3a6528', '#77a845', '#8fb84e', '#2f5a24', '#6a2f6e', '#b35a9a', '#d96ea6', '#e8c64a', '#c44f3a'];
-    for (let i = 0; i < 1900; i++) {
+    for (let i = 0; i < 1300; i++) {
       ctx.fillStyle = cols[(R() < 0.82 ? R() * 6 : 6 + R() * 5) | 0];
       const x = R() * w, y = R() * h, r = 2 + R() * 6, ry = r * (0.6 + R() * 0.8), a = R() * 3;
       for (const ox of [0, x < 8 ? w : x > w - 8 ? -w : null]) if (ox !== null) { ctx.beginPath(); ctx.ellipse(x + ox, y, r, ry, a, 0, Math.PI * 2); ctx.fill(); }
@@ -86,6 +87,7 @@ function mergeSimple(list) {
 // and its rim glows. Emission is tinted per instance (instanceColor) and fades with U.night; the shared uniforms below
 // are driven by update() (calmer between shows, vivid during Garden Rhapsody).
 const SHOW = { wash: { value: 0.25 }, dotI: { value: 2.0 }, dotDen: { value: 0.35 } };
+const TRUNK_CAP = 0.32; // brightest a trunk's planting glows (it read as a solid neon tube)
 // The lattice (lattice option) is shaped by its texture's alpha only (the steel keeps its colour). Up close it's a
 // cutout with a pixel-wide anti-aliased edge; as the bars' spacing nears a few pixels a hard cutout aliased into moire,
 // so the alpha hands over to the bars' average coverage (the mip-filtered alpha) and blends — hence transparent.
@@ -100,19 +102,23 @@ function showMaterial(params, glow, { dots = false, uplit = false, lattice = fal
   m.userData.glow = uGlow;
   m.onBeforeCompile = sh => {
     Object.assign(sh.uniforms, { uNight: U.night, uGlow, uWash: SHOW.wash, uDotI: SHOW.dotI, uDotDen: SHOW.dotDen });
-    if (uplit) sh.vertexShader = sh.vertexShader
+    if (uplit || lattice) sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying float vStY;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\nvStY = position.y / ${ST_H.toFixed(1)};`);
     if (lattice) sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '').replace('#include <alphatest_fragment>', LATTICE_ALPHA);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform float uNight, uGlow, uWash, uDotI, uDotDen;${uplit ? '\nvarying float vStY;' : ''}`)
+      .replace('#include <common>', `#include <common>\nuniform float uNight, uGlow, uWash, uDotI, uDotDen;${uplit || lattice ? '\nvarying float vStY;' : ''}`)
       .replace('#include <color_fragment>', '')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 #ifdef USE_COLOR
- ${uplit ? `// the lights' colour on the planting: strong at the foot, a glow left up under the canopy
- float k = 1.0 - smoothstep(0.0, 0.62, vStY);
- vec3 e = vColor.rgb * uGlow * uWash * diffuseColor.rgb * (0.35 + 2.6 * k * k);` : `float lineMask = (totalEmissiveRadiance.r + totalEmissiveRadiance.g + totalEmissiveRadiance.b + 0.001) / 3.0;
- vec3 e = vColor.rgb * uGlow * uWash * lineMask;`}
+ ${uplit ? `// the lights' colour on the planting: strong at the foot, a glow left up under the canopy — on the leaves and
+ // flowers (half their own colour, half the light's), the dark frame between them unlit, and capped: a lit vertical
+ // garden, not a neon tube
+ float k = 1.0 - smoothstep(0.0, 0.62, vStY), lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+ vec3 e = vColor.rgb * uGlow * uWash * mix(vec3(lum), diffuseColor.rgb, 0.5) * (0.35 + 2.6 * k * k) * smoothstep(0.012, 0.05, lum);
+ e *= min(1.0, ${TRUNK_CAP.toFixed(2)} / max(max(e.r, e.g), max(e.b, 1e-4)));` : `float lineMask = (totalEmissiveRadiance.r + totalEmissiveRadiance.g + totalEmissiveRadiance.b + 0.001) / 3.0;
+ vec3 e = vColor.rgb * uGlow * uWash * lineMask;${lattice ? `
+ e *= mix(0.25, 1.0, smoothstep(0.6, 0.66, vStY)); // (the trunk's steel stays dark round its planting; the funnel glows)` : ''}`}
  ${dots ? `{
    // LED nodes where the diagonal lattice bars cross (a 45-degree grid in UV), a share of them lit
    vec2 lp = vec2(vMapUv.x + vMapUv.y, vMapUv.x - vMapUv.y) * 4.0;
@@ -164,8 +170,28 @@ export function buildGardens(city, quality) {
   };
   const showMeshes = [mk(T.trunk, trunkMat), mk(T.lattice, latticeMat), mk(T.ribs, ribMat), mk(T.rim, rimMat, false)];
 
-  // ---- observatory on the 50 m tree, OCBC Skyway
+  // (vertex-coloured planting: shrubs here, the conservatories' interiors below)
+  const domeInner = new THREE.MeshStandardMaterial({ color: 0x47703a, roughness: 0.9, vertexColors: true });
+  // ---- the grove floor: a granite apron round every tree, a ring of planting at its foot inside a low kerb
   const B = new Bucket();
+  const paving = new THREE.MeshStandardMaterial({ color: 0xa8a194, roughness: 0.85 }), kerb = new THREE.MeshStandardMaterial({ color: 0x9d968a, roughness: 0.8 });
+  for (const [x, z, h] of trees) {
+    const k = h / ST_H, r0 = trunkR(0) * k, rk = r0 + 1.9, rp = r0 + 6.5 * k + 2.5;
+    B.add(paving, new THREE.RingGeometry(rk, rp, 40).rotateX(-Math.PI / 2).translate(x, 0.06, z));
+    B.add(kerb, new THREE.CylinderGeometry(rk, rk, 0.45, 40, 1, true).translate(x, 0.225, z));
+    B.add(kerb, new THREE.RingGeometry(rk - 0.25, rk, 40).rotateX(-Math.PI / 2).translate(x, 0.45, z));
+    B.add(M.planter, new THREE.RingGeometry(r0 * 0.9, rk - 0.25, 32).rotateX(-Math.PI / 2).translate(x, 0.42, z));
+    // shrubs and flowering bromeliads round the trunk
+    for (let i = 0; i < 9; i++) {
+      const a = i / 9 * Math.PI * 2 + x, d = r0 + 0.95, sh = new THREE.IcosahedronGeometry(0.55 + 0.25 * ((i * 7) % 3) / 2, 0);
+      sh.scale(1, 0.7, 1).translate(x + Math.cos(a) * d, 0.55, z + Math.sin(a) * d);
+      const c = new THREE.Color().setHSL(i % 3 ? 0.27 + 0.03 * (i % 2) : 0.9 - 0.05 * (i % 4), i % 3 ? 0.5 : 0.6, i % 3 ? 0.2 : 0.45);
+      sh.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(sh.attributes.position.count * 3).map((_, j) => [c.r, c.g, c.b][j % 3]), 3));
+      B.add(domeInner, sh);
+    }
+  }
+
+  // ---- observatory on the 50 m tree, OCBC Skyway
   const obs = new THREE.CylinderGeometry(11.5, 9, 2.2, 32); obs.translate(GROVE[0][0], 49.5, GROVE[0][1]);
   B.add(M.white, obs);
   const obsGlass = new THREE.CylinderGeometry(11.6, 11.6, 3, 32, 1, true); obsGlass.translate(GROVE[0][0], 51.8, GROVE[0][1]);
@@ -216,7 +242,6 @@ export function buildGardens(city, quality) {
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uNight;').replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= uNight;');
   };
   domeGlass.customProgramCacheKey = () => 'lmdome';
-  const domeInner = new THREE.MeshStandardMaterial({ color: 0x47703a, roughness: 0.9, vertexColors: true });
   const domeExclusions = [];
   const domeMeshes = [];
   const R = rng(5);
