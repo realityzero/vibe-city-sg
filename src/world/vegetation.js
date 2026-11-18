@@ -644,9 +644,10 @@ void main() {
   if (t.a < 0.42) discard;
   bool fol = vKind > 0.5 && vKind < 1.5;
   if (uMode == 0) {
-    // same diffuse the near shader builds: texel x vertex tint x baked occlusion (bark: average fissure darkening)
+    // same diffuse the near shader builds: texel x vertex tint x baked occlusion (bark: average fissure darkening);
+    // alpha tells bark (0.5) from foliage (1) for the mip chain
     vec3 c = t.rgb * vCol * (fol ? mix(0.55, 1.05, vAO) : 0.8 * mix(0.5, 1.0, vAO));
-    outColor = vec4(toSRGB(clamp(c, 0.0, 1.0)), 1.0);
+    outColor = vec4(toSRGB(clamp(c, 0.0, 1.0)), fol ? 1.0 : 0.5);
   } else {
     vec3 n = normalize(vN); if (!fol && !gl_FrontFacing) n = -n;
     outColor = vec4(n * 0.5 + 0.5, max(vAO, 0.02));
@@ -654,59 +655,66 @@ void main() {
 }`;
 
 // box-filter an f x f block of the bake read-back into an atlas cell; uncovered texels take the background colour
-// (so filtering at leaf edges blends towards foliage colour, not black)
-function cellDown(src, srcW, sx0, size, f, dst, dstW, dx0, dy0, bg, coverageAlpha) {
+// (so filtering at leaf edges blends towards foliage colour, not black). With `bark`, the albedo bake: alpha becomes
+// coverage and texels showing any bark are flagged in bark[] (one byte per atlas texel).
+function cellDown(src, srcW, sx0, size, f, dst, dstW, dx0, dy0, bg, bark) {
   const n = size / f;
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    let r = 0, g = 0, b = 0, a = 0, cov = 0;
+    let r = 0, g = 0, b = 0, a = 0, cov = 0, nb = 0;
     for (let j = 0; j < f; j++) for (let i = 0; i < f; i++) {
       const s = ((y * f + j) * srcW + sx0 + x * f + i) * 4;
       if (src[s + 3] === 0) continue;
-      cov++; r += src[s]; g += src[s + 1]; b += src[s + 2]; a += src[s + 3];
+      cov++; r += src[s]; g += src[s + 1]; b += src[s + 2]; a += src[s + 3]; if (src[s + 3] < 192) nb++;
     }
-    const d = ((dy0 + y) * dstW + dx0 + x) * 4;
-    if (!cov) { dst[d] = bg[0]; dst[d + 1] = bg[1]; dst[d + 2] = bg[2]; dst[d + 3] = coverageAlpha ? 0 : bg[3]; continue; }
+    const t = (dy0 + y) * dstW + dx0 + x, d = t * 4;
+    if (!cov) { dst[d] = bg[0]; dst[d + 1] = bg[1]; dst[d + 2] = bg[2]; dst[d + 3] = bark ? 0 : bg[3]; continue; }
     dst[d] = r / cov; dst[d + 1] = g / cov; dst[d + 2] = b / cov;
-    dst[d + 3] = coverageAlpha ? 255 * cov / (f * f) : a / cov;
+    dst[d + 3] = bark ? 255 * cov / (f * f) : a / cov;
+    if (bark && nb) bark[t] = 1;
   }
 }
 
-// full mip chain; with `coverage`, each cell's alpha is rescaled per level so the fraction of texels passing the
-// alpha test matches level 0 (alpha-tested canopies would otherwise thin out with distance)
-function mipChain(data, w, h, coverage) {
+// full mip chain; with `bark` (the albedo's bark flags), each cell's foliage alpha is rescaled per level so the
+// fraction of texels passing the alpha test matches level 0 (alpha-tested canopies would otherwise thin out with
+// distance). That correction is per cell, so it keeps crowns but not a trunk a few texels wide: averaged into the
+// leafless background it fell under the cut by mip 3-4 and far trees floated. Bark texels keep the maximum alpha of
+// their bark children instead, so a trunk stays at least a texel (about a pixel) wide at every level.
+function mipChain(data, w, h, bark) {
   const levels = [{ data, width: w, height: h }];
   const target = new Float32Array(IMP_COLS * IMP_ROWS);
-  if (coverage) {
+  if (bark) {
     const cw = w / IMP_COLS, ch = h / IMP_ROWS;
     for (let cy = 0; cy < IMP_ROWS; cy++) for (let cx = 0; cx < IMP_COLS; cx++) {
-      let n = 0; for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) if (data[(y * w + x) * 4 + 3] >= CUT) n++;
+      let n = 0; for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) if (!bark[y * w + x] && data[(y * w + x) * 4 + 3] >= CUT) n++;
       target[cy * IMP_COLS + cx] = n / (cw * ch);
     }
   }
   const hist = new Uint32Array(256);
   while (w > 1 || h > 1) {
-    const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1), out = new Uint8Array(nw * nh * 4);
+    const nw = Math.max(1, w >> 1), nh = Math.max(1, h >> 1), out = new Uint8Array(nw * nh * 4), nbark = bark && new Uint8Array(nw * nh);
     for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
-      let r = 0, g = 0, b = 0, a = 0, ws = 0;
+      let r = 0, g = 0, b = 0, a = 0, ws = 0, ba = -1;
       for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
-        const s = (Math.min(h - 1, y * 2 + j) * w + Math.min(w - 1, x * 2 + i)) * 4, wt = coverage ? data[s + 3] + 2 : 1;
+        const t = Math.min(h - 1, y * 2 + j) * w + Math.min(w - 1, x * 2 + i), s = t * 4, wt = bark ? data[s + 3] + 2 : 1;
         r += data[s] * wt; g += data[s + 1] * wt; b += data[s + 2] * wt; a += data[s + 3]; ws += wt;
+        if (bark && bark[t]) ba = Math.max(ba, data[s + 3]);
       }
-      const d = (y * nw + x) * 4; out[d] = r / ws; out[d + 1] = g / ws; out[d + 2] = b / ws; out[d + 3] = a / 4;
+      const d = (y * nw + x) * 4; out[d] = r / ws; out[d + 1] = g / ws; out[d + 2] = b / ws; out[d + 3] = Math.max(a / 4, ba);
+      if (ba >= 0) nbark[y * nw + x] = 1;
     }
     const cw = nw / IMP_COLS, ch = nh / IMP_ROWS;
-    if (coverage && cw >= 2 && ch >= 2 && Number.isInteger(cw) && Number.isInteger(ch)) {
+    if (bark && cw >= 2 && ch >= 2 && Number.isInteger(cw) && Number.isInteger(ch)) {
       for (let cy = 0; cy < IMP_ROWS; cy++) for (let cx = 0; cx < IMP_COLS; cx++) {
         hist.fill(0); let n = 0;
-        for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) { hist[out[(y * nw + x) * 4 + 3]]++; n++; }
+        for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) { n++; if (!nbark[y * nw + x]) hist[out[(y * nw + x) * 4 + 3]]++; }
         const want = target[cy * IMP_COLS + cx] * n; let cum = 0, aStar = CUT;
         for (let a = 255; a >= 1; a--) { cum += hist[a]; if (cum >= want) { aStar = a; break; } }
         const k = CUT / Math.max(1, aStar); if (Math.abs(k - 1) < 0.01) continue;
-        for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) { const i = (y * nw + x) * 4 + 3; out[i] = Math.min(255, out[i] * k); }
+        for (let y = cy * ch; y < (cy + 1) * ch; y++) for (let x = cx * cw; x < (cx + 1) * cw; x++) { if (nbark[y * nw + x]) continue; const i = (y * nw + x) * 4 + 3; out[i] = Math.min(255, out[i] * k); }
       }
     }
     levels.push({ data: out, width: nw, height: nh });
-    data = out; w = nw; h = nh;
+    data = out; bark = nbark; w = nw; h = nh;
   }
   return levels;
 }
@@ -715,7 +723,7 @@ function mipChain(data, w, h, coverage) {
 async function bakeImpostors(geos, leafTex, avg) {
   const brk = nextTask;
   const W = IMP_COLS * IMP_CELL, H = IMP_ROWS * IMP_CELL, NW = IMP_COLS * IMP_NCELL, NH = IMP_ROWS * IMP_NCELL, S = IMP_CELL * IMP_SS;
-  const alb = new Uint8Array(W * H * 4), nrm = new Uint8Array(NW * NH * 4);
+  const alb = new Uint8Array(W * H * 4), nrm = new Uint8Array(NW * NH * 4), bark = new Uint8Array(W * H);
   const r = new THREE.WebGLRenderer({ canvas: document.createElement('canvas'), antialias: false, alpha: true, powerPreference: 'high-performance' });
   r.setSize(4, 4, false);
   const rt = new THREE.WebGLRenderTarget(S * IMP_VIEWS, S, { depthBuffer: true, generateMipmaps: false });
@@ -750,23 +758,23 @@ async function bakeImpostors(geos, leafTex, avg) {
       r.readRenderTargetPixels(rt, 0, 0, S * IMP_VIEWS, S, pix);
       for (let v = 0; v < IMP_VIEWS; v++) {
         const c = s * IMP_VIEWS + v, cx = c % IMP_COLS, cy = Math.floor(c / IMP_COLS);
-        if (mode === 0) cellDown(pix, S * IMP_VIEWS, v * S, S, IMP_SS, alb, W, cx * IMP_CELL, cy * IMP_CELL, bgA, true);
-        else cellDown(pix, S * IMP_VIEWS, v * S, S, S / IMP_NCELL, nrm, NW, cx * IMP_NCELL, cy * IMP_NCELL, bgN, false);
+        if (mode === 0) cellDown(pix, S * IMP_VIEWS, v * S, S, IMP_SS, alb, W, cx * IMP_CELL, cy * IMP_CELL, bgA, bark);
+        else cellDown(pix, S * IMP_VIEWS, v * S, S, S / IMP_NCELL, nrm, NW, cx * IMP_NCELL, cy * IMP_NCELL, bgN, null);
       }
     }
     await brk();
   }
   r.setRenderTarget(null);
   rt.dispose(); mat.dispose(); r.dispose(); r.forceContextLoss();
-  const tex = (data, w, h, srgb, coverage) => {
+  const tex = (data, w, h, srgb, bark) => {
     const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
-    t.mipmaps = mipChain(data, w, h, coverage); t.generateMipmaps = false;
+    t.mipmaps = mipChain(data, w, h, bark); t.generateMipmaps = false;
     t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.anisotropy = 4;
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.needsUpdate = true;
     return t;
   };
-  const albedo = tex(alb, W, H, true, true); await brk();
-  return { albedo, normal: tex(nrm, NW, NH, false, false), sp };
+  const albedo = tex(alb, W, H, true, bark); await brk();
+  return { albedo, normal: tex(nrm, NW, NH, false, null), sp };
 }
 
 // ---------------------------------------------------------------- materials
