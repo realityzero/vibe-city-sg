@@ -43,6 +43,7 @@ import { Autopilot } from './entities/autopilot.js';
 import { Claudia } from './missions/claudia.js';
 import { Scenes } from './world/scenes.js';
 import { Hype } from './missions/hype.js';
+import { FineCity } from './missions/finecity.js';
 import { TouchControls, isTouchFirst } from './ui/touch.js';
 import { WATER_LEVEL } from './core/constants.js';
 import { bakeHeightField } from './gfx/heightfield.js';
@@ -411,6 +412,7 @@ export class Game {
     this.claudia = new Claudia(this);
     this.scenes = new Scenes(this);
     this.hype = new Hype(this);
+    this.fines = new FineCity(this);
     this.simScale = 1;
     this.wireEvents();
     await this.mark('missions & systems');
@@ -799,6 +801,7 @@ export class Game {
       this.ambient.update(simDt);
       this.scenes.update(simDt);
       this.hype.update(simDt);
+      this.fines.update(simDt);
       this.updateVehicleFx(simDt);
       this.cleanupVehicles(simDt);
       this.juice.update(simDt, dt);
