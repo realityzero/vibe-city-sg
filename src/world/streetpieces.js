@@ -22,6 +22,9 @@ export const C = {
   rubber: [0x3f8f55, 0xc4583a, 0x3c6fb4, 0x7b5aa6].map(lin),
   play: [0xe23b2e, 0xf2c230, 0x2f7fd6, 0x3fae49, 0xf07f1e].map(lin),
   produce: [0xc8281e, 0xf08a1c, 0x5aa02c, 0xf2cf2a, 0x7a2a5a, 0xe8e0c8].map(lin), crate: [0x9a6a3a, 0x2f6fb0, 0xc23a2a].map(lin),
+  // riverside bars: dark timber or white marble tops, rattan and black bistro chairs, cream and bar-brand parasols
+  barTop: [0x4a2f1f, 0xe8e4dc, 0x2b2b2b].map(lin), chair: [0x9a6a3c, 0x222426, 0x6b4a2e].map(lin),
+  parasol: [[0xefe6d2, 0xd9ccb2], [0x1d3a5c, 0x16304c], [0x8c1f24, 0x761a1f], [0x2f5a3c, 0x284e33]].map(p => p.map(lin)),
 };
 
 // ---------------------------------------------------------------- geometry writer
@@ -197,6 +200,33 @@ export const PIECE = {
     // spring riders
     for (const [x, z, k] of [[3.4, -2.8, 3], [2.0, -3.3, 4]]) { K.box(x, 0, z, 0.06, 0.45, 0.06, C.steel); K.box(x, 0.45, z, 0.18, 0.32, 0.38, P(k)); }
   },
+  // a bar's outdoor table on a pedestal: two chairs facing across local z (h < 0.5) or one on every side, seats 0.45 m
+  // up (Clarke Quay's terraces, whose diners sit on them)
+  barTable(K, h) {
+    const top = pick(C.barTop, h * 2.7), ch = pick(C.chair, h * 4.3);
+    K.box(0, 0.71, 0, 0.36, 0.04, 0.36, top);
+    K.box(0, 0.02, 0, 0.035, 0.69, 0.035, C.dark);
+    K.box(0, 0, 0, 0.2, 0.02, 0.2, C.dark);
+    const chair = (x, z, bx, bz) => {
+      K.box(x, 0.41, z, 0.2, 0.04, 0.2, ch);
+      for (const [lx, lz] of [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]]) K.box(x + lx, 0, z + lz, 0.015, 0.41, 0.015, C.dark);
+      K.box(x + bx * 0.19, 0.45, z + bz * 0.19, bz ? 0.2 : 0.02, 0.42, bx ? 0.2 : 0.02, ch); // back, away from the table
+    };
+    chair(0, 0.62, 0, 1); chair(0, -0.62, 0, -1);
+    if (h >= 0.5) { chair(0.62, 0, 1, 0); chair(-0.62, 0, -1, 0); }
+  },
+  // a square market parasol over a table: four canvas panels on a pole, darker underneath
+  parasol(K, h) {
+    const [a, b] = pick(C.parasol, h), s = 1.35, y0 = 2.2, y1 = 2.62;
+    K.box(0, 0.75, 0, 0.022, y1 - 0.75, 0.022, C.steel);
+    const corners = [[s, s], [-s, s], [-s, -s], [s, -s]];
+    for (let k = 0; k < 4; k++) {
+      const [px, pz] = corners[k], [qx, qz] = corners[(k + 1) % 4], col = k % 2 ? b : a;
+      K.tri(qx, y0, qz, px, y0, pz, 0, y1, 0, col);
+      K.tri(px, y0 - 0.01, pz, qx, y0 - 0.01, qz, 0, y1 - 0.02, 0, col.map(v => v * 0.55));
+      K.quad(qx, y0 - 0.16, qz, px, y0 - 0.16, pz, px, y0, pz, qx, y0, qz, col); // the valance
+    }
+  },
   // 7 x 4 m: pull-up bars, parallel bars, a sit-up bench and a waist-twister
   fitness(K, h) {
     const post = pick([C.play[2], C.play[1], C.play[3]], h);
@@ -212,7 +242,7 @@ export const PIECE = {
 };
 
 // colour variants per kind (h = (v + 0.5) / n); the order is the kind's index in the placement records
-export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 1, condenser: 1, playground: 4, fitness: 3, goods: 6 };
+export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 1, condenser: 1, playground: 4, fitness: 3, goods: 6, barTable: 6, parasol: 4 };
 export const KINDS = Object.keys(VARIANTS);
 
 // covered linkway along local +z from 0 to L: a slab roof on two rows of posts (under the void-deck soffit, 2.85 m up,

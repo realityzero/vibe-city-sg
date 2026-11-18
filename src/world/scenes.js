@@ -3,6 +3,7 @@
 //  - Merlion: tourists taking photos, all day
 //  - Supertree Grove: crowds for Garden Rhapsody (19:45 / 20:45)
 //  - Raffles Place: office lunch crowd 12:00–14:00
+//  - Clarke Quay: diners on the bar terraces 18:00–02:00
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { U } from '../gfx/globals.js';
@@ -25,6 +26,13 @@ export class Scenes {
       this.list.push({ id: 'rhapsody', c: new THREE.Vector3(st.x, 0, st.z), when: show, gen: () => this.scatter(st, 55, 46, ['idle', 'idle', 'idle_phone', 'clap'], ['tourist', 'male', 'female', 'student']) });
     }
     this.list.push({ id: 'rafflesplace', c: new THREE.Vector3(60, 0, 330), window: [12, 14], gen: () => this.scatter({ x: 60, z: 330 }, 35, 30, ['talk', 'idle_phone', 'sit_eat', 'idle'], ['office_m', 'office_f']) });
+    // Clarke Quay: the bar terraces fill up from dusk till late (seats from the landmark: x, z, yaw)
+    const cq = poi('clarkequay');
+    if (cq?.seats?.length) {
+      const c = cq.seats.reduce((a, s) => a.add(new THREE.Vector3(s[0], 0, s[1])), new THREE.Vector3()).divideScalar(cq.seats.length);
+      const who = ['tourist', 'male', 'female', 'office_m', 'office_f'];
+      this.list.push({ id: 'clarkequay', c, window: [18, 2], gen: () => cq.seats.filter(() => Math.random() < 0.6).slice(0, 80).map(([x, z, yaw]) => ({ x, z, yaw, anim: Math.random() < 0.55 ? 'sit_eat' : 'sit', variant: who[Math.floor(Math.random() * who.length)] })) });
+    }
     for (const s of this.list) { s.active = false; s.peds = []; }
   }
 

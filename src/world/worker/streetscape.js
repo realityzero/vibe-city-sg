@@ -15,7 +15,8 @@ const KIND = Object.fromEntries(KINDS.map((k, i) => [k, i]));
 // ---------------------------------------------------------------- placement
 /**
  * ctx (from the city builder): city, M (meta), maskAt, occAt, occMark(x, z, r), roadGrid + RG, chunk(x, z) -> chunk,
- * exclusions (landmark footprints: rings of [x, z]), clearings (landmark plazas: {x, z, r}), pip(x, z, ring),
+ * exclusions (landmark footprints: rings of [x, z]), clearings (landmark plazas: {x, z, r}), placed (pieces landmarks
+ * set out themselves), pip(x, z, ring),
  * setTag(name), and what the building loop collected: shopFronts, piers,
  * shopGoods, shopBacks, hdbBlocks, colonnade. Returns { pieces: Float32Array of (kind, x, y, z, yaw, h), obstacles: Float32Array
  * of (x, z, radius, solid), counts }.
@@ -30,6 +31,8 @@ export function buildStreetscape(ctx) {
   };
   // something to walk round at local (lx, lz) of a piece placed at (x, z, yaw)
   const obstacle = (x, z, yaw, lx, lz, r, solid) => out.push(x + lx * Math.cos(yaw) + lz * Math.sin(yaw), z - lx * Math.sin(yaw) + lz * Math.cos(yaw), r, solid ? 1 : 0);
+  // pieces a landmark sets out itself, on its own ground (Clarke Quay's bar terraces): [kind, x, z, yaw, h]
+  for (const [kind, x, z, yaw, h] of ctx.placed) put(kind, x, z, yaw, h, kind === 'barTable' ? 1.0 : 0, false);
 
   // carriageways keep the sidewalk line beside them (hw + 2 m) and a little more clear; footways keep their line clear
   const roadsClear = (x, z, pad) => {
