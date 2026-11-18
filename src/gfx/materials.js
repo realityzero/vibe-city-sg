@@ -215,8 +215,9 @@ export function createFacadeMaterial({ reflection = false } = {}) {
       float fAccent = mod(vF2.w, 16.0), fFlag = mod(floor(vF2.w / 16.0 + 0.01), 8.0);
       // building use (tools/building-uses.mjs): 0 unknown, 1 retail, 2 health, 3 edu, 4 civic, 5 religious, 6 resi, 7 office, 8 hotel, 9 industrial, 10 parking
       float fUse = floor(vF2.w / 128.0 + 0.001);
-      // only shops (and unknowns) get shopfronts and signboards; a shophouse tagged residential still trades downstairs
-      bool shopUse = fUse < 1.5 || (fStyle > 3.5 && fStyle < 4.5 && fUse > 5.5 && fUse < 6.5);
+      // only shops (and unknowns) get shopfronts and signboards; a shophouse tagged residential, office or hotel still
+      // trades downstairs (Chinatown's boutique hotels and offices let their five-foot-way frontage as shops and cafes)
+      bool shopUse = fUse < 1.5 || (fStyle > 3.5 && fStyle < 4.5 && fUse > 5.5 && fUse < 8.5);
       float fy0 = vWall.y - fBase;
       vec3 wallCol = diffuseColor.rgb;
 ${SHOP_UNIT_SETUP}

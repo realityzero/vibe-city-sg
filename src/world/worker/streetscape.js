@@ -147,8 +147,8 @@ export function buildStreetscape(ctx) {
     put('pot', f[0], f[1], h * 9, h * 3.5, 0, false, 0.12); // (on the five-foot-way's raised floor)
   }
   for (const [x, z, yaw] of ctx.shopGoods) {
-    const h = hash(x * 2.1, z * 1.3); if (h > 0.35) continue;
-    put('goods', x, z, yaw, h * 2.8, 0, false, 0.12);
+    const h = hash(x * 2.1, z * 1.3); if (h > 0.5) continue;
+    put('goods', x, z, yaw, h * 1.99, 0, false, 0.12);
   }
   for (const w of ctx.shopBacks) {
     const [px, pz, qx, qz, nx, nz, y0, fh, floors] = w, len = Math.hypot(qx - px, qz - pz), units = Math.max(1, Math.round(len / 5.5));
