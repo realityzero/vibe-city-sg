@@ -359,7 +359,7 @@ function bluebellMesh(spots, B, mats) {
 /** The Angels: an opaque membrane disc (a shallow dome over a flatter underside, washed from below at night) with a
  * band of light round its rim, on a mast with a few struts. All palette materials: part of the landmark's one draw. */
 function angels(spots, B, mats) {
-  const under = uplitMaterial(0xfff1e2, 0.55, { y0: ANGEL_H - 1, y1: ANGEL_H + 1.5, floor: 0.35, base: 0xf4f1ea, rough: 0.7 });
+  const under = uplitMaterial(0xfff1e2, 0.32, { y0: ANGEL_H - 1, y1: ANGEL_H + 1.5, floor: 0.35, base: 0xf4f1ea, rough: 0.7 });
   const top = new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: 0.55 });
   const rims = ANGEL_GLOW.map(c => nightGlowMaterial(c, 2.2, { base: 0xf4f1ea, rough: 0.5 }));
   spots.forEach((p, i) => {
