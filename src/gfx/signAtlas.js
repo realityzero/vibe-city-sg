@@ -96,3 +96,34 @@ export function makeSignAtlas() {
   tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true;
   return tex;
 }
+
+// Words bent in neon tube over the shopfronts at night (world/nightglow.js): the bar-street staples, and what this
+// city's founders drink to
+export const NEON_WORDS = [
+  'BAR', 'KTV', 'LIVE BAND', '酒吧', 'OPEN 24H', 'SERIES A BAR', 'PIVOT CLUB', 'HAPPY HOUR',
+  '卡拉OK', 'SHIOK!', 'BURN RATE', 'COCKTAILS', 'KIASU KTV', '火锅', 'SEED ROUND', 'ATAS BAR',
+];
+export const NEON_COLS = 2, NEON_ROWS = 8; // cells of 256 x 64
+
+/** The neon words as a coverage mask (R8, 2 x 8 cells of 256 x 64, mip-mapped: far away a word is its average glow) */
+export function makeNeonWordAtlas() {
+  const W = 256 * NEON_COLS, H = 64 * NEON_ROWS;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  NEON_WORDS.forEach((w, i) => {
+    const x = (i % NEON_COLS) * 256 + 128, y = Math.floor(i / NEON_COLS) * 64 + 33;
+    // tube-weight strokes (~6 px at 40 px letters), a little air round each word so mips never bleed into the next
+    const cjk = /[^\x00-\x7f]/.test(w);
+    fit(g, w, cjk ? `$px ${CN}` : '600 $px "Avenir Next", "Helvetica Neue", Arial, sans-serif', 228, 42);
+    g.fillText(w, x, y);
+  });
+  const rgba = g.getImageData(0, 0, W, H).data, px = new Uint8Array(W * H);
+  for (let i = 0; i < px.length; i++) px[i] = rgba[i * 4];
+  c.width = c.height = 0;
+  const tex = new THREE.DataTexture(px, W, H, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
+  tex.flipY = false; tex.needsUpdate = true; tex.userData.releaseSource = true;
+  return tex;
+}

@@ -295,7 +295,7 @@ export class Game {
     let landmarks = null;
     try {
       const mod = await import('./world/landmarks/index.js');
-      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.isWater(x, z) });
+      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.isWater(x, z), facade: this.city.mats.walls });
       this.scene.add(landmarks.group);
       gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));
@@ -303,7 +303,7 @@ export class Game {
     this.landmarks = landmarks;
     await this.mark('landmarks');
     const clearings = (landmarks?.clearings || []).map(({ x, z, r }) => ({ x, z, r })); // (no street furniture on a landmark's plaza)
-    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], clearings, paint: landmarks?.paint || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
+    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], clearings, paint: landmarks?.paint || [], facades: landmarks?.facades, placed: landmarks?.furniture, onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
     console.log('city', JSON.stringify(stats));
     await this.mark('city built (worker gone)');
     await physP;

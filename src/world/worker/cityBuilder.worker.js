@@ -239,7 +239,7 @@ async function loadMask(url) {
   return { w, h, data };
 }
 
-async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], chunkSize = 300, quality = 'high' }) {
+async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], placed = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
@@ -376,7 +376,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   // collected for the street furniture (streetscape.js): shopfront points, pier-side pot spots, wares in front of the
   // shops, shophouse back walls,
   // HDB blocks, and table spots in void decks and hawker colonnades
-  const hawkerIds = []; // (hawker halls are rebuilt as colonnaded pavilions: the night neon skips them)
+  // OSM buildings not drawn as their own block (taken over by a landmark, or rebuilt as a colonnaded hawker pavilion):
+  // nothing else may hang on their outlines (the night neon would float in the air)
+  const rebuilt = [];
   const shopFronts = [], piers = [], shopGoods = [], shopBacks = [], hdbBlocks = [], colonnade = [];
   // hawker centres: low halls named as one, or holding one (OSM puts most as a POI inside a plain building)
   const HAWKER = /food cent(re|er)|hawker|cooked food/i, hawkerPois = city.pois.filter(p => HAWKER.test(p.n || ''));
@@ -416,13 +418,13 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     if (outer.length < 3) continue;
     if (!b.noPhys && (b.m || 0) < 3) clearOfRoads(outer);
     const [cx, cz] = centroidOf(outer);
-    if (excluded(cx, cz)) continue;
+    if (excluded(cx, cz)) { rebuilt.push(b.id); continue; }
     if (area2(outer) < 0) outer.reverse();
     const holes = (b.ho || []).map(ringOf).filter(h => h.length >= 3).map(h => (area2(h) > 0 ? h.reverse() : h));
     const seed = hash1(b.id + 0.5);
     const style = b.s;
     const hawker = isHawkerHall(b, outer, Math.abs(area2(outer)) / 2);
-    if (hawker) hawkerIds.push(b.id);
+    if (hawker) rebuilt.push(b.id);
     // (a single-storey hall's OSM height is its roof's; the stalls stand under a 4.6 m colonnade below it)
     const top = hawker ? Math.min(b.h, 4.5 * (b.l || 1) + 3) : b.h;
     const base = b.m || 0;
@@ -1138,7 +1140,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   // ================= STREET FURNITURE ================= (after the trees: it keeps clear of them)
   const tFurn = performance.now();
   const furniture = buildStreetscape({
-    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
+    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, placed, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
     chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occDisc(x, z, r, 115), setTag: t => { TAG = t; },
   });
   furniture.counts.ms = Math.round(performance.now() - tFurn);
@@ -1170,7 +1172,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
   transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer);
   const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, hawkers: hawkerIds }, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles }, rebuilt, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {
