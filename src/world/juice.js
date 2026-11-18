@@ -201,6 +201,6 @@ class SpeedLines {
     u.uLen.value = 3 + this.amt * 7;
     // a hairline: 1/700 of the screen height (never under 0.8 px), at any field of view
     const H = R?.height || innerHeight;
-    u.uW.value = Math.max(0.8, H / 700) * 2 * Math.tan(camera.fov * Math.PI / 360) / H;
+    u.uW.value = Math.max(0.8, H / 700) * 2 * Math.tan(camera.getEffectiveFOV() * Math.PI / 360) / H;
   }
 }

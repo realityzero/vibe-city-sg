@@ -9,9 +9,35 @@ import { FilmGradeEffect } from './filmgrade.js';
 import { U } from './globals.js';
 import { EffectComposer, RenderPass, EffectPass, GodRaysEffect, BlendFunction, BloomEffect, ToneMappingEffect, ToneMappingMode, SMAAEffect, SMAAPreset, FXAAEffect, VignetteEffect, BrightnessContrastEffect, HueSaturationEffect } from 'postprocessing';
 
+// Contrast-adaptive sharpening (the RCAS kernel of AMD FSR 1): a negative-lobe cross filter whose lobe is limited
+// per pixel so the result stays within the 4 neighbours' range — no halos, no overshoot, flat areas untouched. Runs
+// on sqrt-encoded colour (close to the display's gamma, where RCAS is tuned). uSharpen: 0 off .. 1 full strength.
+const SHARPEN_GLSL = /* glsl */`
+uniform float uSharpen;
+vec4 sharpen(const in vec4 c) {
+  vec3 b = sqrt(max(texture2D(inputBuffer, vUvUp).rgb, 0.0)), d = sqrt(max(texture2D(inputBuffer, vUvLeft).rgb, 0.0));
+  vec3 f = sqrt(max(texture2D(inputBuffer, vUvRight).rgb, 0.0)), h = sqrt(max(texture2D(inputBuffer, vUvDown).rgb, 0.0));
+  vec3 e = sqrt(max(c.rgb, 0.0));
+  vec3 mn = min(min(b, d), min(f, h)), mx = max(max(b, d), max(f, h));
+  vec3 hitMin = min(mn, e) / (4.0 * mx + 1e-4), hitMax = (1.0 - max(mx, e)) / (4.0 * mn - 4.0 - 1e-4);
+  vec3 l = max(-hitMin, hitMax);
+  // RCAS's noise guard: a pixel that stands out of its neighbours' range on its own (texture grain near the pixel
+  // grid, a lone speck) is sharpened half as much, so fine aliasing isn't amplified into a checker pattern
+  const vec3 W = vec3(0.25, 0.5, 0.25);
+  float lb = dot(b, W), ld = dot(d, W), lf = dot(f, W), lh = dot(h, W), le = dot(e, W);
+  float range = max(max(max(lb, ld), max(lf, lh)), le) - min(min(min(lb, ld), min(lf, lh)), le);
+  float nz = 1.0 - 0.5 * clamp(abs(0.25 * (lb + ld + lf + lh) - le) / (range + 1e-4), 0.0, 1.0);
+  float lobe = max(-0.1875, min(max(l.r, max(l.g, l.b)), 0.0)) * uSharpen * nz;
+  vec3 o = (lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0);
+  return vec4(o * o, c.a);
+}
+`;
+
 export const QUALITY = {
-  // (low: no film grain — at a phone's ~4x upscale it reads as noise, not film)
-  low: { pixelRatio: 0.75, shadows: 1024, shadowRadius: 110, reflections: 'lite', bloom: true, smaa: false, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
+  // low (every phone): 0.8 x CSS pixels (iPhone 12 landscape: ~675x312), paid for by the narrower horizontal FOV on
+  // wide phones (CameraRig) and refined by dynamic resolution; sharpened on output against the browser's ~3.75x
+  // upscale; lite water reflections (quarter-res, amortised); no film grain (at that upscale it reads as noise, not film)
+  low: { pixelRatio: 0.8, shadows: 1024, shadowRadius: 110, reflections: 'lite', bloom: true, smaa: false, sharpen: 0.9, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
   medium: { pixelRatio: 1.0, shadows: 2048, shadowRadius: 150, reflections: true, bloom: true, smaa: true, ao: false, treeDist: 900, treeNear: 170, drawDist: 3500 },
   high: { pixelRatio: 1.25, shadows: 2048, shadowRadius: 170, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1300, treeNear: 230, drawDist: 5000 },
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
@@ -106,8 +132,12 @@ export class Renderer {
     // end in an off-screen buffer — a black game. This pass is the screen output whenever SMAA is off: FXAA, the
     // phone's only anti-aliasing. Its edge test runs on perceptual (sqrt) luma: the composer's buffers are linear,
     // where the stock luminance() leaves most edges in shade and at night below its threshold.
+    // Pixels FXAA leaves alone (no edge) are sharpened instead: the phone's frame is upscaled ~3.75x by the browser, a
+    // bilinear stretch that softens everything (see SHARPEN_GLSL).
     const fxaa = new FXAAEffect();
-    fxaa.fragmentShader = 'float fxaaLuma(vec3 c) { return sqrt(max(luminance(c), 0.0)); }\n' + fxaa.fragmentShader.replaceAll('luminance(texture2D', 'fxaaLuma(texture2D').replace('luminance(inputColor.rgb)', 'fxaaLuma(inputColor.rgb)');
+    fxaa.fragmentShader = 'float fxaaLuma(vec3 c) { return sqrt(max(luminance(c), 0.0)); }\n' + fxaa.fragmentShader.replaceAll('luminance(texture2D', 'fxaaLuma(texture2D').replace('luminance(inputColor.rgb)', 'fxaaLuma(inputColor.rgb)')
+      .replace('vec4 fxaa(', SHARPEN_GLSL + 'vec4 fxaa(').replace('{return inputColor;}', '{return sharpen(inputColor);}');
+    fxaa.uniforms.set('uSharpen', this.sharpenU = new THREE.Uniform(0));
     this.outPass = new EffectPass(camera, fxaa);
     c.addPass(this.outPass);
     this.applyQualityToPost();
@@ -120,6 +150,7 @@ export class Renderer {
     if (this.smaaPass.renderToScreen !== this.q.smaa) { this.smaaPass.renderToScreen = this.q.smaa; this.outPass.renderToScreen = !this.q.smaa; }
     if (this.ao) this.ao.enabled = !!this.q.ao && this.aoAllowed !== false;
     this.film.uniforms.get('uGrain').value = this.q.grain === false ? 0 : this.film.grain;
+    this.sharpenU.value = this.q.sharpen ?? 0;
     this.bloom.blendMode.opacity.value = this.q.bloom && !new URLSearchParams(location.search).has('nobloom') ? 1 : 0;
   }
 
