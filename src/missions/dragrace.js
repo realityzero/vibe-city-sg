@@ -1,7 +1,7 @@
 // Ah Beng's drag race. At night, stopped first at a red light with a lane free beside you, sometimes a lime hatchback
 // with neon underglow rolls up alongside and revs: flash your lights (L, or FLASH on touch) to take him on. The start
 // lights count down with the real signal, it's ~400 m to a line down the road (going early loses), cash and hype for
-// the win; a loss costs nothing but pride. Ah Beng drives a PathDriver (no traffic code involved); his car is a normal
+// the win; a loss costs nothing but pride (event 'dragRace': won or not). Ah Beng drives a PathDriver (no traffic code involved); his car is a normal
 // physics vehicle made when he shows up, the underglow one additive quad made at load.
 import * as THREE from 'three';
 import { Vehicle } from '../entities/vehicle.js';
@@ -175,6 +175,7 @@ export class DragRace {
   /** won (true), lost (false) or called off (null) */
   finish(won, why) {
     const g = this.game;
+    if (won !== null) g.events.emit('dragRace', won);
     if (won === true) {
       g.addMoney(PRIZE);
       g.hype?.bump(0.01, 'Your street race went viral on TikTok');

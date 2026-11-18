@@ -47,6 +47,7 @@ import { Scenes } from './world/scenes.js';
 import { Hype } from './missions/hype.js';
 import { FineCity } from './missions/finecity.js';
 import { DragRace } from './missions/dragrace.js';
+import { CityTalk } from './missions/citytalk.js';
 import { BystanderClips } from './world/bystander.js';
 import { TouchControls, isTouchFirst } from './ui/touch.js';
 import { WATER_LEVEL } from './core/constants.js';
@@ -421,6 +422,7 @@ export class Game {
     this.hype = new Hype(this);
     this.fines = new FineCity(this);
     this.dragRace = new DragRace(this);
+    this.cityTalk = new CityTalk(this);
     this.clips = new BystanderClips(this);
     this.simScale = 1;
     this.wireEvents();
@@ -813,6 +815,7 @@ export class Game {
       this.hype.update(simDt);
       this.fines.update(simDt);
       this.dragRace.update(simDt);
+      this.cityTalk.update(simDt);
       this.updateVehicleFx(simDt);
       this.cleanupVehicles(simDt);
       this.juice.update(simDt, dt);
