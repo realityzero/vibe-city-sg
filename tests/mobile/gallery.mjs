@@ -20,6 +20,8 @@ export const VIEWS = [
   ['flyer', 9.5, [1430, 35, -120], [1572, 60, -266]],
   ['esplanade', 10, [620, 25, -190], [700, 8, -300]],
   ['esplanade-bay', 17.5, [860, 22, -150], [700, 15, -310]],
+  // the Raffles Place wall across the bay from the Marina Bay Sands promenade (OUB, UOB Plaza, Republic, OUE Bayfront)
+  ['raffles-skyline', 9.5, [1010, 24, 250], [300, 95, 360]],
   ['chinatown-street', 11, [-392, 3, 420], [-330, 2, 380]],
   ['chinatown-night', 21, [-392, 3, 420], [-330, 2, 380]],
   ['cbd-street', 13, [262, 2, 470], [300, 8, 520]],
