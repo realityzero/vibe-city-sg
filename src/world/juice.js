@@ -1,9 +1,10 @@
 // Driving juice, tied to the hype economy: near misses (passing a car or a pedestrian within a metre at speed) pay cash
 // and a little hype, with a CLOSE SHAVE popup, a whoosh and a quick FOV kick (chained ones multiply); sparks and a
 // grind where the bodywork scrapes; a shake and 0.3 s of slow motion on a big crash; speed lines while the Kopi Gao
-// boost burns. The street films it all: fast near misses, big crashes and a supercar parked up among people bring the
-// phones out (Pedestrians.spectacle -> 'filmed', which Hype turns into views), with camera flashes popping where they
-// stand. Everything is pooled and created at load: nothing is allocated per frame.
+// boost burns. The street films it all: fast near misses ('nearMiss' event), big crashes, a drift past people and a
+// supercar parked up among them bring the phones out (Pedestrians.spectacle -> 'filmed', which Hype turns into views),
+// with camera flashes popping where they stand. Everything is pooled and created at load: nothing is allocated per
+// frame.
 import * as THREE from 'three';
 
 const SLOTS = 8;            // cars / pedestrians tracked through a pass at once
@@ -15,6 +16,7 @@ const CHAIN = 4;            // s to keep a combo going
 const SLOWMO = 0.3, SLOWMO_SCALE = 0.3, BIG_CRASH = 150; // s of real time, sim speed, vehicleImpact damage
 const FILM_GAP = 8;         // s between two things the street films (a near-miss chain is one clip)
 const PARKUP = 60;          // s between two supercar park-ups drawing a crowd
+const DRIFT = 0.9, DRIFT_SKID = 0.55, DRIFT_SPEED = 9; // s of a slide (skid amount, m/s) that the street films, if 3+ people are near
 const ADMIRE = ['Wah, %s!', 'Wah, %s! Shiok!', 'Eh, photo first!', 'Confirm COE also very ex.', 'Steady lah, boss!'];
 
 const _p = new THREE.Vector3(), _v = new THREE.Vector3(), _q = new THREE.Quaternion();
@@ -28,7 +30,7 @@ export class Juice {
     this.sparkT = 0; this.scrapeT = 0; this.slowT = 0;
     this.lines = new SpeedLines(game.scene);
     this.flashes = new PhoneFlashes(game.scene);
-    this.filmT = -99; this.parkT = -99;
+    this.filmT = -99; this.parkT = -99; this.driftT = 0;
     this._cp = new THREE.Vector3(); this._hasCp = false;
     // first contact of the pair, on the vehicle's side, in the vehicle collider's frame (flipped: the vehicle is the
     // manifold's second collider). Called per manifold; a trimesh pair has several, most of them empty.
@@ -42,25 +44,31 @@ export class Juice {
     game.events.on('exitVehicle', v => this.parkUp(v));
   }
 
-  /** the street films something at pos (at most one clip every FILM_GAP s) */
-  film(pos, kind, follow = false) {
+  /** the street films something at pos (at most one clip every FILM_GAP s, unless forced: a set piece) */
+  film(pos, kind, follow = false, force = false) {
     const now = performance.now() / 1000;
-    if (now - this.filmT < FILM_GAP) return;
+    if (now - this.filmT < FILM_GAP && !force) return;
     this.filmT = now;
     this.game.peds.spectacle(pos, kind, follow);
   }
 
-  // stepping out of a supercar where people are: they gather round with their phones
-  parkUp(v) {
-    const g = this.game, now = performance.now() / 1000;
-    if (v.isBoat || v.isAircraft || v.spec.maxSpeed < 66 || v.speed > 3 || v.health <= 0 || now - this.parkT < PARKUP || g.missions.active) return;
+  /** people within r m (a box) of (x,z), counted up to `enough` */
+  watchers(x, z, r, enough = 3) {
     let n = 0;
-    for (const p of g.peds.peds) if (Math.abs(p.pos.x - v.position.x) < 25 && Math.abs(p.pos.z - v.position.z) < 25 && ++n >= 3) break;
-    if (n < 3) return;
+    for (const p of this.game.peds.peds) if (Math.abs(p.pos.x - x) < r && Math.abs(p.pos.z - z) < r && ++n >= enough) break;
+    return n;
+  }
+
+  // stepping out of a supercar where people are: they gather round with their phones (not in a mission, unless it
+  // wants the street filming: Go Viral)
+  parkUp(v) {
+    const g = this.game, now = performance.now() / 1000, m = g.missions.active;
+    if (v.isBoat || v.isAircraft || v.spec.maxSpeed < 66 || v.speed > 3 || v.health <= 0 || now - this.parkT < PARKUP || (m && !m.mission.filmable)) return;
+    if (this.watchers(v.position.x, v.position.z, 25) < 3) return;
     this.parkT = now;
     // (a bark kind with no recordings: the bubble only, and it keeps the crowd's own bark from talking over it)
     g.bark('admire', _p.copy(v.position), 2, { text: ADMIRE[Math.floor(Math.random() * ADMIRE.length)].replace('%s', v.spec.name) });
-    this.filmT = -99; this.film(v.position, 'supercar');
+    this.film(v.position, 'supercar', false, true);
   }
 
   /** dt: simulated time (slow motion included), realDt: wall-clock frame time */
@@ -72,6 +80,10 @@ export class Juice {
     this.lines.update(realDt, g.camera, g.R, P.vehicle && g.hype?.boostOn ? Math.min(1, v.speed / 30) : 0);
     this.flashes.update(now, g.camera, g.R, g.peds.peds);
     const car = v && !v.isBoat && !v.isAircraft && !v.exploded;
+    // a drift past people: a sustained slide at speed with a few of them near
+    if (car && P.controlsEnabled && !P.autopilot && v.skid > DRIFT_SKID && v.speed > DRIFT_SPEED) this.driftT += dt;
+    else this.driftT = Math.max(0, this.driftT - dt * 2);
+    if (this.driftT > DRIFT) { this.driftT = 0; if (this.watchers(v.position.x, v.position.z, 25) >= 3) this.film(v.position, 'drift', true); }
     if (!car || !P.controlsEnabled || P.autopilot || v.speed < MIN_SPEED * 0.7) { this.release(); return; }
     // the player's car as an oriented box on the ground plane
     const q = v.quaternion, fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
@@ -128,6 +140,7 @@ export class Juice {
     g.ui.closeShave?.(cash, this.combo);
     g.audio?.sfx?.('whoosh', { position: s.obj.pos, volume: Math.min(1, 0.5 + kmh / 200) });
     if (s.ped) g.bark('nearmiss', s.obj.pos, 2);
+    g.events.emit('nearMiss', this.combo);
     if (kmh > 80 || this.combo >= 2) this.film(v.position, 'nearmiss', true);
   }
 

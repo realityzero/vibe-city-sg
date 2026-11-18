@@ -1,19 +1,21 @@
-// Hype economy: everything Tommy does in public moves the startup's valuation.
+// Hype economy: everything the player does in public moves the startup's valuation.
 // Stunts go "viral" (+), crashes and arrests make the news (−); the HUD valuation line reflects it. Whatever the
-// street films (Pedestrians 'filmed') racks up views on the HUD's REC counter, and views are hype.
+// street films (Pedestrians 'filmed') racks up views on the HUD's REC counter ('views' event), and views are hype.
 // Also: Kopi Gao boost (B in a car) — a caffeine-fuelled nitro that recharges over time.
 import * as THREE from 'three';
 
 const VIRAL = ['went viral on TikTok', 'is trending on Rednote', 'made the front page of HardwareZone', 'got 2M views on Instagram Reels', 'was reposted by a Temasick intern', 'was turned into a LinkedIn thought-leadership post'];
 const BAD = ['made the Straits Times (not in a good way)', 'is being discussed in a very long Reddit thread', 'was screenshotted by a VC'];
 // what a clip of each kind pulls per person filming it (views), and its hashtag
-const CLIP = { stunt: [9000, '#sendit'], explosion: [7000, '#breaking'], crash: [3500, '#onlyinsg'], supercar: [2500, '#carspotting'], nearmiss: [1800, '#closecall'], hit: [1200, '#kenasaman'] };
+const CLIP = { stunt: [9000, '#sendit'], explosion: [7000, '#breaking'], crash: [3500, '#onlyinsg'], drift: [3000, '#driftking'], supercar: [2500, '#carspotting'],
+  splash: [2200, '#kenasplash'], nearmiss: [1800, '#closecall'], hit: [1200, '#kenasaman'] };
 
 export class Hype {
   constructor(game) {
     this.game = game;
     this.kopi = 1; // boost charge 0..1
     this.boostOn = false;
+    this.reach = 1; // views multiplier ("the algorithm"): Go Viral raises it while the clips keep coming
     const ev = game.events;
     ev.on('stunt', ({ reward }) => this.bump(Math.min(0.06, reward / 40000), `Your stunt ${pick(VIRAL)}`));
     ev.on('playerBusted', () => this.bump(-0.04, `Your arrest ${pick(BAD)}`));
@@ -39,12 +41,21 @@ export class Hype {
     if (msg && Math.abs(frac) >= 0.01) this.game.ui.toast(`${msg} · valuation ${frac > 0 ? '▲' : '▼'} ${(Math.abs(frac) * 100).toFixed(1)}%`);
   }
 
-  /** people filmed Tommy: views on the REC counter, and (except for running people over) a little hype */
-  filmed({ count, kind }) {
+  /** people filmed the player: views on the REC counter, and (except for running people over) a little hype */
+  filmed({ count, kind, pos }) {
     const [per, tag] = CLIP[kind] || CLIP.crash;
-    const views = Math.round(count * per * (0.6 + Math.random() * 0.8));
+    this.clip(count * per * (0.6 + Math.random() * 0.8), { kind, tag, pos, count });
+  }
+
+  /** a clip of the player is out: its views (times `reach`, the algorithm's mood: a job can push it) go on the REC
+   *  counter and out as 'views' { views, kind, tag, pos, count, by, handle } (by: a set piece's creator who filmed it,
+   *  { pos, yaw, hs } like a crowd person; handle: their account) */
+  clip(raw, { kind = 'crash', tag = (CLIP[kind] || CLIP.crash)[1], pos = this.game.player.position, count = 1, by = null, handle = null } = {}) {
+    const views = Math.round(raw * this.reach);
     this.game.ui.views(views, tag);
     if (kind !== 'hit') this.bump(Math.min(0.012, views / 4e6));
+    this.game.events.emit('views', { views, kind, tag, pos, count, by, handle });
+    return views;
   }
 
   update(dt) {

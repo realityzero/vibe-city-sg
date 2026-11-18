@@ -1,4 +1,5 @@
-// Free-roam extras: hidden kaya toasts (collectibles) and ERP gantries that charge you for driving under them.
+// Free-roam extras: hidden kaya toasts (collectibles) and ERP gantries that charge you for driving under them (event
+// 'erp' with the gantry: { name, x, z, price }).
 import * as THREE from 'three';
 import { Pickup } from '../world/markers.js';
 import { mergeStatic } from '../gfx/mergeStatic.js';
@@ -31,6 +32,8 @@ export class Extras {
     }
     this.kayaTotal = this.kaya.length;
     this.pickups = new Map();
+    // (one made at load, hidden, so the toasts' programs compile in the warm-up and not when the first one shows up)
+    new Pickup(game.scene, new THREE.Vector3(0, -50, 0)).group.visible = false;
     // ---- ERP gantries
     const net = game.roadnet;
     this.gantries = [];
@@ -94,6 +97,7 @@ export class Extras {
         g.progress.stats.erp += G.price;
         g.audio?.sfx?.('erp_beep');
         g.fines.erp(G.price);
+        g.events.emit('erp', G);
       }
       G.side = Math.abs(along) < 30 && lat < G.hw + 4 ? side : 0;
     }

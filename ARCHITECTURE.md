@@ -240,6 +240,19 @@ for a while, so allocation *churn* during the load matters as well as what stays
 - Driving juice (`world/juice.js`): near misses (boxes on the ground plane followed through the pass) pay cash and hype
   with a popup and a FOV kick; sparks from the contact point of every player scrape (`Vehicle.onImpact` hook, Rapier
   pair manifold); 0.3 s slow motion on big crashes; view-space Kopi Gao speed lines. Pooled, created at load.
+- What the street films becomes views (`Hype.clip` -> event `'views'`; `Hype.reach` multiplies them). Now and then — always
+  for a Go Viral creator — the clip pops up as a vertical phone video (`world/bystander.js`): one still per clip, the
+  scene through a phone-shaped camera at the filmer's eye into a 180x320 half-float target on the frame after the event
+  (same program keys as the composer's: a target bound), graded to 8 bits and read back with
+  `readRenderTargetPixelsAsync` (no stall) into the card's canvas; the card animates in CSS. ~2 ms main thread and ~90
+  draw calls on that one frame at phone settings (`tests/scratch/clipcost.mjs`).
+- The city remembers (`missions/citytalk.js`): big fines, viral clips, Ah Beng races, crashing into the Merlion (or
+  another landmark), river jumps, arrests and the side jobs come back 8-25 s later as a DJ line on the car radio (a
+  subtitle in the station's colour) or a text from a contact — templates per event and district, text only.
+- Side jobs (`missions/goviral.js`, `getaway.js`) run through the mission framework with `side: true` (replayable,
+  counted in `progress.side`, not in the story): Go Viral (1M views in 3 minutes, the REC pill as the objective bar,
+  three creators' set pieces) and the Fine City Getaway (Raffles Quay to SGH with zero fines: `FineCity.enforce`, slow
+  `zones`, ERP gantries as violations). `tests/scratch/goviral.mjs`, `getaway.mjs [--fail]` play them end to end.
 - New game: mission 1 opens cold (`missions/coldopen.js`): sunset on the Esplanade Drive bridge, a tracking shot of the
   Infernus, a radio ident and the title card, then the camera blends into the chase view and the car cruises on until
   the player touches the controls. Time holds at sunset until Ken: once the sun stops casting shadows every lit
@@ -321,7 +334,10 @@ for a while, so allocation *churn* during the load matters as well as what stays
   stunts and hits get filmed — event `'filmed' { count, pos, kind }` for anything that wants "filmed by N people".
 - `world/streetlife.js`: the director stages one small scene every 20-40 s in view 25-60 m ahead (otters on a
   promenade, junglefowl crossing — traffic waits —, a jaywalking delivery rider, two uncles arguing with onlookers
-  filming), recruiting people already there; critters are two instanced draws per species, only while out.
+  filming, NS boys booked out at an MRT exit), recruiting people already there; critters are two instanced draws per
+  species, only while out. The 4 pm storm (`Weather.downpour`, most afternoons 15:30-16:30) takes over: people with no
+  umbrella to open run for cover (a sight-only ceiling above, else the wall), a kerb floods (one alpha-mapped sheet)
+  and splashes whoever stands by it when the player drives through. `tests/scratch/spicelife.mjs` frames all of it.
 - Seating (`world/scenes.js`): posed members of the crowd at the builder's tables around the camera (diners at hawker
   centres and kopitiams by the hour, uncles over the void-deck xiangqi boards, wakes and weddings), the hawker behind
   each trading stall and a queue at each centre's famous one; within a budget (70 people on the phone), filled out of
@@ -367,12 +383,14 @@ src/entities/vehicles/      procedural vehicle/boat/aircraft models + instanced 
 src/audio/                  procedural radio stations, engines, SFX, ambience; voice-over playback (vo.js, voice.js,
                             cast.js, vokey.js) for the pre-rendered takes in public/vo
 src/ui/                     HUD, radar, map, menus, dialogue, phone, stunt/taxi/photo overlays; spice.js: Fine City
-                            ticket, cash floaters, filming view counter, one-line objective, drag-race lights
+                            ticket, cash floaters, filming view counter (a job's objective bar), bystander clip card,
+                            one-line objective, drag-race lights
 src/ui/minigames/           vibe-coding IDE, pitch, negotiation, kopi, chope rampage, Singlish quiz
 src/missions/               mission framework (manager.js), story (8 missions), side activities, taxi, stunts,
                             cheats, services (respray/save/food/Claudia texts), claudia.js ("/" prompt),
                             firstdrive.js (mission 1's staged beats), finecity.js (cameras + fines), dragrace.js
-                            (Ah Beng at night red lights)
+                            (Ah Beng at night red lights), side jobs goviral.js / getaway.js, citytalk.js (the radio
+                            and texts mention what you did)
 tools/vo/                   offline voice-over pipeline (Edge neural TTS -> public/vo), coverage check
 tests/                      play.mjs (scripted play-tests), regress.sh (all missions), look.mjs (look-dev views),
                             perf.mjs, soak.mjs, montage.mjs, missions/*.json
