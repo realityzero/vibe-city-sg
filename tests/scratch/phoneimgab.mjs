@@ -2,6 +2,7 @@
 // rendered back to back (as in gpusplit.mjs, so the GPU runs at full clock) with each variant switched in place, the
 // variants interleaved over several rounds at a few fixed views. Prints ms per frame and the A14 estimate (x4.5).
 //   node tests/scratch/phoneimgab.mjs [--url http://127.0.0.1:4173/] [--rounds 4]
+//        [--variants '[["2x, no sharpening", {"taa": true, "upscale": true, "out": 2, "sharpen": 0}]]']
 import { launch } from '../mobile/lib.mjs';
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 const URL0 = arg('url', 'http://127.0.0.1:4173/'), ROUNDS = +arg('rounds', 4);
