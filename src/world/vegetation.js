@@ -132,7 +132,8 @@ function leafAtlas() {
         g.save(); g.translate(cx, y); g.rotate(s * (0.42 + 0.25 * t) - Math.PI / 2 * 0);
         const h = 74 + R() * 12, l = 30 + R() * 10 + (1 - t) * 4;
         g.fillStyle = hsl(h, 46, l);
-        g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(s * len * 0.5, -8, s * len, 14 + t * 26); g.quadraticCurveTo(s * len * 0.5, 3, 0, 4); g.fill();
+        // (narrower than their spacing: light shows between the leaflets)
+        g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(s * len * 0.5, -5.5, s * len, 14 + t * 26); g.quadraticCurveTo(s * len * 0.5, 1.5, 0, 3); g.fill();
         g.strokeStyle = hsl(h - 6, 30, l + 16, 0.5); g.lineWidth = 0.8; g.beginPath(); g.moveTo(0, 2); g.quadraticCurveTo(s * len * 0.5, -2, s * len, 14 + t * 26); g.stroke();
         g.restore();
       }
@@ -526,14 +527,22 @@ function frond(G, crown, az, len, elev, droop, segs, vShape, tint, aoTop = 1) {
     const va = v0 + (v1 - v0) * t0, vb = v0 + (v1 - v0) * t1;
     const ao = 0.55 + 0.45 * aoTop * (0.5 + 0.5 * t0);
     for (const s of [-1, 1]) {
-      const drop = vShape ? 0.42 : 0.1;
-      const A = pts[k], B = pts[k + 1];
-      const Ao = V3().copy(A).addScaledVector(side, s * w0).add(V3(0, -w0 * drop, 0)), Bo = V3().copy(B).addScaledVector(side, s * w1).add(V3(0, -w1 * drop, 0));
-      const n = V3(0, 1, 0).addScaledVector(side, s * 0.35).addScaledVector(h, 0.2).normalize();
-      const ue = s < 0 ? u0 : u1, col = [tint[0], tint[1], tint[2]];
+      const A = pts[k], B = pts[k + 1], ue = s < 0 ? u0 : u1, col = [tint[0], tint[1], tint[2]];
       // sway weight grows toward the frond tip (1 at the crown → 3.4 at the tip): fronds flap, the crown barely moves
       const la = 1 + 2.4 * t0 * t0, lb = 1 + 2.4 * t1 * t1;
-      for (const [P, u, v, lf] of [[A, um, va, la], [Ao, ue, va, la], [Bo, ue, vb, lb], [A, um, va, la], [Bo, ue, vb, lb], [B, um, vb, lb]]) G.v(P, n, u, v, col, ao, lf, 1);
+      // a strip from the rachis out to (dx, dy) x leaflet length, with its shading normal
+      const strip = (Pa, Pb, ua, dx0, dy0, dx1, dy1, ub, n) => {
+        const Ao = V3().copy(Pa).addScaledVector(side, s * w0 * dx1).add(V3(0, -w0 * dy1, 0)), Bo = V3().copy(Pb).addScaledVector(side, s * w1 * dx1).add(V3(0, -w1 * dy1, 0));
+        const Ai = V3().copy(Pa).addScaledVector(side, s * w0 * dx0).add(V3(0, -w0 * dy0, 0)), Bi = V3().copy(Pb).addScaledVector(side, s * w1 * dx0).add(V3(0, -w1 * dy0, 0));
+        for (const [P, u, v, lf] of [[Ai, ua, va, la], [Ao, ub, va, la], [Bo, ub, vb, lb], [Ai, ua, va, la], [Bo, ub, vb, lb], [Bi, ua, vb, lb]]) G.v(P, n, u, v, col, ao, lf, 1);
+      };
+      if (vShape) {
+        // leaflets leave the rachis in a shallow V and hang at their tips: seen from below a frond is a trough of
+        // leaflets with the light between them, not a flat blade
+        const umid = (um + ue) / 2;
+        strip(A, B, um, 0, 0, 0.55, 0.14, umid, V3(0, 1, 0).addScaledVector(side, s * 0.3).addScaledVector(h, 0.2).normalize());
+        strip(A, B, umid, 0.55, 0.14, 0.9, 0.72, ue, V3(0, 0.55, 0).addScaledVector(side, s * 0.85).addScaledVector(h, 0.2).normalize());
+      } else strip(A, B, um, 0, 0, 1, 0.1, ue, V3(0, 1, 0).addScaledVector(side, s * 0.35).addScaledVector(h, 0.2).normalize());
     }
   }
 }
