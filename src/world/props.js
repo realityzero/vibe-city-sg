@@ -28,6 +28,15 @@ class LightMap {
       e[j * W + i] += k / (q * q);
     }
   }
+  // brightest illuminance so far within r of (x, z) (5 x 5 samples)
+  near(x, z, r) {
+    const { res, W, H, e } = this; let m = 0;
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) {
+      const i = Math.floor((x + a * r / 2 - this.x0) / res), j = Math.floor((z + b * r / 2 - this.z0) / res);
+      if (i >= 0 && j >= 0 && i < W && j < H) m = Math.max(m, e[j * W + i]);
+    }
+    return m;
+  }
   upload() {
     const { W, H, e } = this, px = new Uint8Array(W * H);
     for (let i = 0; i < W * H; i++) px[i] = Math.round(Math.sqrt(Math.min(1, e[i] / 4)) * 255);
@@ -116,6 +125,17 @@ export class Props {
       for (let i = 0; i + 3 < r.p.length; i += 2) {
         const ax = r.p[i], az = r.p[i + 1], dx = r.p[i + 2] - ax, dz = r.p[i + 3] - az, l = Math.hypot(dx, dz);
         for (; acc < l; acc += 16) this.light.add(ax + dx * acc / l, az + dz * acc / l, 5, 0.35);
+        acc -= l;
+      }
+    }
+    // plazas, park paths and footways away from the street lights: warm pools from low lantern posts every 18 m, only
+    // where nothing lights them yet (a pavement beside a lit carriageway keeps its street lighting)
+    for (const r of city.data.roads) {
+      if (r.c !== 9 || r.b || r.cv) continue;
+      let acc = 6;
+      for (let i = 0; i + 3 < r.p.length; i += 2) {
+        const ax = r.p[i], az = r.p[i + 1], dx = r.p[i + 2] - ax, dz = r.p[i + 3] - az, l = Math.hypot(dx, dz);
+        for (; acc < l; acc += 18) { const x = ax + dx * acc / l, z = az + dz * acc / l; if (this.light.near(x, z, 14) < 0.35) this.light.add(x, z, 4.5, 0.4); }
         acc -= l;
       }
     }

@@ -121,12 +121,21 @@ function shipGeometry(kind) {
 function wakeTexture() {
   const W = 64, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d'), img = g.createImageData(W, H);
+  const rnd = (i, j) => { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); };
+  const vn = (x, y) => {
+    const i = Math.floor(x), j = Math.floor(y), u = (x - i) * (x - i) * (3 - 2 * (x - i)), v = (y - j) * (y - j) * (3 - 2 * (y - j));
+    return (rnd(i, j) * (1 - u) + rnd(i + 1, j) * u) * (1 - v) + (rnd(i, j + 1) * (1 - u) + rnd(i + 1, j + 1) * u) * v;
+  };
+  const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const u = (x + 0.5) / W * 2 - 1, v = (y + 0.5) / H, au = Math.abs(u);
-    // two arms spreading off the stern (the Kelvin wedge) and a churned strip down the middle, fading astern
-    const arm = Math.exp(-(((au - 0.12 - v * 0.85) / (0.06 + 0.12 * v)) ** 2)) * (1 - v) ** 1.4;
-    const mid = Math.exp(-((u / (0.1 + 0.25 * v)) ** 2)) * (1 - v) ** 2 * 0.9;
-    const a = Math.min(1, arm * 0.8 + mid), i = (y * W + x) * 4;
+    // foam, not light: a churned strip down the middle that is solid at the stern and breaks into patches and
+    // streaks as it widens astern, and the two arms of the Kelvin wedge as thin broken lines of white water (smooth
+    // arms read as a pair of light beams on the bay)
+    const n = vn(x * 0.32, y * 0.07) * 0.6 + vn(x * 0.9, y * 0.25 + 17) * 0.4;
+    const mid = Math.exp(-((u / (0.1 + 0.3 * v)) ** 2)) * (1 - v) ** 1.6 * sm(0.95 - 0.5 * v, 0.6 - 0.35 * v, 1 - n);
+    const arm = Math.exp(-(((au - 0.12 - v * 0.85) / (0.04 + 0.08 * v)) ** 2)) * (1 - v) ** 1.8 * sm(0.35, 0.7, vn(x * 0.5, y * 0.16 + 40));
+    const a = Math.min(1, arm * 0.7 + mid), i = (y * W + x) * 4;
     img.data[i] = 235; img.data[i + 1] = 245; img.data[i + 2] = 250; img.data[i + 3] = a * 255;
   }
   g.putImageData(img, 0, 0);
@@ -235,7 +244,7 @@ export class Boats {
       else R.setTransform(b.rid, b.pos, _q, 0, 0, LIGHTS);
       // wake astern, as long as the boat makes way
       if (b.v > 0.3 && w < 16) {
-        const k = Math.min(1, b.v / 4), f = k * (1 - 0.75 * night);
+        const k = Math.min(1, b.v / 4), f = k * (1 - 0.85 * night);
         _p.set(b.pos.x + Math.sin(b.yaw) * b.len * 0.45, WATER_LEVEL + 0.1, b.pos.z + Math.cos(b.yaw) * b.len * 0.45);
         this.wakes.setMatrixAt(w, _m.compose(_p, _q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, b.yaw), _s.set(b.len * (1.2 + 1.6 * k), 1, b.len * (1.6 + 2.2 * k))));
         this.wakes.setColorAt(w++, _c.setRGB(f, f, f));

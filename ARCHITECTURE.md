@@ -81,18 +81,28 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   texture at load. City materials (`patch()` in materials.js) ray-march it toward the sun beyond the shadow map's box
   (far-field shadows to ~0.9 km) and sample it for street-canyon sky occlusion; tree impostors take the sun term per
   vertex, the water its far-field sun shadow (no hard-edged shadow-map box on the bay). `?nohf` disables it.
+- **Sun shadow map** (`sky.js`, `gfx/shadowfit.js`, `gfx/shadowfilter.js`): the map serves the circle of `shadowRadius`
+  round the player, the height field beyond it. Its box is a fixed square (0.62 of that radius: ~1.6x the texel
+  density of a box centred on the player), fitted each frame to what the camera sees of the circle and snapped to
+  whole texels, so edges don't crawl as the view moves; where it can't reach (far corners of a wide view, tall
+  facades) the height field shades (`hfMapOut()`). PCF is a rotated 4-tap tent — three's taps turn by per-pixel noise,
+  a fixed dot pattern without TAA — and fades out across the box's edge band.
 - **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude. Its
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the
   sea plane and the farthest towers dissolve into the horizon at every time of day.
-- Golden hour / dusk live in the sky shader (warm dome, apricot low-sky haze, sun-side glow and glare, Belt of Venus,
-  twilight dome after sunset; the environment capture adds a copper flare toward the low sun, so glass facing it
-  glints), `SkySystem.update` (sun colour temperature, peach fill and warm bounce, a little more haze) and
-  `FilmGradeEffect` (`uGolden` warms the white balance of lit tones, `uNight` the teal/magenta neon grade).
-  Night light is emissive only, no lights: `world/nightglow.js` (shop light pools on the pavements and neon on the shop
-  fronts — framed signboards, blade signs, eave lines — instanced near the camera, thick in the nightlife quarters),
-  street-lamp coronas (`Props`), and the baked street-light map, which lights roads, pavements, people, cars and the
-  facades' lower floors.
+- The grade aims at a pastel postcard by day and magenta/violet at night. Day: a cyan-leaning dome over a turquoise
+  haze (`skyGain` dims Preetham's white-paper horizon). Golden hour (~17:30-19:15) and dusk live in the sky shader (a
+  coral-to-lilac dome held bright until sunset, pink-lit cumulus, sun-side glow and glare, Belt of Venus, a violet
+  twilight dome after sunset; the environment capture adds a gold flare toward the low sun, so glass facing it
+  glows), `SkySystem.update` (sun colour temperature, peach fill and warm bounce, a little more haze) and
+  `FilmGradeEffect` (`uGolden` warms the white balance of sunlit warm tones, `uNight` the violet/magenta neon grade).
+  Night: the urban sky glow (a mauve band over the skyline, violet zenith, city-lit cloud bases) is also the haze
+  colour, so towers stand in it. Night light is emissive only, no lights: `world/nightglow.js` (shop light pools on
+  the pavements and neon on the shop fronts — framed signboards, blade signs, eave lines — instanced near the camera,
+  thick in the nightlife quarters), street-lamp coronas (`Props`), and the baked street-light map (street lamps, lane
+  and plaza lights), which lights roads, pavements, people, cars and the facades' lower floors; facades also take the
+  shop light from under their five-foot-ways, fading up the wall, while the upper storeys see only the sky glow.
 - Budget at High, 1800x1125 on an M2: ~5-8 ms GPU for reflection + main render, 450-580 draw calls (incl. shadow and
   reflection passes), 2.5-3.3M triangles. `node tests/perf.mjs` drives Claudia's autopilot route Tanjong Pagar -> Marina
   Bay; `tests/gpuframe.mjs` measures per-feature render cost (interleaved A/B), `tests/gpuprof.mjs` per-draw GPU time,

@@ -92,7 +92,7 @@ vec2 waveGrad(vec2 p, float t) {
           normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
           // the shadow map ends at its box (sky.js): beyond it the city height field's far sun shadow takes over, as on
           // land (materials.js) — no hard-edged rectangle of tower shadow on the bay; without one the map's fades out
-          float wFar = smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(vWPos.xz - uHFShadowC.xz));
+          float wFar = max(smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(vWPos.xz - uHFShadowC.xz)), hfMapOut());
           float wSun = 1.0, wMapFade = uHFOn > 0.5 ? 0.0 : wFar;
           if (uHFOn > 0.5 && wFar > 0.0) wSun = mix(1.0, hfSunVis(vWPos, vec3(0.0, 1.0, 0.0), uSunDir), wFar);`)
         .replace('#include <lights_fragment_begin>', THREE.ShaderChunk.lights_fragment_begin
@@ -121,8 +121,10 @@ vec2 waveGrad(vec2 p, float t) {
             float F = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
             if (uUseRefl > 0.5 && uCheap > 0.5) {
               // lite (phones): the quarter-res mirror is smeared along the vertical — the night harbour look, every lit
-              // window and lamp a streak (each ripple facet tilts toward or away from the viewer), and no texel crawl
-              vec2 ruv = vRC.xy / vRC.w + wn.xz * 0.03;
+              // window and lamp a streak (each ripple facet tilts toward or away from the viewer), and no texel crawl.
+              // The swells only nudge it: displaced further, their regular crests cut a bright reflection (MBS at
+              // golden hour) into horizontal bands
+              vec2 ruv = vRC.xy / vRC.w + wn.xz * 0.014;
               float sv = 0.018 * (1.0 + uRain);
               vec3 acc = vec3(0.0), peak = vec3(0.0);
               for (int i = -2; i <= 2; i++) {
