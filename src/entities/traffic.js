@@ -407,7 +407,7 @@ export class Traffic {
       l.path.sample(s, _p);
       const d = Math.hypot(_p.x - V.x, _p.z - V.z);
       if (d > R || Math.hypot(_p.x - pp.x, _p.z - pp.z) < (filling ? 12 : 25)) continue;
-      if (!this._unseen(_p, d, filling)) continue;
+      if (!this._unseen(_p, d, filling, l)) continue;
       const n = queue ? this._queue(l) : this._spawnFlowing(l, s);
       active += n; got += n;
     }
@@ -419,13 +419,16 @@ export class Traffic {
     return false;
   }
 
-  /** could a car appear at p (d m from the viewer) without being seen popping in, and is it worth it there? */
-  _unseen(p, d, filling) {
+  /** could a car appear at p on lane l (d m from the viewer) without being seen popping in, and is it worth it there? */
+  _unseen(p, d, filling, l) {
     const V = this.viewer, f = this.fwd, ahead = ((p.x - V.x) * f.x + (p.z - V.z) * f.y) / Math.max(d, 1);
     if (this.seen(p)) return filling || d > POP || (this._rays-- > 0 && !clearLine(this.game, this.game.camera.position, _k.set(p.x, p.y + 1.2, p.z)));
-    // out of view: close by (the camera may turn), or just off its edges ahead (it drives into the picture) — not at a
-    // cut: then the quota goes into the picture
-    return d < NEAR ? Math.random() < (filling ? 0.3 : 0.5) : !filling && ahead > 0.2;
+    // out of view: on a lane that runs into the picture, just off its edges ahead, or close by (the camera may turn) —
+    // not at a cut: then the quota goes into the picture
+    if (filling) return d < NEAR && Math.random() < 0.3;
+    if (ahead > 0.2 || (d < NEAR && Math.random() < 0.5)) return true;
+    l.path.sample(l.s1, _t);
+    return this.seen(_t);
   }
 
   /** no car on lane l within [s - back, s + ahead] */
