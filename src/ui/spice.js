@@ -1,7 +1,8 @@
 // "Spice" overlays: the Fine City ticket (speed / red-light cameras, small fines) with its camera flash, money floaters
 // under the cash counter (ERP, fines, payouts), the "people are filming you" view counter (also a job's objective bar),
-// the always-on one-line objective, and the drag-race light. Each is one pooled DOM node re-armed with restartClass:
-// nothing is created per event, and the full-screen flash only has a layer while it plays.
+// a bystander's clip as a phone video, the always-on one-line objective, and the drag-race light. Each is one pooled
+// DOM node re-armed with restartClass: nothing is created per event, and the full-screen flash and the clip card only
+// have a layer while they play.
 import './spice.css';
 import { el, fmtMoney, restartClass } from './util.js';
 
@@ -66,6 +67,30 @@ export function makeViews(parent) {
   views.boost = x => { const s = x > 1.01 ? `×${+x.toFixed(2)}` : ''; if (boost.textContent !== s) { boost.textContent = s; if (s) restartClass(boost, 'pop'); } };
   views.total = () => target;
   return views;
+}
+
+/** A bystander's clip of the player as a vertical phone video: the still they caught (world/bystander.js paints
+ *  `canvas`), REC and a running time, the poster's handle, the hashtag and place, Singlish comments rising and a like
+ *  burst. One node, re-armed per clip (restartClass restarts every CSS animation in it); 5.5 s on screen.
+ *  show({ handle, tag, where, views, likes, comments: [3 strings] }) */
+export function makeClipCard(ui, w, h) {
+  const c = el('div', 'vc-clip', `<div class="scr"><canvas width="${w}" height="${h}"></canvas><div class="top"><i class="rec"></i><span class="t">0:00</span></div>
+    <div class="side"><span class="like"><i>♥</i><b></b></span><span class="share"><i>➦</i><b>Share</b></span><i class="h">♥</i><i class="h">♥</i><i class="h">♥</i></div>
+    <ul class="cm"><li></li><li></li><li></li></ul><div class="cap"><b class="who"></b><span class="tag"></span><span class="views"></span></div></div>`);
+  ui._fx.appendChild(c);
+  const q = s => c.querySelector(s), t = q('.t'), likes = q('.like b'), who = q('.who'), tag = q('.tag'), views = q('.views'), cms = [...c.querySelectorAll('.cm li')];
+  let hideT = 0, tick = 0;
+  c.addEventListener('animationend', e => { if (e.animationName === 'vc-clip-out') c.classList.remove('on', 'out'); });
+  const show = o => {
+    who.textContent = o.handle; tag.textContent = `${o.tag} · ${o.where}`; views.textContent = `${fmtViews(o.views)} views`;
+    likes.textContent = fmtViews(o.likes); o.comments.forEach((s, i) => { cms[i].textContent = s; });
+    let s = 0; t.textContent = '0:00';
+    clearInterval(tick); tick = setInterval(() => { t.textContent = `0:0${Math.min(9, ++s)}`; }, 1000);
+    c.classList.remove('out'); restartClass(c, 'on');
+    clearTimeout(hideT); hideT = setTimeout(() => { clearInterval(tick); c.classList.add('out'); }, 5500);
+  };
+  show.canvas = q('canvas');
+  return show;
 }
 
 /** the always-on one-line objective at the top of the screen (html; empty hides it). quiet: no glow (a distance tick) */

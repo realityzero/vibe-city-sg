@@ -1,5 +1,5 @@
 /* Spice overlays (ui/spice.js): Fine City ticket + camera flash, cash floaters, the filming view counter (and Go Viral's
-   objective bar), the one-line objective and the drag-race start lights. */
+   objective bar), the one-line objective, the drag-race start lights and the bystander's clip card. */
 
 /* ---------------------------------------------------------------- Fine City ticket */
 .vc-ticket { position: absolute; left: 50%; top: 12%; z-index: 3; opacity: 0; pointer-events: none; transform: translateX(-50%); }
@@ -92,3 +92,45 @@
 .vc-race .s b { color: var(--pink-hi); font-weight: 700; }
 .vc-race .s em { color: var(--money); font-style: normal; }
 
+/* ---------------------------------------------------------------- a bystander's clip: vertical phone video card */
+.vc-clip { position: absolute; right: calc(var(--u) * 3); bottom: calc(var(--u) * 22); height: calc(var(--u) * 44); /* (above the district / vehicle flashes) */ aspect-ratio: 9 / 16; z-index: 2; display: none; pointer-events: none;
+  padding: calc(var(--u) * .55); border-radius: calc(var(--u) * 2.4); background: #0b0716; box-shadow: 0 0 0 1px rgba(255,255,255,.18), 0 calc(var(--u) * 1) calc(var(--u) * 3.5) rgba(0,0,0,.55), 0 0 calc(var(--u) * 2.2) rgba(255,63,164,.28); }
+.vc-touchmode .vc-clip { right: calc(18vw + var(--sr)); top: calc(var(--u) * 35); bottom: auto; height: calc(var(--u) * 46); } /* (under the views pill, left of the pedals and buttons) */
+.vc-clip.on { display: block; animation: vc-clip-in .5s cubic-bezier(.2,.9,.3,1.15) both; }
+.vc-clip.out { animation: vc-clip-out .45s ease-in both; }
+.vc-root.vc-cine .vc-clip, .vc-root.vc-photomode .vc-clip { opacity: 0 !important; }
+@keyframes vc-clip-in { 0% { opacity: 0; transform: translateX(60%) rotate(8deg); } 100% { opacity: 1; transform: rotate(2deg); } }
+@keyframes vc-clip-out { 0% { opacity: 1; transform: rotate(2deg); } 100% { opacity: 0; transform: translateX(45%) rotate(6deg) scale(.92); } }
+.vc-clip .scr { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: calc(var(--u) * 1.9); background: #000; }
+/* the still: a slow push-in (Ken Burns) on a handheld sway */
+.vc-clip canvas { position: absolute; inset: -4%; width: 108%; height: 108%; }
+.vc-clip.on canvas { animation: vc-clip-kb 5.6s ease-out both, vc-clip-sway 1.9s ease-in-out infinite alternate; }
+@keyframes vc-clip-kb { 0% { scale: 1; } 100% { scale: 1.14; } }
+@keyframes vc-clip-sway { 0% { translate: -1.2% .6%; rotate: -.8deg; } 100% { translate: 1.2% -.6%; rotate: .8deg; } }
+.vc-clip .scr::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.45), transparent 18%, transparent 52%, rgba(0,0,0,.7)); }
+.vc-clip .top { position: absolute; left: 7%; top: 4%; z-index: 1; display: flex; align-items: center; gap: calc(var(--u) * .6); font: italic 800 calc(var(--u) * 1.8)/1 var(--f-hud); color: #fff; letter-spacing: .06em; }
+.vc-clip .top .rec { width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.1); border-radius: 50%; background: var(--red); box-shadow: 0 0 calc(var(--u) * .8) var(--red); animation: vc-starflash 1s steps(1) infinite; }
+.vc-clip .side { position: absolute; right: 5%; bottom: 31%; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 1.2); font: 700 calc(var(--u) * 1.4)/1 var(--f-ui); color: #fff; text-shadow: 0 1px 2px #000; }
+.vc-clip .side span { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * .35); }
+.vc-clip .side span > i { font: normal 400 calc(var(--u) * 2.9)/1 var(--f-ui); }
+.vc-clip.on .like > i { color: #fff; animation: vc-like 2.2s 1.1s both; }
+@keyframes vc-like { 0% { transform: none; color: #fff; } 6% { transform: scale(1.5); color: var(--pink); } 14%, 100% { transform: none; color: var(--pink); } }
+.vc-clip .side .h { position: absolute; left: 25%; top: 0; font: normal 400 calc(var(--u) * 2.2)/1 var(--f-ui); color: var(--pink); opacity: 0; }
+.vc-clip.on .side .h { animation: vc-heart 1.5s 1.15s ease-out both; }
+.vc-clip.on .side .h:nth-of-type(2) { animation-delay: 1.45s; left: 0; }
+.vc-clip.on .side .h:nth-of-type(3) { animation-delay: 1.9s; left: 45%; }
+@keyframes vc-heart { 0% { opacity: 0; transform: translateY(0) scale(.4); } 15% { opacity: 1; transform: translateY(-40%) scale(1.15); } 100% { opacity: 0; transform: translate(-60%, -520%) scale(.8) rotate(-18deg); } }
+.vc-clip.on .share > i { animation: vc-share .6s 3.2s cubic-bezier(.3,1.8,.5,1) both; }
+@keyframes vc-share { 0% { transform: none; } 50% { transform: translateY(-30%) rotate(-12deg); color: var(--cyan-hi); } 100% { transform: none; } }
+.vc-clip .cm { position: absolute; left: 6%; right: 22%; bottom: 13.5%; z-index: 1; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--u) * .5); }
+.vc-clip .cm li { max-width: 100%; padding: calc(var(--u) * .35) calc(var(--u) * .8); border-radius: calc(var(--u) * 1); background: rgba(10,6,20,.55); font: 600 calc(var(--u) * 1.6)/1.25 var(--f-ui); color: #fff; opacity: 0; }
+.vc-touchmode .vc-clip .cm li { font-size: calc(var(--u) * 1.75); }
+.vc-clip.on .cm li { animation: vc-comment .45s ease-out both; }
+.vc-clip.on .cm li:nth-child(1) { animation-delay: .7s; }
+.vc-clip.on .cm li:nth-child(2) { animation-delay: 1.9s; }
+.vc-clip.on .cm li:nth-child(3) { animation-delay: 3.1s; }
+@keyframes vc-comment { 0% { opacity: 0; transform: translateY(70%); } 100% { opacity: 1; transform: none; } }
+.vc-clip .cap { position: absolute; left: 6%; right: 6%; bottom: 3.5%; z-index: 1; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: calc(var(--u) * .7); color: #fff; text-shadow: 0 1px 2px #000; }
+.vc-clip .who { font: 800 calc(var(--u) * 1.85)/1.2 var(--f-ui); }
+.vc-clip .views { font: italic 800 calc(var(--u) * 1.7)/1.2 var(--f-hud); color: var(--pink-hi); letter-spacing: .03em; }
+.vc-clip .tag { order: 3; width: 100%; font: 600 calc(var(--u) * 1.4)/1.25 var(--f-ui); color: var(--cyan-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
