@@ -3,7 +3,7 @@
 // Output buffers are transferred back to the main thread.
 import earcut from 'earcut';
 import { buildStreetscape } from './streetscape.js';
-import { loadGroundMask } from '../groundmask.js';
+import { loadGroundMask, groundEdgeDistance } from '../groundmask.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -1018,26 +1018,37 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     }
   }
 
-  // ================= SEAWALLS (marching squares on land mask) =================
+  // ================= SEAWALLS (marching squares on the drawn waterline) =================
+  // The ground shader draws the water's edge where the water class's edge distance (the mask's alpha, see
+  // groundmask.js), interpolated over each texel quad, crosses zero: walls follow the same contour, so they stand
+  // exactly at the edge of the drawn land, along the quay lines of the map rather than the raster's 2 m steps.
   progress(0.7, 'Filling Marina Bay');
   const TH = 160;
-  const wallCol = srgbToLin(c3(0xa49d90));
+  const waterField = (i, j) => { const o = (j * mask.w + i) * 4, s = groundEdgeDistance(mask.data[o + 3]); return mask.data[o] < TH ? s : -s; };
+  const waterAt = (x, z) => { // the field, bilinear (> 0: water)
+    const tx = Math.min(mask.w - 1.001, Math.max(0, (x - M.xmin) / res - 0.5)), tz = Math.min(mask.h - 1.001, Math.max(0, (z - M.zmin) / res - 0.5));
+    const i = Math.floor(tx), j = Math.floor(tz), fx = tx - i, fz = tz - j;
+    return (waterField(i, j) * (1 - fx) + waterField(i + 1, j) * fx) * (1 - fz) + (waterField(i, j + 1) * (1 - fx) + waterField(i + 1, j + 1) * fx) * fz;
+  };
+  const faceCol = srgbToLin(c3(0xaaa498)), copeCol = srgbToLin(c3(0xbfbaaf));
+  const railBays = new Buf(4096); // quay railing: x, z, yaw, length per bay (drawn near the camera by StreetDetail)
   const segs = [];
   for (let j = 0; j < mask.h - 1; j++) {
     for (let i = 0; i < mask.w - 1; i++) {
-      const v00 = mask.data[(j * mask.w + i) * 4], v10 = mask.data[(j * mask.w + i + 1) * 4], v01 = mask.data[((j + 1) * mask.w + i) * 4], v11 = mask.data[((j + 1) * mask.w + i + 1) * 4];
-      const c = (v00 > TH ? 1 : 0) | (v10 > TH ? 2 : 0) | (v11 > TH ? 4 : 0) | (v01 > TH ? 8 : 0);
+      if (mask.data[(j * mask.w + i) * 4 + 3] === 255 && mask.data[(j * mask.w + i + 1) * 4 + 3] === 255 && mask.data[((j + 1) * mask.w + i) * 4 + 3] === 255 && mask.data[((j + 1) * mask.w + i + 1) * 4 + 3] === 255) continue; // one class all round
+      const v00 = waterField(i, j), v10 = waterField(i + 1, j), v01 = waterField(i, j + 1), v11 = waterField(i + 1, j + 1);
+      const c = (v00 < 0 ? 1 : 0) | (v10 < 0 ? 2 : 0) | (v11 < 0 ? 4 : 0) | (v01 < 0 ? 8 : 0);
       if (c === 0 || c === 15) continue;
       const X = k => M.xmin + (k + 0.5) * res, Z = k => M.zmin + (k + 0.5) * res;
-      const lerp = (a, b) => (TH - a) / (b - a);
+      const lerp = (a, b) => a / (a - b);
       const top = [X(i + lerp(v00, v10)), Z(j)], right = [X(i + 1), Z(j + lerp(v10, v11))], bottom = [X(i + lerp(v01, v11)), Z(j + 1)], left = [X(i), Z(j + lerp(v00, v01))];
       const L = { 1: [[left, top]], 2: [[top, right]], 3: [[left, right]], 4: [[right, bottom]], 5: [[left, top], [right, bottom]], 6: [[top, bottom]], 7: [[left, bottom]], 8: [[bottom, left]], 9: [[bottom, top]], 10: [[top, right], [bottom, left]], 11: [[bottom, right]], 12: [[right, left]], 13: [[right, top]], 14: [[top, left]] }[c];
       for (const s of L) segs.push(s);
     }
   }
   TAG = 's.seawall';
-  // chain the 2 m marching-squares segments into polylines and simplify them (Douglas-Peucker, 0.5 m): straight
-  // quays become a few long quads instead of hundreds; one face, towards the water (the land side is buried)
+  // chain the 2 m marching-squares segments into polylines and simplify them (Douglas-Peucker, 0.12 m): straight
+  // quays become a few long quads instead of hundreds; faces towards the water only (the land side is buried)
   const sk = p => p[0].toFixed(3) + ',' + p[1].toFixed(3);
   const ends = new Map(); const usedS = new Uint8Array(segs.length);
   segs.forEach(([a, b], i) => { for (const p of [a, b]) { const k = sk(p); let l = ends.get(k); if (!l) ends.set(k, l = []); l.push(i); } });
@@ -1061,15 +1072,25 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     // extend forwards from the tail, then backwards from the head
     for (let cur = s0, tail = segs[s0][1]; ;) { const n = nextSeg(tail, cur); if (n < 0) break; usedS[n] = 1; const [a, b] = segs[n]; tail = sk(a) === sk(tail) ? b : a; line.push(tail); cur = n; }
     for (let cur = s0, head = segs[s0][0]; ;) { const n = nextSeg(head, cur); if (n < 0) break; usedS[n] = 1; const [a, b] = segs[n]; head = sk(a) === sk(head) ? b : a; line.unshift(head); cur = n; }
-    const pts = simplify(line, 0.5);
+    const pts = simplify(line, 0.12);
     for (let i = 0; i + 1 < pts.length; i++) {
       const a = pts[i], b = pts[i + 1];
       const ch = chunk(chunkKey((a[0] + b[0]) / 2, (a[1] + b[1]) / 2));
       const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz); if (l < 0.01) continue;
       let nx = dz / l, nz = -dx / l;
-      const mx = (a[0] + b[0]) / 2 + nx * 1.5, mz = (a[1] + b[1]) / 2 + nz * 1.5;
-      if (maskAt(mx, mz) > TH) { nx = -nx; nz = -nz; }
-      quadGeo(ch.struct, [a[0], -4, a[1]], [b[0], -4, b[1]], [b[0], 0.02, b[1]], [a[0], 0.02, a[1]], [nx, 0, nz], wallCol);
+      const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+      if (waterAt(mx + nx * 0.6, mz + nz * 0.6) < 0) { nx = -nx; nz = -nz; }
+      // the wall face, then the coping (the ground's pale granite band) lipping 5 cm over it, its top and front
+      const o = 0.05, ax = a[0] + nx * o, az = a[1] + nz * o, bx = b[0] + nx * o, bz = b[1] + nz * o;
+      quadGeo(ch.struct, [a[0], -4, a[1]], [b[0], -4, b[1]], [b[0], -0.24, b[1]], [a[0], -0.24, a[1]], [nx, 0, nz], faceCol);
+      quadGeo(ch.struct, [ax, -0.26, az], [bx, -0.26, bz], [bx, 0.02, bz], [ax, 0.02, az], [nx, 0, nz], copeCol);
+      quadGeo(ch.struct, [a[0], 0.02, a[1]], [b[0], 0.02, b[1]], [bx, 0.02, bz], [ax, 0.02, az], N_UP, copeCol);
+      // a slim steel railing along the promenades of the bay, the river and the canals (not round park ponds, not
+      // where a building stands on the quay): bays of ~2.4 m (posts, a handrail, a mid rail) set 0.3 m in on the coping
+      if (l > 1.2 && maskAt(mx + nx * 1.2, mz + nz * 1.2) < 64 && occAt(mx - nx * 1.5, mz - nz * 1.5) < 255) {
+        const n = Math.max(1, Math.round(l / 2.4)), yaw = Math.atan2(dx, dz), ox = -nx * 0.3, oz = -nz * 0.3;
+        for (let k = 0; k < n; k++) railBays.p4(a[0] + dx * k / n + ox, a[1] + dz * k / n + oz, yaw, l / n);
+      }
     }
   }
 
@@ -1158,8 +1179,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const treeArr = new Float32Array(trees); transfer.push(treeArr.buffer);
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
   transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer);
+  const railings = railBays.out(); transfer.push(railings.buffer);
   const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, hawkers: hawkerIds }, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, hawkers: hawkerIds }, railings, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {

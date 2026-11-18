@@ -260,7 +260,7 @@ function graniteTexture() {
 const PLAZA = { x: 604, z: 18, r: 40, west: 571 };
 const onPlaza = (x, z) => x >= PLAZA.west && (x - PLAZA.x) ** 2 + (z - PLAZA.z) ** 2 < PLAZA.r * PLAZA.r;
 function plazaGeometry(isWater) {
-  const pos = [], uv = [], idx = [], y = 0.07, cell = 1, tile = 2.4;
+  const pos = [], uv = [], idx = [], y = 0.07, cell = 0.5, tile = 2.4;
   const quad = (x0, x1, z0, z1) => {
     const b = pos.length / 3;
     pos.push(x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1);
@@ -270,8 +270,8 @@ function plazaGeometry(isWater) {
   for (let z = PLAZA.z - PLAZA.r; z < PLAZA.z + PLAZA.r; z += cell) {
     let run = null; // runs of paved cells along x become one quad
     for (let x = PLAZA.west; x <= PLAZA.x + PLAZA.r; x += cell) {
-      // stay ~1.2 m inside the land: the ground draws a smoothed waterline and its quay wall, the paving ends behind it
-      const cx = x + cell / 2, cz = z + cell / 2, e = 1.2;
+      // the paving meets the granite coping the ground draws along the waterline (0.75 m wide), over its quay wall
+      const cx = x + cell / 2, cz = z + cell / 2, e = 0.75;
       const paved = x < PLAZA.x + PLAZA.r && onPlaza(cx, cz) && !isWater(cx, cz) && !isWater(cx + e, cz) && !isWater(cx - e, cz) && !isWater(cx, cz + e) && !isWater(cx, cz - e);
       if (paved && run === null) run = x;
       else if (!paved && run !== null) { quad(run, x, z, z + cell); run = null; }

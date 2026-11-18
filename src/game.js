@@ -295,7 +295,7 @@ export class Game {
     let landmarks = null;
     try {
       const mod = await import('./world/landmarks/index.js');
-      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.isWater(x, z) });
+      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.waterEdge(x, z) > 0 });
       this.scene.add(landmarks.group);
       gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));

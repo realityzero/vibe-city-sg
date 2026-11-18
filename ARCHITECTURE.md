@@ -219,7 +219,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
   waterline. Vehicles live with that (boat exits use `Boat.shoreSpot()`, moorings `Spawns.findBerth()`, which keeps
   every starting boat within boarding reach of a solid quay — `tests/scratch/boats.mjs` boards each one). Characters
   also collide with a flat **shore shelf** (`Physics.addShoreShelf`, group `SHORE`, a trimesh of 1 m drawn-land squares
-  over the sloping cells), so on foot the quay edge is exactly where it is drawn.
+  over the sloping cells, by `City.waterEdge`), so on foot the quay edge is exactly where it is drawn.
+- Seawalls (city builder) stand on that drawn waterline, the zero contour of the water class's edge distance: a face,
+  a pale granite coping lipping over it (the ground draws the coping's top), and along the bay, river and canal
+  promenades a slim steel railing (`City.railings`, a `StreetDetail` near pool) that is seen but not collided with —
+  swimmers still climb out over the edge.
 - **Swimming** (`Player.updateSwim`): below `WATER_LEVEL - 0.6` Tommy floats on a damped spring (treading water /
   front crawl anims), is kept inside the drawn water (the land sheet overhangs the bank), and `findLedge()` down-rays
   for dry level ground within reach (railings up to ~1.6 m above the water are vaulted, walls are not) to play the

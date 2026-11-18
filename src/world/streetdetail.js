@@ -280,6 +280,8 @@ export class StreetDetail {
     await brk();
     this.buildBridges();
     await brk();
+    this.buildQuayRailings();
+    await brk();
     this.buildWear();
     // light under the linkways and footbridges in the street-light map
     const LM = game.props?.light;
@@ -806,6 +808,18 @@ export class StreetDetail {
       this.buildBridge(c, hw, S, run, at, dirs);
     }
   }
+  // ---------------------------------------------------------------- quay railings
+  // the slim steel railing the city builder sets along the bay, river and canal promenades (City.railings: x, z, yaw,
+  // length per ~2.4 m bay): a post at each end of a bay (adjacent bays' posts coincide), a handrail and a mid rail.
+  // Seen, not touched: swimmers still climb out over the quay edge
+  buildQuayRailings() {
+    const R = this.game.city.railings; if (!R) return;
+    const geo = mergeGeometries([box(0.05, 1.04, 0.05, 0, 0.52, 0, 0x7d8587), box(0.05, 1.04, 0.05, 0, 0.52, 2.4, 0x7d8587),
+      box(0.06, 0.05, 2.4, 0, 1.015, 1.2, 0x8b9395), box(0.03, 0.03, 2.4, 0, 0.5, 1.2, 0x7d8587)]);
+    this.railings = this.pool(geo, this.metalMat, { cap: 700, radius: 150, name: 'quayrail' });
+    for (let i = 0; i < R.length; i += 4) this.railings.add(R[i], 0, R[i + 1], R[i + 2], 1, 1, R[i + 3] / 2.4);
+  }
+
   /** a wall/structure collider at body height here (static colliders only; the ground isn't touched at y >= 1) */
   wallAt(x, z) {
     const W = this.game.physics.world, R = this.game.physics.R;

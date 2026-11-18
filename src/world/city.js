@@ -106,6 +106,7 @@ export class City {
           this.trees = m.trees;
           this.buildingInfo = m.buildingInfo;
           this.furniture = m.furniture; // street furniture: { pieces, obstacles } (world/worker/streetscape.js)
+          this.railings = m.railings; // quay railing bays: x, z, yaw, length (StreetDetail draws them)
           this.stats = m.stats;
           this._facadeRecords(m.facadeRecords);
           this._createMeshes(m).then(() => resolve(m.stats), reject);
