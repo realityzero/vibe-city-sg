@@ -3,6 +3,7 @@
 // Output buffers are transferred back to the main thread.
 import earcut from 'earcut';
 import { buildStreetscape } from './streetscape.js';
+import { Kit, lin } from '../streetpieces.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -126,6 +127,7 @@ function recIndex(f1, f2) {
   return (REC.last = i);
 }
 const ROOF_LAYOUT = { position: 3, normal: 3, color: 3, aRoof: 4 };
+const CANOPY = new Kit(), CANOPY_COL = { top: lin(0x6c737a), soffit: lin(0xd6d6d0) }; // office towers' lobby canopies
 const N_UP = [0, 1, 0], N_DOWN = [0, -1, 0];
 const ROAD_LAYOUT = { position: 3, normal: 3, aRoad: 4, aLanes: 4, aJunc: 4 };
 const SIMPLE_LAYOUT = { position: 3, normal: 3, color: 3 };
@@ -613,6 +615,24 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
       }
     } else addWalls(outer, y0, wallTop, f1, wallCol, false, eFlag);
     for (const h of holes) addWalls(h, y0, wallTop, f1, wallCol, false, null, 'w.hole');
+    // a canopy over the street front of an office tower's glazed lobby: at street level the tower otherwise came down
+    // to the pavement as one sheet of glass. The edge nearest a road, kept short of its kerb (near detail only).
+    if (!b.noPhys && (style === STYLE.glass || style === STYLE.office) && top >= 80 && base < 0.5 && !recess) {
+      let bi = -1, bs = 12;
+      for (let i = 0; i < nE; i++) {
+        const [nx, nz, len] = edgeN(i); if (len < 10) continue;
+        const p = outer[i], q = outer[(i + 1) % nE], sc = roadScore((p[0] + q[0]) / 2 + nx * 0.5, (p[1] + q[1]) / 2 + nz * 0.5);
+        if (sc < bs) { bs = sc; bi = i; }
+      }
+      const D = Math.min(3.2, bs - 0.8);
+      if (bi >= 0 && D > 1.6) {
+        TAG = 's.canopy';
+        const [nx, nz, len] = edgeN(bi), p = outer[bi], q = outer[(bi + 1) % nE], hw = Math.min(len * 0.6, 26) / 2, y = floorH + 0.2;
+        CANOPY.at(ch.structNear, (p[0] + q[0]) / 2 + nx * D / 2, y, (p[1] + q[1]) / 2 + nz * D / 2, Math.atan2(nx, nz));
+        CANOPY.box(0, 0, 0, hw, 0.38, D / 2, CANOPY_COL.top);
+        CANOPY.quad(-hw, 0, -D / 2, hw, 0, -D / 2, hw, 0, D / 2, -hw, 0, D / 2, CANOPY_COL.soffit);
+      }
+    }
     if (flatParapet) {
       const pf = [STYLE.plain, seed, floorH, base];
       addWalls(outer, roofY, top, pf, wallCol, true, null, 'w.parapet');
