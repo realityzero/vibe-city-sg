@@ -278,7 +278,9 @@ export class Missions {
 
   async finish(mission, ctx, result) {
     const reward = result?.reward ?? mission.reward ?? 0;
-    this.done.push(mission.id);
+    // side jobs (missions/sidejobs.js) can be replayed: they count their passes, not towards the story
+    if (mission.side) { const s = this.game.progress.side ||= {}; s[mission.id] = (s[mission.id] || 0) + 1; }
+    else this.done.push(mission.id);
     this.game.progress.state = this.state;
     this.game.addMoney(reward);
     this.game.audio?.music?.('mission_passed');
@@ -286,7 +288,7 @@ export class Missions {
     this.game.save();
     if (mission.after) mission.after(this.game, this.state);
     const next = this.nextMission();
-    if (next?.autoStart) setTimeout(() => this.start(next), 1500);
+    if (next?.autoStart && !mission.side) setTimeout(() => this.start(next), 1500);
     else this.refreshGiver();
   }
 
@@ -305,6 +307,7 @@ export class Missions {
     this.prompt = null;
     this.game.routeTo(null);
     this.game.ui.timer.hide(); this.game.ui.counter.hide(); this.game.ui.bar.hide(); this.game.ui.goal(null);
+    this.extraBlips = null;
     this.game.cameraRig.override = null;
     this.game.player.controlsEnabled = true;
     this.game.ui.letterbox(false);

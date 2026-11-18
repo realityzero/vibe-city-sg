@@ -1,8 +1,10 @@
 // "Fine City": Singapore's enforcement as a running gag. The enforcement cameras at the big junctions (entities/wanted.js)
 // clock speeders — a white flash and a stamped ticket (S$150 and 4 demerit points at 1-20 km/h over, more beyond);
 // running a red, leaning on the horn by a hospital and jaywalking across a main road cost small fines. Every fine goes
-// into stats.fines; the ERP gantries (extras.js) drop a −S$ floater off the cash counter. Free roam only (missions,
-// side jobs and police chases have their own rules), except the cold open's staged speed trap (speedTrap()).
+// into stats.fines and is announced ('fined' event); the ERP gantries (extras.js) drop a −S$ floater off the cash
+// counter. Free roam only (missions, side jobs and police chases have their own rules), except the cold open's staged
+// speed trap (speedTrap()) and a job that asks for the rules (`enforce`, with its own slow `zones`: the Fine City
+// Getaway).
 import * as THREE from 'three';
 
 const LIMIT = 70;            // km/h at the enforcement cameras
@@ -24,7 +26,12 @@ export class FineCity {
     this.app = null; this.appS = 0; // the signalised lane the car is on, and how far along it (its stop line is at s1)
     this.flashT = 0;
     this.camFined = new Map(); // camera -> time its 30 s rest ends
+    this.enforce = false;    // a mission wants the rules applied to it
+    this.zones = [];         // { x, z, r, limit, name }: slow zones (km/h) a mission adds
+    this.zoneT = 0;          // s spent over a zone's limit
     this._near = []; this._hit = { lane: null, s: 0 };
+    // stepping out of a car where it stopped isn't jaywalking: a few seconds to reach the kerb
+    game.events.on('exitVehicle', () => { this.walkT = Math.max(this.walkT, 8); });
     addEventListener('keydown', e => {
       if (e.code !== 'KeyH' || e.repeat || e.__cheatTyping || e.__uiHandled) return;
       const v = game.player?.vehicle;
@@ -37,6 +44,7 @@ export class FineCity {
     const g = this.game;
     g.money = Math.max(0, g.money - amount);
     g.progress.stats.fines += amount;
+    g.events.emit('fined', { what, amount, x: g.player.position.x, z: g.player.position.z });
     g.ui.ticket({ what, amount, detail, flash });
     g.ui.floater(`−S$${amount.toLocaleString('en-US')}`);
     g.audio?.sfx?.(flash ? 'camera_flash' : 'stamp', { volume: 0.9 });
@@ -74,10 +82,11 @@ export class FineCity {
     setTimeout(() => this.charge('Horn near a hospital', 70, `${h.n || 'Hospital'} · patients are <b>healing</b> lah`), 450);
   }
 
-  /** fines apply in free roam, with the controls in Tommy's hands (not Claudia's autopilot) and no police on him */
+  /** fines apply in free roam (or in a job that enforces them), with the controls in the player's hands (not Claudia's
+   *  autopilot) and no police on him */
   free() {
     const g = this.game, P = g.player;
-    return !g.missions.active && !g.activities?.busy && g.wanted.stars === 0 && P.controlsEnabled && !P.autopilot && !g.cameraRig.override;
+    return (this.enforce || !g.missions.active && !g.activities?.busy) && g.wanted.stars === 0 && P.controlsEnabled && !P.autopilot && !g.cameraRig.override;
   }
 
   update(dt) {
@@ -97,10 +106,25 @@ export class FineCity {
         break;
       }
     }
+    if (car && this.zones.length) this.slowZones(v, px, pz, dt);
     if ((this.laneT -= dt) > 0) return;
     this.laneT = 1 / LANE_HZ;
     if (car) this.redLight(v, px, pz);
     else { this.app = null; if (P.state === 'foot' && !P.swimming && this.walkT <= 0) this.jaywalk(px, pz); }
+  }
+
+  // A slow zone (a hospital's): more than a moment over its limit is a ticket, then it leaves you be for a while.
+  slowZones(v, px, pz, dt) {
+    const kmh = v.speed * 3.6;
+    for (const Z of this.zones) {
+      if ((Z.x - px) ** 2 + (Z.z - pz) ** 2 > Z.r * Z.r) continue;
+      if (kmh <= Z.limit + 2) { this.zoneT = 0; return; }
+      if ((this.zoneT += dt) < 0.7 || this.camT > 0) return;
+      this.zoneT = 0; this.camT = 8;
+      this.charge(`${Z.name} zone`, 150, `${Math.round(kmh)} km/h in a ${Z.limit} zone · <b>4 demerit points</b>`, { flash: true, at: _at.copy(v.position).setY(v.position.y + 4.5) });
+      return;
+    }
+    this.zoneT = 0;
   }
 
   // Through a red: on a signalised lane, the car went over its stop line (s1: lanes run on into the junction) while
