@@ -775,7 +775,7 @@ ${SHOP_UNIT_SETUP}
 export function createRoofMaterial() {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.0 });
   return patch(mat, {
-    key: 'roof-v2',
+    key: 'roof-v3',
     uniforms: COMMON_U(),
     vertexHead: COMMON_VHEAD + `attribute vec4 aRoof; varying vec4 vRoof;`,
     vertexBody: COMMON_VBODY + `vRoof = aRoof;`,
@@ -830,10 +830,21 @@ export function createRoofMaterial() {
           albedo = mix(albedo * 0.8, pv, gap);
           rgh = mix(rgh, 0.18, gap * grid); mtl = gap * 0.4;
         }
+      } else if (vRoof.z > 1.5) {
+        // a terrace's plastered firewall, streaked with grime
+        albedo *= 0.88 + 0.2 * n - 0.15 * smoothstep(0.6, 0.85, vnoise(vec2(dot(vWPos.xz, vec2(0.7)) * 0.8, vWPos.y * 2.0)));
+        rgh = 0.85;
       } else if (vRoof.z > 0.5) {
-        float rows = fract(vWPos.y * 3.2);
-        albedo *= 0.78 + 0.22 * smoothstep(0.0, 0.25, rows);
-        albedo *= 0.85 + 0.3 * hash12(floor(vec2(vWPos.x + vWPos.z, vWPos.y * 3.2) * vec2(4.0, 1.0)));
+        // half-round clay tiles in rows running down the slope (u across it, ~22 cm a row) and overlapping courses
+        // (sl down it, ~29 cm); each tile its own shade. Where rows or courses shrink below a pixel they fade to their
+        // average, so a distant roof is an even clay colour instead of moire
+        float hl = length(vWN.xz);
+        vec2 hd = hl > 0.05 ? vec2(-vWN.z, vWN.x) / hl : vec2(1.0, 0.0);
+        float u = dot(vWPos.xz, hd) * 4.6, sl = vWPos.y / max(hl, 0.25) * 3.4;
+        float fu = 1.0 - smoothstep(0.3, 0.7, fwidth(u)), fs = 1.0 - smoothstep(0.3, 0.7, fwidth(sl));
+        float barrel = 0.7 + 0.345 * sqrt(sin(fract(u) * 3.14159));
+        float course = 0.8 + 0.2 * smoothstep(0.0, 0.22, fract(sl));
+        albedo *= mix(1.0, barrel, fu) * mix(0.98, course, fs) * mix(1.0, 0.88 + 0.24 * hash12(floor(vec2(u, sl))), min(fu, fs));
         // moss / soot on old clay tiles
         albedo = mix(albedo, albedo * vec3(0.45, 0.5, 0.42), smoothstep(0.55, 0.85, vnoise(vWPos.xz * 0.3)) * 0.6);
         rgh = 0.7;

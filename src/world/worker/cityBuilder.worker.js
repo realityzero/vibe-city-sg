@@ -227,6 +227,7 @@ const PAL = {
 const ROOF_DEFAULT = { flat: 0x9b9891, terracotta: 0xa4553a, dark: 0x5b5d60, green: 0x5e8a6e };
 const ROOF_CLAY = [0x9c5b36, 0x8f5a3a, 0xa86a42, 0x7f523a, 0x936147, 0x8a5a40, 0xa07050, 0x6f5548, 0xb06a40, 0x80604e, 0x94603c, 0x7a4e34];
 const pick = (arr, s) => arr[Math.floor(s * arr.length) % arr.length];
+const ROOF_CLAY_LIN = ROOF_CLAY.map(h => srgbToLin(c3(h))), FIREWALL_LIN = srgbToLin(c3(0xd6d0c3)); // (terrace roofs)
 
 async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
@@ -641,18 +642,18 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         roofTris++;
       }
     };
-    const roofTri = (a, bb, c, colour = roofCol) => {
+    const roofTri = (a, bb, c, colour = roofCol, attr = roofAttr, sight = true) => {
       // computes face normal, ensures it points up/outward
       let ux = bb[0] - a[0], uy = bb[1] - a[1], uz = bb[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
       let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
       const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
       let A = a, B = bb, C = c;
       if (ny < 0) { B = c; C = bb; nx = -nx; ny = -ny; nz = -nz; }
-      const i0 = ch.roofs.rv(A[0], A[1], A[2], nx, ny, nz, colour, roofAttr);
-      const i1 = ch.roofs.rv(B[0], B[1], B[2], nx, ny, nz, colour, roofAttr);
-      const i2 = ch.roofs.rv(C[0], C[1], C[2], nx, ny, nz, colour, roofAttr);
+      const i0 = ch.roofs.rv(A[0], A[1], A[2], nx, ny, nz, colour, attr);
+      const i1 = ch.roofs.rv(B[0], B[1], B[2], nx, ny, nz, colour, attr);
+      const i2 = ch.roofs.rv(C[0], C[1], C[2], nx, ny, nz, colour, attr);
       ch.roofs.tri(i0, i1, i2); roofTris++;
-      if (!b.noPhys) occlTri(ch, A, B, C);
+      if (sight && !b.noPhys) occlTri(ch, A, B, C);
     };
     const gableEnd = (a, bb, c) => {
       // vertical triangle in wall material (plain)
@@ -688,8 +689,44 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         const e = wallTop, r = topAdj;
         const c1 = P(-L, -Wh, e), c2 = P(L, -Wh, e), c3 = P(L, Wh, e), c4 = P(-L, Wh, e);
         const r1 = P(-L + ridgeIn, 0, r), r2 = P(L - ridgeIn, 0, r);
-        roofTri(c1, c2, r2); roofTri(c1, r2, r1);
-        roofTri(c3, c4, r1); roofTri(c3, r1, r2);
+        // a shophouse terrace is a row of houses, not one long shed: a roof per unit on the facade's ~5.5 m unit grid
+        // (materials.js SHOP_UNIT_SETUP, along the five-foot-way front), each re-tiled in its own time, and a plastered
+        // firewall standing proud of the tiles along every party wall
+        const cuts = [];
+        const fi = roofShape === 1 && style === STYLE.shophouse ? eFlag.indexOf(1) : -1;
+        if (fi >= 0) {
+          const p = outer[fi], q = outer[(fi + 1) % nE], fl = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          const unitN = fl > 8 ? Math.max(1, Math.floor(fl / 5.5 + 0.5)) : 1;
+          for (let k = 1; k < unitN; k++) {
+            const a = (p[0] + (q[0] - p[0]) * k / unitN - o.cx) * ux + (p[1] + (q[1] - p[1]) * k / unitN - o.cz) * uz;
+            if (Math.abs(a) < L - 1.5) cuts.push(a);
+          }
+          cuts.sort((x, y) => x - y);
+        }
+        if (cuts.length) {
+          TAG = OT + 'r.terrace';
+          const fwAttr = [style, seed, 2, 0], hb = 0.14, hf = 0.38;
+          const at = [-L, ...cuts, L];
+          for (let k = 0; k + 1 < at.length; k++) {
+            const a0 = at[k], a1 = at[k + 1], hu = hash1(b.id * 13.7 + k * 3.1);
+            const col = (hu < 0.25 ? pick(ROOF_CLAY_LIN, hash1(b.id + k * 7.9)) : roofCol).map(v => v * (0.86 + 0.28 * hash1(hu * 91.3)));
+            const u1 = P(a0, -Wh, e), u2 = P(a1, -Wh, e), u3 = P(a1, Wh, e), u4 = P(a0, Wh, e), s1 = P(a0, 0, r), s2 = P(a1, 0, r);
+            roofTri(u1, u2, s2, col); roofTri(u1, s2, s1, col);
+            roofTri(u3, u4, s1, col); roofTri(u3, s1, s2, col);
+          }
+          // firewalls: a ridge of plaster (a triangular section, its crest hf above the tiles) up each slope
+          for (const a of cuts) for (const [v0, v1] of [[-Wh, 0], [0, Wh]]) {
+            const y0 = v0 ? e : r, y1 = v1 ? e : r;
+            for (const sd of [-1, 1]) {
+              const f0 = P(a + sd * hb, v0, y0), f1 = P(a + sd * hb, v1, y1), t0 = P(a, v0, y0 + hf), t1 = P(a, v1, y1 + hf);
+              roofTri(f0, f1, t1, FIREWALL_LIN, fwAttr, false); roofTri(f0, t1, t0, FIREWALL_LIN, fwAttr, false);
+            }
+          }
+          TAG = OT + 'r.main';
+        } else {
+          roofTri(c1, c2, r2); roofTri(c1, r2, r1);
+          roofTri(c3, c4, r1); roofTri(c3, r1, r2);
+        }
         if (roofShape === 2) { roofTri(c2, c3, r2); roofTri(c4, c1, r1); }
         else { gableEnd(P(L - ov, -Wh + ov, e), P(L - ov, Wh - ov, e), P(L - ov, 0, r)); gableEnd(P(-L + ov, Wh - ov, e), P(-L + ov, -Wh + ov, e), P(-L + ov, 0, r)); }
         addFlat(outer, holes, e - 0.01, false);
