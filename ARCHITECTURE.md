@@ -266,10 +266,13 @@ src/entities/humanoid/      procedural humans (Tommy, NPCs) + instanced crowd
 src/entities/vehicles/      procedural vehicle/boat/aircraft models + instanced traffic renderer
 src/audio/                  procedural radio stations, engines, SFX, ambience; voice-over playback (vo.js, voice.js,
                             cast.js, vokey.js) for the pre-rendered takes in public/vo
-src/ui/                     HUD, radar, map, menus, dialogue, phone, stunt/taxi/photo overlays
+src/ui/                     HUD, radar, map, menus, dialogue, phone, stunt/taxi/photo overlays; spice.js: Fine City
+                            ticket, cash floaters, filming view counter, one-line objective, drag-race lights
 src/ui/minigames/           vibe-coding IDE, pitch, negotiation, kopi, chope rampage, Singlish quiz
 src/missions/               mission framework (manager.js), story (8 missions), side activities, taxi, stunts,
-                            cheats, services (respray/save/food/Claudia texts), claudia.js ("/" prompt)
+                            cheats, services (respray/save/food/Claudia texts), claudia.js ("/" prompt),
+                            firstdrive.js (mission 1's staged beats), finecity.js (cameras + fines), dragrace.js
+                            (Ah Beng at night red lights)
 tools/vo/                   offline voice-over pipeline (Edge neural TTS -> public/vo), coverage check
 tests/                      play.mjs (scripted play-tests), regress.sh (all missions), look.mjs (look-dev views),
                             perf.mjs, soak.mjs, montage.mjs, missions/*.json
