@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { U } from '../gfx/globals.js';
 import { HF } from '../gfx/heightfield.js';
+import { fitShadowBox, SHADOW_BOX } from '../gfx/shadowfit.js';
 import '../gfx/shadowfilter.js'; // rotated-tent PCF for the sun shadow (patches three's shadow chunk)
 import { LIT } from '../gfx/materials.js';
 
@@ -255,10 +256,9 @@ export class SkySystem {
     // lights
     this.dir = new THREE.DirectionalLight(0xffffff, 3);
     this.dir.castShadow = true;
-    this.dir.shadow.mapSize.set(2048, 2048);
-    const sc = this.dir.shadow.camera; sc.near = 10; sc.far = 1400; sc.left = -170; sc.right = 170; sc.top = 170; sc.bottom = -170;
+    this.dir.shadow.camera.near = 10; this.dir.shadow.camera.far = 1400;
     this.dir.shadow.bias = -0.0004; this.dir.shadow.normalBias = 0.25; // small enough that cars, feet and columns keep their contact shadow
-    this.shadowRadius = 170;
+    this.setShadowQuality(2048, 170);
     scene.add(this.dir); scene.add(this.dir.target);
     this.hemi = new THREE.HemisphereLight(0xbfd9ff, 0x4a4a40, 0.5);
     scene.add(this.hemi);
@@ -270,17 +270,20 @@ export class SkySystem {
     this._c = new THREE.Color();
   }
 
+  // radius: how far from the focus the sun shadow comes from the shadow map (the height field's beyond); the map's box
+  // is fitted to the part of that circle in view each frame (shadowfit.js), so it can be smaller than the circle
   setShadowQuality(size, radius) {
     // only reallocate when the resolution really changes (draw-distance/shadow toggles call this too)
     if (this.dir.shadow.mapSize.x !== size || this.dir.shadow.mapSize.y !== size) {
       this.dir.shadow.mapSize.set(size, size);
       this.dir.shadow.map?.dispose(); this.dir.shadow.map = null;
     }
-    this.shadowRadius = radius;
-    const sc = this.dir.shadow.camera; sc.left = -radius; sc.right = radius; sc.top = radius; sc.bottom = -radius; sc.updateProjectionMatrix();
+    this.shadowRadius = radius; this.shadowHalf = radius * SHADOW_BOX;
+    const sc = this.dir.shadow.camera, h = this.shadowHalf; sc.left = -h; sc.right = h; sc.top = h; sc.bottom = -h; sc.updateProjectionMatrix();
   }
 
-  update(dt, focus /* Vector3 */) {
+  // camera: the view the shadow map is fitted to (without one, the box is centred on the focus)
+  update(dt, focus /* Vector3 */, camera = null) {
     const t = this.time;
     sunDirection(t, this.sun);
     sunDirection(t + 12.4, this.moon);
@@ -321,18 +324,17 @@ export class SkySystem {
       this.dir.intensity = 0.13 * THREE.MathUtils.smoothstep(this.moon.y, 0.0, 0.2) * (1 - this.rain * 0.9);
     }
     U.sunColor.value.copy(this.dir.color).multiplyScalar(this.dir.intensity);
-    // shadow camera follows focus, snapped to texels to avoid shimmering
+    // shadow camera: fitted to the view of the shadow circle round the focus, snapped to texels to avoid shimmering
     const r = this.shadowRadius;
-    const texel = (2 * r) / this.dir.shadow.mapSize.x;
+    const texel = (2 * this.shadowHalf) / this.dir.shadow.mapSize.x;
     const L = (this._L || (this._L = new THREE.Vector3())).copy(ld).setY(Math.max(ld.y, 0.12)).normalize();
     // snap in the shadow camera's own right/up basis (world X/Z snapping still shimmers as the camera follows a car)
     const SX = this._sx || (this._sx = new THREE.Vector3()), SY = this._sy || (this._sy = new THREE.Vector3()), F = this._sf || (this._sf = new THREE.Vector3());
     SX.set(L.z, 0, -L.x).normalize(); SY.crossVectors(L, SX);
-    F.set(focus.x, 0, focus.z);
-    const px = F.dot(SX), py = F.dot(SY);
-    F.addScaledVector(SX, Math.round(px / texel) * texel - px).addScaledVector(SY, Math.round(py / texel) * texel - py);
+    const c = fitShadowBox(camera, focus, r * 0.95, this.shadowHalf, texel, SX, SY, this._sc || (this._sc = [0, 0]));
+    F.copy(SX).multiplyScalar(c[0]).addScaledVector(SY, c[1]); F.addScaledVector(L, -F.y / L.y); // (on the ground)
     this.dir.target.position.copy(F);
-    HF.shadowCenter.value.copy(F); HF.shadowR.value = r; // the height field takes over the sun shadow beyond this box
+    HF.shadowCenter.value.set(focus.x, 0, focus.z); HF.shadowR.value = r; // the height field takes over the sun shadow beyond this circle
     this.dir.position.set(F.x + L.x * 700, F.y + L.y * 700, F.z + L.z * 700);
     this.dir.target.updateMatrixWorld();
     // The sun never stops casting (castShadow is part of every lit program's key: switching it at dusk recompiled ~40

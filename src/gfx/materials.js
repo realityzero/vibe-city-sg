@@ -25,7 +25,7 @@ const HF_EVAL = /* glsl */`
   if (uHFOn > 0.5) {
     vec3 hfP = cameraPosition + (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
     vec3 hfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
-    float farW = smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(hfP.xz - uHFShadowC.xz));
+    float farW = max(smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(hfP.xz - uHFShadowC.xz)), hfMapOut());
     if (farW > 0.0) hfSun = mix(1.0, hfSunVis(hfP, hfN, uHFSun), farW);
     // canyon occlusion fades out with distance (haze hides it; saves 18 taps on the far city)
     float hfD = length(hfP - cameraPosition);

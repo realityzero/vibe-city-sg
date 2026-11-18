@@ -6,6 +6,7 @@
 //     courtyards and the feet of towers (ambient/sky light only — direct sun is handled above).
 // One render at load (~0.1 s), then ~20 bilinear taps per city pixel.
 import * as THREE from 'three';
+import { SHADOW_EDGE } from './shadowfilter.js';
 
 export const HF = {
   tex: { value: null },
@@ -17,6 +18,14 @@ export const HF = {
 
 export const HF_GLSL = /* glsl */`
 uniform sampler2D uHF; uniform vec4 uHFRect; uniform float uHFOn; uniform vec3 uHFShadowC; uniform float uHFShadowR;
+// 1 where the sun's shadow map has no data, so the height field must shade: the map's box covers only what the camera
+// sees of the shadow circle, up to low roofs (shadowfit.js), and its shadows fade out across the box's edge band
+// (shadowfilter.js). A macro: vDirectionalShadowCoord is declared further down the fragment shader.
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+#define hfMapOut() (1.0 - smoothstep(0.0, ${SHADOW_EDGE.toFixed(3)}, min(min(vDirectionalShadowCoord[0].x, 1.0 - vDirectionalShadowCoord[0].x), min(vDirectionalShadowCoord[0].y, 1.0 - vDirectionalShadowCoord[0].y))))
+#else
+#define hfMapOut() 0.0
+#endif
 float hfH(vec2 xz) { return texture2D(uHF, (xz - uHFRect.xy) * uHFRect.zw).r; }
 // sun visibility from the height field (1 lit, 0 shadowed), soft with distance along the ray
 float hfSunVis(vec3 p, vec3 n, vec3 L) {
