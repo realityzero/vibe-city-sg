@@ -254,8 +254,9 @@ ${SHOP_UNIT_SETUP}
                            : 1.0 - smoothstep(0.09, 0.14, length(lq));
         vec3 lc = hdbS ? vec3(0.85, 0.95, 1.0) : vec3(1.0, 0.7, 0.38);
         fEmis += lc * lampM * ((hdbS ? 1.4 : 0.25) + uNight * 7.0);
-        fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * (uNight * 0.45 + (hdbS ? 0.08 : 0.0));
-        if (hall) fEmis += albedo * lc * (0.1 + uNight * 0.1);   // (the light the floor and tables throw back up)
+        // (a hall's tubes are close together: less glow round each, or its whole ceiling burns white at night)
+        fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * (uNight * (hall ? 0.15 : 0.45) + (hdbS ? 0.08 : 0.0));
+        if (hall) fEmis += albedo * lc * (0.1 + uNight * 0.02);   // (the light the floor and tables throw back up)
         fRough = 0.92;
       } else if (fStyle < 13.5) {
         // ---- columns: shophouse piers wear a Peranakan tile dado, HDB / hawker-centre pillars a painted base band
