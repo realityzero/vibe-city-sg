@@ -502,6 +502,10 @@ export class Traffic {
       const l = n.lane;
       // the kerb on the left of the lane (left-hand traffic), and room to pull up clear of the junctions
       if ((st.x - n.pos.x) * n.dir.z - (st.z - n.pos.z) * n.dir.x <= 0 || n.s < l.s0 + 12 || n.s > l.s1 - 8) continue;
+      // nor where another road's lane runs alongside (a slip road joining): a standing bus would block it
+      let clear = true;
+      for (const k of [-6, 0, 6]) { l.path.sample(n.s + k, _t); if ((this.net.nearestLane(_t.x, _t.z, 8, o => o.edge !== l.edge)?.dist ?? 99) < 4.5) clear = false; }
+      if (!clear) continue;
       (l.busStops ||= []).push(n.s);
       l.busStops.sort((a, b) => a - b);
       this.stops.push({ lane: l, s: n.s, x: n.pos.x, z: n.pos.z });
