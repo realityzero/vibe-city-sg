@@ -435,12 +435,14 @@ export class Traffic {
   }
 
   /** room on lane l at s for a car doing v: its following distance to the car ahead (and room to brake for a slow
-   * one), and the car behind its own */
+   * one), and for the car behind (on the lane, or coming into it out of the junction) to keep its own or stop */
   _room(l, s, v) {
+    const behind = (d, u) => d < 8 + Math.max(u * 1.4, u * u / 5);
     for (const o of l.cars) {
       const d = o.s - s;
-      if (d > 0 ? d < 8 + v * 1.4 || (o.speed < v * 0.6 && d < 14 + v * v / 4) : -d < 8 + o.speed * 1.4) return false;
+      if (d > 0 ? d < 8 + v * 1.4 || (o.speed < v * 0.6 && d < 14 + v * v / 4) : behind(-d, o.speed)) return false;
     }
+    for (const o of this.net.nodes[l.from].occ) if (o.conn.lane === l && behind(s - l.s0 + o.conn.path.length - o.cs, o.speed)) return false;
     return true;
   }
 
@@ -475,7 +477,7 @@ export class Traffic {
     for (let k = 1 + Math.floor(Math.random() * 5); k > 0; k--) {
       const type = this._pickType(l), half = VEHICLE_SPECS[type].length / 2;
       s -= half;
-      if (s < l.s0 + half || !this._clear(l, s, half + 4, half + 4)) break;
+      if (s < l.s0 + half || !this._clear(l, s, half + 4, half + 4) || !this._room(l, s - half, 0)) break;
       if (!this.spawnAt(l, s, type, undefined, 0)) break;
       n++; s -= half + 2 + Math.random() * 1.5;
     }
