@@ -42,10 +42,26 @@ const count = () => h.page.evaluate(() => {
   const pk = g.traffic.parked?.spots || [];
   for (const s of pk) if (s.on && seen(s.x, s.y, s.z, 1)) parked++;
   for (const b of g.boats?.list || []) if (seen(b.pos.x, b.pos.y, b.pos.z, 1.5)) boats++;
-  return { cars, moving, near, parked, boats, total: g.traffic.cars.length, draws: g.R.renderer.info.render.calls };
+  // cars inside each other (traffic, parked, and the physics vehicles: the player's): oriented boxes on the ground,
+  // overlapping by more than 0.25 m, not one on a flyover above the other
+  const box = [...g.traffic.cars.map(c => ({ x: c.pos.x, y: c.pos.y, z: c.pos.z, yaw: c.yaw, l: c.spec.length, w: c.spec.width })),
+    ...g.vehicles.filter(v => !v.isBoat && !v.isAircraft && v.spec?.length).map(v => ({ x: v.position.x, y: v.position.y, z: v.position.z, yaw: v.yaw(), l: v.spec.length, w: v.spec.width }))];
+  let overlaps = 0;
+  for (let i = 0; i < box.length; i++) for (let j = i + 1; j < box.length; j++) {
+    const a = box[i], b = box[j], dx = b.x - a.x, dz = b.z - a.z;
+    if (dx * dx + dz * dz > 100 || Math.abs(b.y - a.y) > 2.5) continue;
+    let pen = Infinity;
+    for (const c of [a, b]) for (const k of [0, 1]) {
+      const ux = k ? -Math.sin(c.yaw) : Math.cos(c.yaw), uz = k ? -Math.cos(c.yaw) : -Math.sin(c.yaw);
+      const ext = o => Math.abs(-Math.sin(o.yaw) * ux - Math.cos(o.yaw) * uz) * o.l / 2 + Math.abs(Math.cos(o.yaw) * ux - Math.sin(o.yaw) * uz) * o.w / 2;
+      pen = Math.min(pen, ext(a) + ext(b) - Math.abs(dx * ux + dz * uz));
+    }
+    if (pen > 0.25) overlaps++;
+  }
+  return { cars, moving, near, parked, boats, overlaps, total: g.traffic.cars.length, draws: g.R.renderer.info.render.calls };
 });
 const list = ALL.filter(v => ONLY.split(',').includes(v[0])).sort((a, b) => a[1] - b[1]);
-let loadedT = null, sum = 0;
+let loadedT = null, sum = 0, overlaps = 0;
 for (const [name, t, pos, look, hud] of list) {
   if (loadedT !== t) {
     await h.page.goto(`${URL0}?skipTitle&newgame&freeroam=8&t=${t}&q=${Q}&fixedres`, { waitUntil: 'load' });
@@ -65,10 +81,10 @@ for (const [name, t, pos, look, hud] of list) {
   }, [pos, look, hud]);
   await h.page.waitForTimeout(hud === 'drive' ? 9000 : SETTLE);
   const c = await count();
-  sum += c.moving;
-  console.log(`${name.padEnd(20)} cars in view ${String(c.cars).padStart(3)}  moving ${String(c.moving).padStart(3)}  <120 m ${String(c.near).padStart(3)}  parked ${String(c.parked).padStart(3)}  boats ${String(c.boats).padStart(2)}  (traffic ${c.total}, draws ${c.draws})`);
+  sum += c.moving; overlaps += c.overlaps;
+  console.log(`${name.padEnd(20)} cars in view ${String(c.cars).padStart(3)}  moving ${String(c.moving).padStart(3)}  <120 m ${String(c.near).padStart(3)}  parked ${String(c.parked).padStart(3)}  boats ${String(c.boats).padStart(2)}  overlapping ${c.overlaps}  (traffic ${c.total}, draws ${c.draws})`);
   if (OUT) await h.page.screenshot({ path: `${OUT}/${Q}-${name}.png` });
 }
-console.log(`moving cars in view, total over ${list.length} views: ${sum}`);
+console.log(`moving cars in view, total over ${list.length} views: ${sum}; pairs of cars inside each other: ${overlaps}`);
 if (errs.length) console.log('page errors:', errs.slice(0, 3));
 await h.browser.close();
