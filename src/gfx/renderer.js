@@ -48,6 +48,9 @@ export const QUALITY = {
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
 };
 
+// dynamic resolution steps down to this fraction of the preset's pixel ratio before anything else is given up
+const DYN_FLOOR = 0.75;
+
 export class Renderer {
   constructor(canvas, quality = 'high') {
     this.canvas = canvas;
@@ -74,7 +77,7 @@ export class Renderer {
   setQuality(name) {
     this.qualityName = name;
     this.q = QUALITY[name] || QUALITY.high;
-    this.dynScale = 1;
+    this.dynScale = 1; this.shed = false;
     this.setResolutionPreference(this.resPref ?? 1);
   }
   /** user resolution scale x quality pixel ratio x a per-GPU cap (base M1/M2 GPUs start with fewer pixels so the
@@ -229,11 +232,13 @@ export class Renderer {
   // so the game loop reports how many 60 Hz slots each tick missed. Per one-second window: >5% missed slots twice in a
   // row (and not CPU-bound — fewer pixels wouldn't help) steps resolution down; a clean run with GPU headroom probes
   // back up, with exponential backoff if the probe fails. Every resize reallocates all post targets (a 30-40 ms
-  // hitch), hence the cooldowns.
+  // hitch), hence the cooldowns. The ladder: resolution down to DYN_FLOOR, then the extras go (onShed: the water's
+  // mirror of the city), and only then resolution below the floor — the phone image is what suffers most from fewer
+  // pixels, even upscaled.
   trackFrame({ missed = 0, cpuMs = 0, eligible = true } = {}) {
     const now = performance.now();
     if (!eligible) { if (this._dyn) this._dyn.start = now; return; }
-    const D = this._dyn || (this._dyn = { start: now, slots: 0, missed: 0, cpu: [], bad: 0, good: 0, changed: -1e9, lastUp: -1e9, beforeUp: 1, backoff: 6 });
+    const D = this._dyn || (this._dyn = { start: now, slots: 0, missed: 0, cpu: [], bad: 0, good: 0, changed: -1e9, lastUp: -1e9, beforeUp: null, backoff: 6 });
     if (now < D.start) return; // settling after a resize: its own reallocation hitch must not count as overload
     // a frame that lost 3+ slots is a one-off hitch (GC, a load, another app), not a GPU that's too slow: skip it
     if (missed < 3) { D.slots += 1 + missed; D.missed += missed; D.cpu.push(cpuMs); }
@@ -248,24 +253,38 @@ export class Renderer {
     const overloaded = ratio > 0.05, cpuBound = cpu90 > 15;
     D.bad = overloaded && !cpuBound ? D.bad + 1 : 0;
     D.good = ratio === 0 && (gpu90 === null || gpu90 < 12.5) ? D.good + 1 : 0;
-    let scale = this.dynScale;
+    let step = { scale: this.dynScale, shed: !!this.shed };
     // iOS Low Power Mode caps rAF at 30 Hz: every other 60 Hz slot is "missed" whatever the resolution. Signature: a
     // drop in resolution that left the miss ratio at ~1/2 with callbacks ~33 ms apart -> undo the drop and pace the
     // loop to 30 Hz slots (the game loop goes back to 60 once callbacks arrive at 60 Hz again)
     if (D.preDrop && now - D.changed > 1500) {
       const half = r => Math.abs(r - 0.5) < 0.08;
       if (half(ratio) && half(D.preDrop.ratio) && this.rafMs > 28) {
-        this.slotMs = 1000 / 30; scale = D.preDrop.scale; D.bad = D.good = 0; D.preDrop = null;
-        if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.start = now + 1000; }
+        this.slotMs = 1000 / 30; step = D.preDrop.step; D.bad = D.good = 0; D.preDrop = null;
+        if (this.setDynStep(step)) { D.changed = now; D.start = now + 1000; }
         return;
       }
       D.preDrop = null;
     }
+    const { scale, shed } = step, d = ratio > 0.2 ? 0.14 : 0.08;
     if (D.bad >= 2 && now - D.changed > 3000) {
-      if (now - D.lastUp < 6000) { scale = D.beforeUp; D.backoff = Math.min(64, D.backoff * 2); D.lastUp = -1e9; } // the probe up failed
-      else { D.preDrop = { scale, ratio }; scale = Math.max(0.55, scale - (ratio > 0.2 ? 0.14 : 0.08)); }
-    } else if (scale < 1 && D.good >= D.backoff && now - D.changed > 6000) { D.beforeUp = scale; D.lastUp = now; scale = Math.min(1, scale + 0.05); }
-    if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.bad = D.good = 0; D.start = now + 1000; D.slots = D.missed = 0; D.cpu.length = 0; }
+      if (now - D.lastUp < 6000) { step = D.beforeUp; D.backoff = Math.min(64, D.backoff * 2); D.lastUp = -1e9; } // the probe up failed
+      else {
+        D.preDrop = { step, ratio };
+        step = scale > DYN_FLOOR + 0.01 ? { scale: Math.max(DYN_FLOOR, scale - d), shed } : !shed && this.onShed ? { scale, shed: true } : { scale: Math.max(0.55, scale - d), shed };
+      }
+    } else if ((scale < 1 || shed) && D.good >= D.backoff && now - D.changed > 6000) {
+      D.beforeUp = step; D.lastUp = now;
+      step = scale < DYN_FLOOR - 0.01 ? { scale: Math.min(DYN_FLOOR, scale + 0.05), shed } : shed ? { scale, shed: false } : { scale: Math.min(1, scale + 0.05), shed };
+    }
+    if (this.setDynStep(step)) { D.changed = now; D.bad = D.good = 0; D.start = now + 1000; D.slots = D.missed = 0; D.cpu.length = 0; }
+  }
+  /** applies a step of the dynamic-resolution ladder; returns true if anything changed */
+  setDynStep({ scale, shed }) {
+    const changed = Math.abs(scale - this.dynScale) > 0.01 || shed !== !!this.shed;
+    if (shed !== !!this.shed) { this.shed = shed; this.onShed?.(shed); }
+    this.setDynScale(scale);
+    return changed;
   }
   setDynScale(s) { if (Math.abs(s - this.dynScale) > 0.01) { this.dynScale = s; this.resize(); } }
 

@@ -284,6 +284,7 @@ export class Game {
     this.water = new Water({ reflections: this.R.q.reflections });
     this.scene.add(this.water.mesh);
     this.R.onResize = (w, h) => this.water.resize(w, h);
+    this.R.onShed = shed => this.water.setReflections(shed ? false : this.R.q.reflections); // (dynamic resolution's last resort)
     this.R.resize();
     await brk(); // (the city's materials paint their sign and interior atlases)
     this.city = new City(this.scene);

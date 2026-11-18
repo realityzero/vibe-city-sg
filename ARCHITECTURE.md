@@ -52,7 +52,8 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
 - `Game.loop()` paces ticks to a 60 Hz deadline: on 120/144 Hz displays the in-between rAF callbacks are skipped (an
   M1/M2 can't draw the city at 120; steady 60 beats uneven 70-90). Each 60 Hz slot that passes without a tick counts as
   *missed*; `Renderer.trackFrame()` steps resolution down after two one-second windows with >2% missed slots (unless the
-  CPU is the limit) and probes back up with backoff. `gpuBegin/gpuEnd` time reflection + render with
+  CPU is the limit) and probes back up with backoff — down to 0.75 of the preset's pixel ratio, then the water's
+  mirror of the city goes (`onShed`), and only then lower. `gpuBegin/gpuEnd` time reflection + render with
   `EXT_disjoint_timer_query_webgl2` (a headroom hint; it includes CPU-submission gaps).
 - Base M1 / M2 GPUs (`Renderer.detectGpu()`) start with a lower pixel ratio cap (1.0 / 1.15); the user's resolution
   scale (`setResolutionPreference`) multiplies it.
