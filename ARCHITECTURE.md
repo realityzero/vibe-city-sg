@@ -244,6 +244,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   thumbs' way. `tests/scratch/touch.mjs [WxH]` drives it with real CDP multi-touch on an emulated phone/tablet.
 - Post: the composer only draws to the screen from the last pass *added*, so `Renderer.outPass` (FXAA on sqrt luma,
   after SMAA) is the output whenever SMAA is off — without it the Low preset rendered black. Low has no film grain.
+- Flyover and viaduct parapets carry troughs of bougainvillea (`StreetDetail.buildViaductPlanters`, a near pool of
+  2.4 m bays on every raised carriageway deck over 4 m up).
 - Footbridges (`StreetDetail.buildBridges`) pick, per end, the stair direction whose flight and foot are clear of
   walls, tree trunks and traffic lanes, and leave gaps in the deck parapet at the landings.
   `tests/scratch/bridgewalk.mjs` walks over every bridge, `bridgeexits.mjs` checks each stair foot floods out to a sidewalk.
