@@ -89,6 +89,7 @@ await page.evaluate(() => {
     for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i], b = cars[j], dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
       if (dx * dx + dz * dz > 100) continue;
+      if (Math.abs(b.pos.y - a.pos.y) > 2.5) { R.stacked = (R.stacked || 0) + 1; continue; } // (one on a flyover above the other)
       let pen = Infinity;
       for (const [c, o] of [[a, b], [b, a]]) for (const k of [0, 1]) {
         const ux = k ? -Math.sin(c.yaw) : Math.cos(c.yaw), uz = k ? -Math.cos(c.yaw) : -Math.sin(c.yaw);
@@ -125,7 +126,7 @@ for (const [x, z] of spots) {
     turns: T.length, turnEntry: { p50: +med(t => t.vIn).toFixed(1), p95: +p95(t => t.vIn).toFixed(1) }, turnMinSpeed_p50: +med(t => t.vMin).toFixed(1),
     stopsInTurn: T.filter(t => t.vMin < 0.5).length, turnLat: { p50: +med(t => t.lat).toFixed(2), p95: +p95(t => t.lat).toFixed(2) }, turnDecel_p95: +p95(t => t.dec).toFixed(2), turnJerkLat_p95: +p95(t => t.jerk).toFixed(1),
     worst: process.env.WORST ? r.worst.slice(0, 40) : undefined,
-    overlapFrames: r.overlap, overlapPairs: r.overlapPairs, overlapKinds: r.kinds, redRuns: r.red, enteredAsRedBegan: r.lateAmber, stuckOver60s: r.stuck,
+    overlapFrames: r.overlap, stackedFrames: r.stacked || 0, overlapPairs: r.overlapPairs, overlapKinds: r.kinds, redRuns: r.red, enteredAsRedBegan: r.lateAmber, stuckOver60s: r.stuck,
   });
   console.log(JSON.stringify(out.spots.at(-1)));
 }
