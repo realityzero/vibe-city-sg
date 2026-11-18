@@ -1,7 +1,9 @@
 // Driving juice, tied to the hype economy: near misses (passing a car or a pedestrian within a metre at speed) pay cash
 // and a little hype, with a CLOSE SHAVE popup, a whoosh and a quick FOV kick (chained ones multiply); sparks and a
 // grind where the bodywork scrapes; a shake and 0.3 s of slow motion on a big crash; speed lines while the Kopi Gao
-// boost burns. Everything is pooled and created at load: nothing is allocated per frame.
+// boost burns. The street films it all: fast near misses, big crashes and a supercar parked up among people bring the
+// phones out (Pedestrians.spectacle -> 'filmed', which Hype turns into views), with camera flashes popping where they
+// stand. Everything is pooled and created at load: nothing is allocated per frame.
 import * as THREE from 'three';
 
 const SLOTS = 8;            // cars / pedestrians tracked through a pass at once
@@ -11,6 +13,9 @@ const MIN_SPEED = 12;       // m/s (~43 km/h) of the player's car
 const MIN_REL = 9;          // m/s closing speed on a car
 const CHAIN = 4;            // s to keep a combo going
 const SLOWMO = 0.3, SLOWMO_SCALE = 0.3, BIG_CRASH = 150; // s of real time, sim speed, vehicleImpact damage
+const FILM_GAP = 8;         // s between two things the street films (a near-miss chain is one clip)
+const PARKUP = 60;          // s between two supercar park-ups drawing a crowd
+const ADMIRE = ['Wah, %s!', 'Wah, %s! Shiok!', 'Eh, photo first!', 'Confirm COE also very ex.', 'Steady lah, boss!'];
 
 const _p = new THREE.Vector3(), _v = new THREE.Vector3(), _q = new THREE.Quaternion();
 
@@ -22,6 +27,8 @@ export class Juice {
     this.frame = 0; this.combo = 0; this.lastT = -99; this.impactT = -99;
     this.sparkT = 0; this.scrapeT = 0; this.slowT = 0;
     this.lines = new SpeedLines(game.scene);
+    this.flashes = new PhoneFlashes(game.scene);
+    this.filmT = -99; this.parkT = -99;
     this._cp = new THREE.Vector3(); this._hasCp = false;
     // first contact of the pair, on the vehicle's side, in the vehicle collider's frame (flipped: the vehicle is the
     // manifold's second collider). Called per manifold; a trimesh pair has several, most of them empty.
@@ -32,6 +39,28 @@ export class Juice {
     };
     game.events.on('vehicleImpact', e => this.impact(e));
     game.events.on('pedHit', p => { for (const s of this.slots) if (s.obj === p) s.touched = true; });
+    game.events.on('exitVehicle', v => this.parkUp(v));
+  }
+
+  /** the street films something at pos (at most one clip every FILM_GAP s) */
+  film(pos, kind, follow = false) {
+    const now = performance.now() / 1000;
+    if (now - this.filmT < FILM_GAP) return;
+    this.filmT = now;
+    this.game.peds.spectacle(pos, kind, follow);
+  }
+
+  // stepping out of a supercar where people are: they gather round with their phones
+  parkUp(v) {
+    const g = this.game, now = performance.now() / 1000;
+    if (v.isBoat || v.isAircraft || v.spec.maxSpeed < 66 || v.speed > 3 || v.health <= 0 || now - this.parkT < PARKUP || g.missions.active) return;
+    let n = 0;
+    for (const p of g.peds.peds) if (Math.abs(p.pos.x - v.position.x) < 25 && Math.abs(p.pos.z - v.position.z) < 25 && ++n >= 3) break;
+    if (n < 3) return;
+    this.parkT = now;
+    // (a bark kind with no recordings: the bubble only, and it keeps the crowd's own bark from talking over it)
+    g.bark('admire', _p.copy(v.position), 2, { text: ADMIRE[Math.floor(Math.random() * ADMIRE.length)].replace('%s', v.spec.name) });
+    this.filmT = -99; this.film(v.position, 'supercar');
   }
 
   /** dt: simulated time (slow motion included), realDt: wall-clock frame time */
@@ -41,6 +70,7 @@ export class Juice {
     // big-crash slow motion runs on real time (and gives way to a stunt replay, which owns simScale too)
     if (this.slowT > 0) { this.slowT -= realDt; if (this.slowT <= 0 && g.simScale === SLOWMO_SCALE) g.simScale = 1; }
     this.lines.update(realDt, g.camera, g.R, P.vehicle && g.hype?.boostOn ? Math.min(1, v.speed / 30) : 0);
+    this.flashes.update(now, g.camera, g.R, g.peds.peds);
     const car = v && !v.isBoat && !v.isAircraft && !v.exploded;
     if (!car || !P.controlsEnabled || P.autopilot || v.speed < MIN_SPEED * 0.7) { this.release(); return; }
     // the player's car as an oriented box on the ground plane
@@ -98,6 +128,7 @@ export class Juice {
     g.ui.closeShave?.(cash, this.combo);
     g.audio?.sfx?.('whoosh', { position: s.obj.pos, volume: Math.min(1, 0.5 + kmh / 200) });
     if (s.ped) g.bark('nearmiss', s.obj.pos, 2);
+    if (kmh > 80 || this.combo >= 2) this.film(v.position, 'nearmiss', true);
   }
 
   impact({ vehicle, damage, other }) {
@@ -107,6 +138,7 @@ export class Juice {
     for (const s of this.slots) if (s.obj && !s.ped && s.obj.collider?.handle === other) s.touched = true;
     if (damage > BIG_CRASH && !vehicle.isAircraft && !vehicle.isBoat) {
       g.cameraRig.shake(1.3);
+      this.film(vehicle.position, 'crash');
       if (g.simScale === 1 || g.simScale === SLOWMO_SCALE) { g.simScale = SLOWMO_SCALE; this.slowT = SLOWMO; }
       this.sparks(vehicle, other, 14);
     }
@@ -202,5 +234,59 @@ class SpeedLines {
     // a hairline: 1/700 of the screen height (never under 0.8 px), at any field of view
     const H = R?.height || innerHeight;
     u.uW.value = Math.max(0.8, H / 700) * 2 * Math.tan(camera.fov * Math.PI / 360) / H;
+  }
+}
+
+// Camera flashes on the phones of people filming: a star at each phone that pops now and then (each person on their own
+// beat), additive and bright enough for the bloom. One point draw for the whole street, hidden while nobody films.
+const FLASHES = 32;
+class PhoneFlashes {
+  constructor(scene) {
+    const geo = new THREE.BufferGeometry();
+    this.pos = new THREE.BufferAttribute(new Float32Array(FLASHES * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.amt = new THREE.BufferAttribute(new Float32Array(FLASHES), 1).setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.pos); geo.setAttribute('aA', this.amt);
+    this.uniforms = { uScale: { value: 400 } };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: `attribute float aA; uniform float uScale; varying float vA;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vA = aA;
+          gl_PointSize = max(3.0, uScale * 0.55 / -mv.z) * step(0.001, aA);  // a 0.55 m star, never under 3 px
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `varying float vA;
+        void main() {
+          vec2 c = gl_PointCoord - 0.5; float r2 = dot(c, c);
+          float core = exp(-r2 * 90.0), rays = exp(-abs(c.x) * 34.0 - abs(c.y) * 5.0) + exp(-abs(c.y) * 34.0 - abs(c.x) * 5.0);
+          gl_FragColor = vec4(vec3(0.92, 0.96, 1.0) * (core * 4.0 + rays * 1.4) * vA, 1.0);
+        }`,
+    });
+    this.mesh = new THREE.Points(geo, mat);
+    this.mesh.frustumCulled = false; this.mesh.visible = false; this.mesh.renderOrder = 15;
+    scene.add(this.mesh);
+  }
+  update(now, camera, R, peds) {
+    const P = this.pos.array, A = this.amt.array;
+    let n = 0;
+    for (let i = 0; i < peds.length && n < FLASHES; i++) {
+      const p = peds[i];
+      if (p.state !== 'film' || !p.film || p.film.delay > 0 || p.umbrella) continue;
+      // a flash every ~1.7 s, ~80 ms long, each person on their own phase
+      const k = (now * 0.6 + p.phase * 0.37) % 1;
+      if (k > 0.05) continue;
+      const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+      P[n * 3] = p.pos.x + fx * 0.32; P[n * 3 + 1] = p.pos.y + 1.45 * (p.hs || 1); P[n * 3 + 2] = p.pos.z + fz * 0.32;
+      A[n] = 1 - k / 0.05;
+      n++;
+    }
+    this.mesh.visible = n > 0;
+    if (!n) return;
+    this.mesh.geometry.setDrawRange(0, n);
+    this.pos.clearUpdateRanges(); this.pos.addUpdateRange(0, n * 3); this.pos.needsUpdate = true;
+    this.amt.clearUpdateRanges(); this.amt.addUpdateRange(0, n); this.amt.needsUpdate = true;
+    const H = R?.height || innerHeight;
+    this.uniforms.uScale.value = H / (2 * Math.tan(camera.fov * Math.PI / 360));
   }
 }
