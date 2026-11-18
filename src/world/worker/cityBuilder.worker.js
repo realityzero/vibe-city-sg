@@ -676,16 +676,18 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
             shopGoods.push([p[0] + ux * tm + inx * dm, p[1] + uz * tm + inz * dm, Math.atan2(-inx, -inz)]);
           }
         }
-        // furniture in the bays: stone tables in the void deck, the hawker centre's tables all round
-        // (bays meeting at a corner share it: one set there)
-        const spot = (x, z, kind) => {
+        // furniture in the void deck's bays (bays meeting at a corner share it: one set there)
+        const spot = (x, z, kind, yaw = Math.atan2(ux, uz)) => {
           for (let j = col0; j < colonnade.length; j++) if (Math.hypot(colonnade[j][0] - x, colonnade[j][1] - z) < 2.6) return;
-          colonnade.push([x, z, Math.atan2(ux, uz), kind]);
+          colonnade.push([x, z, yaw, kind, undefined, FLOOR_Y]); // (on the bay's raised floor)
         };
+        // stone (chess) tables mid-bay; residents' bicycles and benches against the back wall, facing out
         if (!isShop && gBase < 0.5) for (let k = 1; k < nP; k++) {
-          const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), d = recess.D[i] / 2;
-          if (hawker) for (const o of len / (nP - 1) > 5.2 ? [-1.35, 1.35] : [0]) spot(p[0] + ux * (t + o) + inx * d, p[1] + uz * (t + o) + inz * d, 'kopitiam');
-          else if (len / (nP - 1) > 4 && hash1(b.id * 1.9 + i * 7.3 + k * 3.1) < 0.3) spot(p[0] + ux * t + inx * d, p[1] + uz * t + inz * d, 'stoneTable');
+          const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), D = recess.D[i], hb = hash1(b.id * 1.9 + i * 7.3 + k * 3.1);
+          if (len / (nP - 1) <= 4) continue;
+          if (hb < 0.3) spot(p[0] + ux * t + inx * D / 2, p[1] + uz * t + inz * D / 2, 'stoneTable');
+          else if (hb < 0.42) spot(p[0] + ux * t + inx * (D - 0.75), p[1] + uz * t + inz * (D - 0.75), 'cycles', Math.atan2(-inx, -inz));
+          else if (hb < 0.52) spot(p[0] + ux * t + inx * (D - 0.4), p[1] + uz * t + inz * (D - 0.4), 'bench', Math.atan2(-inx, -inz));
         }
       }
     } else addWalls(outer, y0, wallTop, f1, wallCol, false, eFlag);
@@ -886,34 +888,43 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         boxGeo(S, x, roofY, z, 0.9, 1.2, 0.9, srgbToLin(c3(0x8a8f94)));
       }
     }
-    // ---- HDB laundry poles (bamboo/steel poles out of service-yard windows, some with washing)
+    // ---- HDB laundry poles: 1.2-1.5 m out of the service-yard windows, thickest along the kitchen side of a slab block
+    // (the long side away from the common corridor), most of them hung with washing: shirts on hangers facing the
+    // street, towels and sarongs over the pole, now and then a bedsheet
     if (isHdb && !b.noPhys && hdbO && (b.l || 0) > 3) {
       TAG = 's.laundry';
       const S = ch.structNear, levels = Math.min(b.l, 25), wh = floorH;
-      const CLOTH = [0xe23b3b, 0x2f6fd6, 0xf2f2ee, 0xf2c230, 0x3ca55c, 0xe87ab0, 0x222222, 0x8a5cc8, 0xff8a3d].map(h => srgbToLin(c3(h)));
+      const CLOTH = [0xe23b3b, 0x2f6fd6, 0xf2f2ee, 0xf2c230, 0x3ca55c, 0xe87ab0, 0x222222, 0x8a5cc8, 0xff8a3d, 0x2bb3c0, 0xf4f0e0, 0xd8402a].map(h => srgbToLin(c3(h)));
       const poleCol = srgbToLin(c3(0xb8bcbf));
       for (let i = 0; i < nE; i++) {
         if (eFlag[i] === 4 || eFlag[i] === 5) continue;
         const [nx, nz, len] = edgeN(i); if (len < 10) continue;
+        const kitchen = hdbSlab && len > 16 && Math.abs(nx * -hdbO.uz + nz * hdbO.ux) > 0.8, dens = kitchen ? 0.22 : 0.07;
         const p = outer[i], ux = (outer[(i + 1) % nE][0] - p[0]) / len, uz = (outer[(i + 1) % nE][1] - p[1]) / len;
         const nCols = Math.max(1, Math.floor(len / 3.0 + 0.5)), cw = len / nCols;
         for (let f = 1; f < levels; f++) for (let c = 0; c < nCols; c++) {
-          const hr = hash1(b.id * 3.7 + f * 31.3 + c * 7.1 + i * 101.9);
-          if (hr > 0.085) continue;
+          const hr = hash1(b.id * 3.7 + f * 31.3 + c * 7.1 + i * 101.9) / dens;
+          if (hr > 1) continue;
           const u = (c + 0.5) * cw, y = gBase + f * wh + wh * 0.72;
           const bx = p[0] + ux * u, bz = p[1] + uz * u;
-          // pole sticks straight out 1.6 m; three thin quads (cheap prism)
-          const L = 1.6, ex = bx + nx * L, ez = bz + nz * L, t = 0.035;
+          const L = 1.2 + hash1(hr * 13.1) * 0.3, ex = bx + nx * L, ez = bz + nz * L, t = 0.03;
           quadGeo(S, [bx, y - t, bz], [ex, y - t, ez], [ex, y + t, ez], [bx, y + t, bz], [ux, 0, uz], poleCol, true);
           quadGeo(S, [bx - ux * t, y + t, bz - uz * t], [ex - ux * t, y + t, ez - uz * t], [ex + ux * t, y + t, ez + uz * t], [bx + ux * t, y + t, bz + uz * t], [0, 1, 0], poleCol);
-          // washing: 1-3 garments hanging below the pole
-          if (hr < 0.06) {
-            const nG = 1 + Math.floor(hash1(hr * 999) * 3);
-            for (let g = 0; g < nG; g++) {
-              const s0 = 0.25 + g * 0.45, s1 = s0 + 0.32 + hash1(hr * 77 + g) * 0.1, drop = 0.45 + hash1(hr * 55 + g) * 0.45;
-              const col = CLOTH[Math.floor(hash1(hr * 333 + g * 9) * CLOTH.length)];
-              const ax = bx + nx * s0, az = bz + nz * s0, cx2 = bx + nx * s1, cz2 = bz + nz * s1;
+          if (hr > 0.8) continue; // (a bare pole)
+          let s0 = 0.2;
+          for (let g = 0; s0 < L - 0.25; g++) {
+            const hg = hash1(hr * 97.3 + g * 5.1), col = CLOTH[Math.floor(hash1(hr * 333 + g * 9) * CLOTH.length)];
+            if (hg < 0.55) {
+              // a shirt on a hanger, square to the pole: seen from the street (one-sided: only the street sees it)
+              const w = 0.24 + hg * 0.08, drop = 0.55 + hg * 0.25, cxs = bx + nx * (s0 + 0.12), czs = bz + nz * (s0 + 0.12);
+              quadGeo(S, [cxs - ux * w, y - drop, czs - uz * w], [cxs + ux * w, y - drop, czs + uz * w], [cxs + ux * w * 0.8, y - 0.06, czs + uz * w * 0.8], [cxs - ux * w * 0.8, y - 0.06, czs - uz * w * 0.8], [nx, 0, nz], col);
+              s0 += 0.3;
+            } else {
+              // a towel or sarong over the pole (now and then a bedsheet nearly to the floor below)
+              const sheet = hg > 0.93, w = sheet ? 0.9 : 0.35 + (hg - 0.55) * 0.6, drop = sheet ? 1.5 : 0.5 + (hg - 0.55) * 1.2;
+              const s1 = Math.min(L - 0.05, s0 + w), ax = bx + nx * s0, az = bz + nz * s0, cx2 = bx + nx * s1, cz2 = bz + nz * s1;
               quadGeo(S, [ax, y - drop, az], [cx2, y - drop, cz2], [cx2, y - t, cz2], [ax, y - t, az], [ux, 0, uz], col, true);
+              s0 = s1 + 0.08;
             }
           }
         }

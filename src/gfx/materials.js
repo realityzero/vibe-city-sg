@@ -399,7 +399,7 @@ ${SHOP_UNIT_SETUP}
         if (balc) { lo = vec2(0.03, 0.07); hi = vec2(0.97, 0.97); }
         float win = aaBox(cell, lo, hi);
         if (cell.y > nFloors - 0.02 || cell.y < 0.0) win = 0.0;
-        if (hdbVoid) win *= step(hash12(vec2(cid.x, fSeed * 13.0)), 0.3); // a few open passages through the void deck
+        if (hdbVoid) win *= step(hash12(vec2(cid.x, fSeed * 13.0)), 0.42); // open passages through the void deck
         // arched openings (civic windows, shophouse fronts that face no street)
         if ((fStyle > 5.5 && fStyle < 6.5) || (ground && shop && !shopRecess) || (terr && !ground && unitH > 0.62 && cid.y < nFloors - 0.5)) {
           float archY = mix(lo.y, hi.y, 0.72);
@@ -446,11 +446,34 @@ ${SHOP_UNIT_SETUP}
           float tone = step(mod(cid.x + floor(fract(fSeed * 19.0) * per), per), 0.5 + step(0.5, fract(fSeed * 29.0))) * step(1.0, cell.y);
           vec3 pastel = mix(albedo, acc * 1.15 + 0.08, 0.4);
           if (ground) {
-            // void deck back wall: tiled dado, lift doors, letterboxes
+            // void deck back wall: tiled dado, and between the passages lift doors, banks of letterboxes, notice boards
             albedo = mix(albedo * 0.9, vec3(0.8, 0.8, 0.76), aaBand(vWall.y, -1.0, 1.15) * 0.8);
-            float lift = aaBand(cf.x, 0.38, 0.62) * (1.0 - aaStep(0.72, cf.y)) * step(0.6, hash12(vec2(cid.x * 3.1, fSeed)));
+            float hk = hash12(vec2(cid.x * 3.1, fSeed)), lx = cf.x * cw, ly = vWall.y - fBase;
+            float lift = aaBand(cf.x, 0.38, 0.62) * (1.0 - aaStep(0.72, cf.y)) * step(0.6, hk);
             albedo = mix(albedo, vec3(0.55, 0.57, 0.6) * (0.9 + 0.1 * aaPulse(cell.x / 0.12 + 0.5, 0.5)), lift);
             fMetal = mix(fMetal, 0.7, lift); fRough = mix(fRough, 0.3, lift);
+            if (hk > 0.44 && hk < 0.6 && far < 0.9) {
+              // letterboxes: a steel bank of small doors, each with its slot and a unit number tag
+              vec2 lb = vec2((lx - cw * 0.18) / (cw * 0.64), (ly - 0.35) / 1.4);
+              float bank = aaBand(lb.x, 0.0, 1.0) * aaBand(lb.y, 0.0, 1.0);
+              vec2 dq = fract(lb * vec2(7.0, 9.0));
+              float door = aaBand(dq.x, 0.06, 0.94) * aaBand(dq.y, 0.08, 0.92), slot = aaBand(dq.x, 0.25, 0.75) * aaBand(dq.y, 0.66, 0.74);
+              vec3 lc = mix(vec3(0.3, 0.32, 0.34), vec3(0.62, 0.66, 0.7) * (0.9 + 0.1 * hash12(floor(lb * vec2(7.0, 9.0)) + fSeed)), door);
+              lc = mix(lc, vec3(0.05), slot); lc = mix(lc, vec3(0.85, 0.2, 0.15), aaBand(dq.x, 0.1, 0.3) * aaBand(dq.y, 0.2, 0.32));
+              albedo = mix(albedo, lc, bank * (1.0 - far)); fMetal = mix(fMetal, 0.55, bank); fRough = mix(fRough, 0.35, bank);
+            } else if (hk > 0.32 && hk <= 0.44 && far < 0.9) {
+              // notice board: a glazed case of town council notices and community posters
+              vec2 nb = vec2((lx - cw * 0.22) / (cw * 0.56), (ly - 1.0) / 0.9);
+              float board = aaBand(nb.x, 0.0, 1.0) * aaBand(nb.y, 0.0, 1.0), frame = board * (1.0 - aaBand(nb.x, 0.03, 0.97) * aaBand(nb.y, 0.05, 0.95));
+              vec2 pc = floor(nb * vec2(5.0, 3.0)), pf = fract(nb * vec2(5.0, 3.0));
+              float hp = hash12(pc + fSeed * 7.0), paper = aaBand(pf.x, 0.1, 0.9) * aaBand(pf.y, 0.08, 0.86) * step(0.25, hp);
+              vec3 pcol = hp < 0.5 ? vec3(0.92, 0.9, 0.84) : hp < 0.7 ? vec3(0.95, 0.75, 0.3) : hp < 0.85 ? vec3(0.4, 0.65, 0.85) : vec3(0.85, 0.35, 0.3);
+              pcol *= 1.0 - 0.3 * aaPulse(pf.y * 9.0, 0.3) * step(hp, 0.5);   // (lines of print)
+              vec3 nbc = mix(vec3(0.2, 0.35, 0.28), pcol, paper);
+              albedo = mix(albedo, mix(nbc, vec3(0.6, 0.62, 0.64), frame), board * (1.0 - far)); fRough = mix(fRough, 0.25, board);
+            }
+            // the deck's tube lights on its back wall
+            if (hdbVoid) fEmis += albedo * vec3(0.85, 0.95, 1.0) * (0.05 + uNight * 0.3);
           } else if (hdbCorr) {
             // common corridor: parapet wall with an accent coping, dark corridor behind, doors and gates
             float par = 1.0 - aaStep(0.42, cf.y);
@@ -665,9 +688,24 @@ ${SHOP_UNIT_SETUP}
             vec3 rs = vec3(0.42, 0.43, 0.44) * (0.75 + 0.25 * aaPulse(fy0 * 14.0 + 0.5, 0.5));
             albedo = mix(albedo, rs, win); fMetal = mix(fMetal, 0.25, win); fRough = mix(fRough, 0.58, win);
           } else if (ground && hdb) {
-            // passage through the void deck: open dark space
-            albedo = mix(albedo, vec3(0.05), win);
-            fEmis += vec3(0.8, 0.9, 1.0) * uNight * 0.6 * aaBand(cf.y, 0.86, 0.9) * win;
+            // a passage through the void deck: the deck runs on under the block (terrazzo, a row of tubes overhead,
+            // pale walls), with daylight (or the lamp-lit night) at the far side
+            vec3 T = vec3(-N.z, 0.0, N.x), Vd = normalize(vWPos - cameraPosition);
+            vec3 d = vec3(dot(Vd, T), Vd.y, -dot(Vd, N)); d.z = max(d.z, 0.05);
+            float rw = (hi.x - lo.x) * cw, rh = hi.y * fh, rd = 9.0;
+            vec3 pp = vec3((cf.x - lo.x) * cw, cf.y * fh, 0.0);
+            float tx = d.x > 0.0 ? (rw - pp.x) / max(d.x, 1e-4) : -pp.x / min(d.x, -1e-4);
+            float ty = d.y > 0.0 ? (rh - pp.y) / max(d.y, 1e-4) : -pp.y / min(d.y, -1e-4);
+            float tz = rd / d.z, tt = min(min(tx, ty), tz);
+            vec3 hp = pp + d * tt, c;
+            if (tt == tz) c = mix(vec3(0.36, 0.48, 0.3), vec3(0.72, 0.8, 0.88), smoothstep(0.25, 0.75, hp.y / rh)) * mix(1.6, 0.25, uNight);
+            else if (tt == ty && d.y > 0.0) c = vec3(0.62) + vec3(2.0, 2.3, 2.5) * (1.0 - smoothstep(0.04, 0.09, abs(hp.x - rw * 0.5) / rw)) * (1.0 - smoothstep(0.3, 0.45, abs(fract(hp.z / 3.2) - 0.5) * 3.2));
+            else if (tt == ty) c = vec3(0.5, 0.49, 0.46) * (0.9 + 0.1 * step(0.5, fract((hp.x + hp.z) / 0.8)));
+            else c = vec3(0.66, 0.65, 0.6) * mix(1.0, 0.8, step(hp.y, 1.1));
+            c *= mix(1.0, 0.65, hp.z / rd) * (0.35 + uNight * 0.25);
+            c = mix(c, vec3(0.3) * (0.35 + uNight * 0.25), far);
+            albedo = mix(albedo, vec3(0.03), win);
+            fEmis += c * win;
           } else if (fStyle > 6.5 && fStyle < 7.5) {
             albedo = mix(albedo, vec3(0.05), win);
             fEmis += vec3(0.85, 0.95, 1.0) * uNight * 1.2 * aaBand(cf.y, 0.86, 0.9) * win;
