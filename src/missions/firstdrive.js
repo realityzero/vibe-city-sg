@@ -89,7 +89,7 @@ const STAGE = {
       const fx = a.dx, fz = a.dz;
       const n = g.roadnet.nearestLane(stop.x, stop.z, 18, l => l.idx === 0 && l.cls <= 5); if (!n || n.dir.x * fx + n.dir.z * fz < 0.8) continue;
       // it mustn't pop in where the player can see the stop
-      if (d < 170 && g.traffic.inView(n.pos, 0.5)) continue;
+      if (d < 170 && g.traffic.seen(n.pos)) continue;
       const car = g.traffic.spawnAt(n.lane, n.s, 'bus');
       if (car) { car.speed = 0; car.keep = true; }
       return car;

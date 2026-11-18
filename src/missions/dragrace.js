@@ -194,7 +194,7 @@ export class DragRace {
 
   far() {
     const g = this.game, p = this.beng.position;
-    return p.distanceTo(g.player.position) > 160 && !g.traffic.inView(p, 0.3);
+    return p.distanceTo(g.player.position) > 160 && !g.traffic.seen(p);
   }
 
   clear() {
