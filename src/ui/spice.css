@@ -67,6 +67,7 @@
 /* ---------------------------------------------------------------- drag race: challenge + start lights */
 .vc-race { position: absolute; left: 50%; top: 15%; transform: translateX(-50%) translateY(-15%); z-index: 3; text-align: center; opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s; }
 .vc-race.on { opacity: 1; transform: translateX(-50%); }
+.vc-touchmode .vc-race { top: 19%; } /* (below the objective and a tip toast) */
 .vc-race .lt { display: none; gap: calc(var(--u) * 1.2); justify-content: center; margin: 0 auto calc(var(--u) * 1.2); padding: calc(var(--u) * .9) calc(var(--u) * 1.4); width: max-content;
   border-radius: calc(var(--u) * 1.6); background: #0b0716; border: calc(var(--u) * .3) solid #2a2140; box-shadow: 0 calc(var(--u) * .6) calc(var(--u) * 2) rgba(0,0,0,.6); }
 .vc-race.lit .lt { display: flex; }
