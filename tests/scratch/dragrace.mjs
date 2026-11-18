@@ -75,9 +75,7 @@ await page.waitForFunction(() => __game.dragRace.state !== 'count', null, { time
 // on green: drive down our own lane (Ah Beng's route, one lane to the left) with the touch stick
 if (!LOSE) await page.evaluate(() => {
   const g = __game, r = g.dragRace.route, st = g.input.stick;
-  // (a clean run for the frames: traffic out of the corridor ahead)
-  const [x0, z0] = r[0], [x1, z1] = r[r.length - 1], L = Math.hypot(x1 - x0, z1 - z0), ux = (x1 - x0) / L, uz = (z1 - z0) / L;
-  for (const c of [...g.traffic.cars]) { const a = (c.pos.x - x0) * ux + (c.pos.z - z0) * uz, l = (c.pos.x - x0) * uz - (c.pos.z - z0) * ux; if (a > -5 && a < L + 20 && Math.abs(l) < 12) g.traffic.despawn(c); }
+  // (traffic keeps the lanes ahead clear and the junctions on the way held itself: Traffic.holdWay)
   const lane = r.map((p, i) => { const q = r[Math.min(i + 1, r.length - 1)], o = r[Math.max(i - 1, 0)], dx = q[0] - o[0], dz = q[1] - o[1], L = Math.hypot(dx, dz) || 1; return [p[0] + dz / L * 3.3, p[1] - dx / L * 3.3]; });
   const drive = () => {
     const v = g.player.vehicle; if (!v || g.dragRace.state !== 'race') { st.active = false; st.x = st.y = 0; return; }
@@ -89,10 +87,17 @@ if (!LOSE) await page.evaluate(() => {
   };
   drive();
 });
+// how near any traffic car came to either racer during the race (and what traffic was told to keep clear)
+await page.evaluate(() => {
+  const g = __game, W = g.traffic.way, R = window.__near = { min: 1e9, held: W ? W.held.size : 0, lanes: W ? W.lanes.size : 0 };
+  const tick = () => { if (g.dragRace.state !== 'race') return; for (const v of [g.player.vehicle, g.dragRace.beng]) if (v) for (const c of g.traffic.cars) if (c.state === 'drive') R.min = Math.min(R.min, c.pos.distanceTo(v.position)); requestAnimationFrame(tick); };
+  tick();
+});
 await page.waitForTimeout(250); await shot('5-go');
 for (let i = 0; i < 4; i++) { await page.waitForTimeout(1500); console.log(await st()); await shot(`6-race${i}`); }
 await page.waitForFunction(() => __game.dragRace.state !== 'race', null, { timeout: 30000, polling: 100 }).catch(() => { });
 await page.waitForTimeout(500); console.log(await st()); await shot('7-result');
+console.log('traffic during the race', await page.evaluate(() => JSON.stringify({ ...window.__near, min: +window.__near.min.toFixed(1), released: !__game.traffic.way })));
 await page.waitForTimeout(3000); await shot('8-after');
 if (errs.length) console.log('errors:', errs.slice(0, 6));
 await h.browser.close();

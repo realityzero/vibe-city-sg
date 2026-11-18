@@ -55,6 +55,18 @@ function alongside(a, b, end) {
 }
 /** is car o near enough to car c to be beside it? */
 const beside = (c, o) => { const dx = o.pos.x - c.pos.x, dz = o.pos.z - c.pos.z, r = (c.len + o.len) / 2 + SIDE; return dx * dx + dz * dz < r * r; };
+/** do two paths come within SIDE of each other (cross, or join)? */
+function pathsMeet(A, B) {
+  for (let s = 0; s <= A.length; s += 1) {
+    A.sample(s, _a);
+    for (let i = 0; i < B.n - 1; i++) {
+      const ax = B.x(i), az = B.z(i), dx = B.x(i + 1) - ax, dz = B.z(i + 1) - az, t = clamp(((_a.x - ax) * dx + (_a.z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      const ex = ax + dx * t - _a.x, ez = az + dz * t - _a.z;
+      if (ex * ex + ez * ez < SIDE * SIDE) return true;
+    }
+  }
+  return false;
+}
 
 let carIds = 0;
 export class Traffic {
@@ -280,6 +292,43 @@ export class Traffic {
     return best;
   }
 
+  /** Keep a run of road clear (a street race) until release(). `steps` [{ lane, from, conn }]: each racer's way, lane by
+   * lane (from arc length `from` on, out through connector `conn`). Nobody appears on it; cars on it ahead are let go
+   * while out of sight, or move over a lane; at the junctions it passes through, traffic whose way crosses or joins it
+   * waits at the line as if the junction were full — at the first one too if `start` (the racers' own light holds the
+   * cross traffic there until they go). */
+  holdWay(steps, start) {
+    const lanes = new Map(), conns = new Set(), held = new Set(), first = steps[0]?.lane.to;
+    for (const { lane, from, conn } of steps) {
+      lanes.set(lane, Math.min(lanes.get(lane) ?? Infinity, from));
+      if (conn && (start || lane.to !== first)) conns.add(conn);
+    }
+    for (const x of conns) for (const l of this.net.nodes[x.lane.from].inc) for (const o of l.next) if (!conns.has(o) && pathsMeet(o.path, x.path)) held.add(o);
+    this.way = { lanes, conns, held };
+    this._clearWay();
+  }
+  release() { this.way = null; }
+
+  /** cars ahead on a held way: out of sight they are let go; in sight they move over a lane if there is room */
+  _clearWay() {
+    const W = this.way;
+    for (const [l, from] of W.lanes) for (let i = l.cars.length - 1; i >= 0; i--) {
+      const c = l.cars[i];
+      if (c.keep || c.s < from - 3) continue; // (behind the racers)
+      if (!this.seen(c.pos)) { this.despawn(c); continue; }
+      for (const o of this.net.nodes[l.from].out) if (o.edge === l.edge && Math.abs(o.idx - l.idx) === 1 && !W.lanes.has(o) && this._room(o, c.s, c.speed)) { this._moveOver(c, o); break; }
+    }
+    for (const x of W.conns) for (const c of this.net.nodes[x.lane.from].occ) if (c.conn === x && !c.keep && !this.seen(c.pos)) this.despawn(c);
+  }
+
+  /** car c changes to lane o of the same road, beside it at the same arc length (pursuit steers it across) */
+  _moveOver(c, o) {
+    c.lane.cars.splice(c.lane.cars.indexOf(c), 1);
+    c.lane = o; o.cars.push(c);
+    c.nextConn = this.pickNext(o, c); c.nextConn2 = c.nextConn && this.pickNext(c.nextConn.lane, c);
+    c.committed = null; c.zipT = null;
+  }
+
   /** leaderGap's running nearest: car o, d m ahead */
   _lead(o, d) { if (d < this._gap) { this._gap = d; this._gs = o.speed; } }
 
@@ -365,6 +414,8 @@ export class Traffic {
           // across ours): wait at the line
           if (node.occ.size && this._across(car, node.occ, car.nextConn.path, 0, 1e9) < 1e9) this._stop(remain - half - 0.5);
         } else if (node.occ.size && car.wait < 8) this._stop(remain + this._across(car, node.occ, car.nextConn.path, 0, 1e9, car.lane)); // too late for the line: short of them
+        // a street race coming through: wait at the line if our way crosses or joins theirs
+        if (this.way?.held.has(car.nextConn) && (canStop || car.speed < 1)) this._stop(remain - half - 0.5);
       }
       // a bus pulls up with its middle at the shelter
       if (car.stops) {
@@ -487,6 +538,7 @@ export class Traffic {
    * filled at once, with queues at red lights and buses at their stops. */
   _stream() {
     const V = this.viewer, f = this.fwd, R = this.radius, quota = this.quota();
+    if (this.way) this._clearWay();
     let active = 0; for (const c of this.cars) if (c.state === 'drive') active++;
     const filling = this.recenter > 0 || this.cut > 0, seeding = filling || active < quota * 0.35;
     // recycle: out of sight and behind the camera beyond the near ring, or out of range (all of them at a cut, the
@@ -567,9 +619,10 @@ export class Traffic {
     return true;
   }
 
-  /** may a car doing v appear at s on lane l? Never within 25 m of the player (nor of their car: a queue or a platoon
-   * reaches back from where it was placed), and with room there */
+  /** may a car doing v appear at s on lane l? Not on a road kept clear for a race, never within 25 m of the player
+   * (nor of their car: a queue or a platoon reaches back from where it was placed), and with room there */
   _canSpawn(l, s, v) {
+    if (this.way?.lanes.has(l)) return false;
     const P = this.game.player, pp = P?.vehicle?.position || P?.position;
     if (pp) { l.path.sample(s, _a); if (Math.hypot(_a.x - pp.x, _a.z - pp.z) < 25) return false; }
     return this._room(l, s, v);
