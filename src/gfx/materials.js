@@ -230,6 +230,13 @@ ${SHOP_UNIT_SETUP}
       float wallId = horiz ? 0.0 : floor(atan(N.z, N.x) * 2.0 + 10.0);
       bool special = fStyle > 11.5; // arcade soffit / columns / five-foot-way floor
       if (special || fFlag > 1.5 && fFlag < 3.5 || fFlag > 5.5) { fSpecOcc = 0.2; fAmbOcc = fStyle > 12.5 && fStyle < 13.5 ? 0.8 : 0.55; }
+      // shophouse fronts and their piers at night: the light of the shop in this unit (open by the shop clock) spills
+      // out of the five-foot-way and up the wall (fragAfterEmissive) — warm bulbs, or a provision shop's cool tubes
+      vec3 fSpill = vec3(0.0);
+      if (uNight > 0.02 && shopUse && fFlag < 2.5 && (fStyle > 3.5 && fStyle < 4.5 || fStyle > 12.5 && fStyle < 13.5)) {
+        vec2 uh = vec2(unitId * 2.9 + wallId, fSeed * 17.0);
+        fSpill = (hash12(uh + 5.1) < 0.65 ? vec3(1.0, 0.72, 0.45) : vec3(0.78, 0.9, 1.0)) * step(hash12(uh), shopOpenFrac(localHour(), 0.0)) * 0.2;
+      }
 
       if (!special) {
         // weathering: large scale tone, rain streaks, base dirt, tropical mould creeping up from the ground
@@ -550,9 +557,10 @@ ${SHOP_UNIT_SETUP}
           if (lobby) { lampI = 0.42 + 0.18 * h; lampCol = fUse > 7.5 || fUse == 6.0 ? vec3(1.0, 0.8, 0.58) : vec3(0.92, 0.95, 1.0); roomBase = mix(vec3(0.74, 0.71, 0.66), vec3(0.5, 0.47, 0.44), h2); }
           // trading shops are lit day and night: fluorescent provision shops/kopitiams, warm goldsmiths and bakeries
           // shophouse ground floors that aren't shops (homes, offices, hotels) and civic halls keep a lit front room day
-          // and night: unlit, their arched glazing in the shade read as a row of black holes
-          if (ground && ((shop && !shopUse) || (fStyle > 5.5 && fStyle < 6.5))) { lampI = 0.58 + 0.2 * h; lampCol = vec3(1.0, 0.82, 0.6); }
-          if (shopG) { lampI = shopOpen ? (0.62 + 0.25 * h) * mix(1.0, 0.55, uNight) : 0.0; lampCol = shopFam == 4.0 || shopFam == 5.0 ? vec3(1.0, 0.8, 0.58) : mix(vec3(0.86, 0.95, 1.0), vec3(1.0, 0.9, 0.76), step(0.7, h2)); roomBase = mix(vec3(0.55, 0.38, 0.22), vec3(0.42, 0.45, 0.4), h2); }
+          // and night: unlit, their arched glazing in the shade read as a row of black holes. Both turn down after dark,
+          // when the exposure opens up 2-4x: at daytime strength the arches blew out to flat white
+          if (ground && ((shop && !shopUse) || (fStyle > 5.5 && fStyle < 6.5))) { lampI = (0.58 + 0.2 * h) * mix(1.0, 0.5, uNight); lampCol = vec3(1.0, 0.82, 0.6); }
+          if (shopG) { lampI = shopOpen ? (0.62 + 0.25 * h) * mix(1.0, 0.42, uNight) : 0.0; lampCol = shopFam == 4.0 || shopFam == 5.0 ? vec3(1.0, 0.8, 0.58) : mix(vec3(0.86, 0.95, 1.0), vec3(1.0, 0.9, 0.76), step(0.7, h2)); roomBase = mix(vec3(0.55, 0.38, 0.22), vec3(0.42, 0.45, 0.4), h2); }
           vec3 interior;
           if (camDist < uDetailDist && far < 0.5 && !(ground && hdb)) {
             vec3 T = vec3(-N.z, 0.0, N.x);
@@ -658,7 +666,7 @@ ${SHOP_UNIT_SETUP}
             fMetal = mix(fMetal, gMetal, win);
             fRough = mix(fRough, gRough, win);
             fEmis += interior * transmit * (1.0 - F) * win * (1.0 - reveal * 0.7);
-            if (shopG && shopOpen) fEmis += lampCol * uNight * 0.12 * win;
+            if (shopG && shopOpen) fEmis += lampCol * uNight * 0.05 * win;
           }
         }
         // ---- balconies: shade under the slab above, tinted glass balustrade with a slim top rail in front of the glazing
@@ -760,13 +768,19 @@ ${SHOP_UNIT_SETUP}
       metalnessFactor = fMetal;
     `,
     fragAfterNormal: `normal = normalize(normal + fNTilt);`,
-    fragAfterIbl: `radiance *= fSpecOcc; iblIrradiance *= fAmbOcc;`,
-    // street lamps light the lower floors facing them, from the same baked lamp map as the ground (sampled a little out
-    // in the street): at night the walls of a lamp-lit street read as lit, a back lane's as dim — not both as black
+    // at night the walls above the street see only the dim violet sky glow: the street-level ambient lit whole facades
+    // evenly, a dimmed daytime rather than a night street
+    fragAfterIbl: `radiance *= fSpecOcc; iblIrradiance *= fAmbOcc;
+      { vec3 nUp = mix(vec3(1.0), vec3(0.32, 0.32, 0.45), uNight * smoothstep(3.0, 12.0, vWPos.y)); irradiance *= nUp; iblIrradiance *= nUp; }`,
+    // the street lights the walls from below and the light dies away up them within a storey (~exp(-(y - 3) / 2.2);
+    // slower, a two-storey shophouse was lit evenly to the eaves): the lamps' pools from the same baked lamp map as
+    // the ground (sampled a little out in the street; the cut-off LED heads throw little sideways) — a lamp-lit
+    // street's walls read as lit, a back lane's as dim, not both as black — and on shophouse fronts the shop light
+    // (fSpill)
     fragAfterEmissive: `totalEmissiveRadiance += fEmis;
-      if (uNight > 0.02 && vWPos.y < 12.0 && !horiz) {
+      if (uNight > 0.02 && vWPos.y < 14.0 && !horiz) {
         float le = texture2D(uLamp, (vWPos.xz + N.xz * 2.0 - uLampOrigin) / uLampSize).r; le = le * le * 4.0; le = le / (1.0 + 0.45 * le);
-        totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.92, 0.8) * le * 0.38 * (1.0 - smoothstep(4.0, 12.0, vWPos.y)) * uNight * uStreetGlow;
+        totalEmissiveRadiance += diffuseColor.rgb * (vec3(1.0, 0.92, 0.8) * le * 0.24 + fSpill) * exp(-max(vWPos.y - 3.0, 0.0) * 0.45) * uNight * uStreetGlow;
       }`,
   });
 }
