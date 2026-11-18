@@ -1182,13 +1182,13 @@ export function createRoadMaterial() {
           }
         } else if (cls < 7.5) {
           // estate and service roads: a precast kerb along each edge (where the ground's verge meets the road), its
-          // face's shadow on the asphalt, a white edge line inside it, and every so often, clear of the junctions, a
-          // road hump painted in black and yellow stripes
+          // face's shadow on the asphalt, a yellow no-parking line inside it, and every so often, clear of the
+          // junctions, a road hump painted in black and yellow stripes
           float kerb = (1.0 - aaStep(0.15, edge)) * jOK;
           albedo = mix(albedo, vec3(0.34, 0.33, 0.31) * (0.85 + 0.3 * n2), kerb);
           albedo *= 1.0 - 0.5 * aaBand(edge, 0.15, 0.21) * jOK;
           bh += kerb * 0.01; rgh = mix(rgh, 0.8, kerb);
-          wm = aaBand(edge, 0.38, 0.48) * jOK;
+          ym = aaBand(edge, 0.36, 0.44) * jOK;
           float hc = floor(along / 48.0), hh = hash12(vec2(hc, w * 2.3 + 1.0));
           float ha = along - hc * 48.0 - 14.0 - fract(hh * 7.1) * 20.0;
           if (hh > 0.45 && abs(ha) < 0.8 && min(vJunc.x - vJunc.z, vJunc.y - vJunc.w) > 12.0) {
