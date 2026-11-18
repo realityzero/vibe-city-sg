@@ -152,14 +152,16 @@ function paintTourist(ctx) {
 }
 function paintBatik(ctx) {
   withCell(ctx, 'batik', (w, h) => {
-    ctx.fillStyle = '#2b3a67'; ctx.fillRect(0, 0, w, h);
+    // (mid-tone, so a tint from the crowd's top colour gives every colourway; the old deep indigo read as black)
+    ctx.fillStyle = '#6a94c8'; ctx.fillRect(0, 0, w, h);
     const s = 64;
     for (let gy = 0; gy < h + s; gy += s) for (let gx = 0; gx < w + s; gx += s) {
       const ox = (gy / s) % 2 ? s / 2 : 0;
       ctx.save(); ctx.translate(gx + ox, gy);
-      ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 3;
+      ctx.fillStyle = '#f4e6c4'; ctx.beginPath(); ctx.ellipse(0, 0, 22, 14, 0.6, 0, 6.28); ctx.fill();
+      ctx.strokeStyle = '#8a4a22'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.ellipse(0, 0, 22, 14, 0.6, 0, 6.28); ctx.stroke();
-      ctx.fillStyle = '#a0522d'; ctx.beginPath(); ctx.ellipse(0, 0, 10, 6, 0.6, 0, 6.28); ctx.fill();
+      ctx.fillStyle = '#c8602a'; ctx.beginPath(); ctx.ellipse(0, 0, 10, 6, 0.6, 0, 6.28); ctx.fill();
       ctx.fillStyle = '#f1e3c6';
       for (let k = 0; k < 8; k++) { const a = k * 0.785; ctx.beginPath(); ctx.arc(Math.cos(a) * 28, Math.sin(a) * 18, 2.5, 0, 6.28); ctx.fill(); }
       ctx.restore();

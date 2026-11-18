@@ -284,6 +284,7 @@ export class Game {
     this.water = new Water({ reflections: this.R.q.reflections });
     this.scene.add(this.water.mesh);
     this.R.onResize = (w, h) => this.water.resize(w, h);
+    this.R.onShed = shed => this.water.setReflections(shed ? false : this.R.q.reflections); // (dynamic resolution's last resort)
     this.R.resize();
     await brk(); // (the city's materials paint their sign and interior atlases)
     this.city = new City(this.scene);
@@ -295,7 +296,7 @@ export class Game {
     let landmarks = null;
     try {
       const mod = await import('./world/landmarks/index.js');
-      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.waterEdge(x, z) > 0 });
+      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.waterEdge(x, z) > 0, facade: this.city.mats.walls });
       this.scene.add(landmarks.group);
       gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));
@@ -303,7 +304,7 @@ export class Game {
     this.landmarks = landmarks;
     await this.mark('landmarks');
     const clearings = (landmarks?.clearings || []).map(({ x, z, r }) => ({ x, z, r })); // (no street furniture on a landmark's plaza)
-    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], clearings, paint: landmarks?.paint || [], onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
+    const stats = await this.city.build({ exclusions: landmarks?.exclusions || [], clearings, paint: landmarks?.paint || [], facades: landmarks?.facades, placed: landmarks?.furniture, onProgress: (p, l) => prog(0.1 + p * 0.6, l) });
     console.log('city', JSON.stringify(stats));
     await this.mark('city built (worker gone)');
     await physP;
@@ -843,6 +844,7 @@ export class Game {
     // minigames cover the screen: keep the GPU idle except for an occasional refresh
     if (this.mgPaused) { this._mgT = (this._mgT || 0) + dt; if (this._mgT < 0.5) return; this._mgT = 0; }
     this.R.renderer.info.reset(); // counts include the reflection pass
+    this.R.taa.carry(this.player.vehicle?.root ?? null); // (temporal AA reprojects it through its own two poses)
     // one scene-graph matrix update per frame (each renderer.render() would otherwise walk the whole city again)
     this.scene.updateMatrixWorld();
     this.scene.matrixWorldAutoUpdate = false;

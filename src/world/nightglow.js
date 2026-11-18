@@ -2,12 +2,16 @@
 // - pools: light spilling from shopfronts and their signboards onto the five-foot ways and pavements, soft coloured
 //   pools (mostly warm white and amber, some neon red, pink, cyan, green, violet) along every street-facing shophouse
 //   and low-rise front. Additive ground decals.
-// - neon: tubes on the shop fronts — outlined signboards over the five-foot way, vertical blade signs with glowing
-//   characters hung out over the pavement, coloured eave lines. Thick in the nightlife quarters (Clarke Quay, Boat
-//   Quay, Chinatown, Kampong Glam, Bugis), here and there elsewhere. A bay with neon tints its pool to match.
-// One instanced draw each, holding what is near the camera, shown only after dusk.
+// - neon: tubes on the shop fronts — signboards over the five-foot way outlined in neon round a word on a dark board,
+//   vertical blade signs with glowing characters hung out over the pavement, coloured eave lines. Thick in the
+//   nightlife quarters (Clarke Quay, Boat Quay, Chinatown, Kampong Glam, Bugis), here and there elsewhere. A bay with
+//   neon tints its pool to match.
+// One instanced draw each, holding what is near the camera, shown only after dusk. Buildings the city doesn't draw as
+// their OSM block (landmarks, hawker pavilions) get none; a landmark that rebuilds shopfronts lists them itself
+// (`fronts`, on its own bay grid and heights).
 import * as THREE from 'three';
 import { U } from '../gfx/globals.js';
+import { makeNeonWordAtlas, NEON_COLS, NEON_ROWS, NEON_WORDS } from '../gfx/signAtlas.js';
 import { nextTask } from '../core/nextTask.js';
 import { districtAt } from '../ui/districts.js';
 import { REFLECT_LAYER } from './water.js';
@@ -39,7 +43,8 @@ function frontHeights(b) {
 // a neon piece is a quad: wall-flat (frames, lines) or standing out from the wall (blades). aNeon = kind, width,
 // height (m), seed. The quad has a halo margin of M around the tube shape; the tube is widened to ~1.5 px where it is
 // thinner than that, its brightness scaled down to match (no shimmer on a phone), and blade characters melt into an
-// even glow once their strokes are sub-pixel.
+// even glow once their strokes are sub-pixel. A frame holds a word from the neon word atlas, crisp while its strokes
+// are a few pixels wide and the mip-filtered average of its strokes (an even glow) beyond.
 const NEON_VS = /* glsl */`
   attribute vec4 aNeon; uniform float uFar;
   varying vec2 vP; varying vec4 vN; varying vec3 vCol; varying float vFade;
@@ -50,7 +55,7 @@ const NEON_VS = /* glsl */`
     gl_Position = projectionMatrix * viewMatrix * wp;
   }`;
 const NEON_FS = /* glsl */`
-  uniform float uNight; uniform float uTime; varying vec2 vP; varying vec4 vN; varying vec3 vCol; varying float vFade;
+  uniform float uNight; uniform float uTime; uniform sampler2D uWords; varying vec2 vP; varying vec4 vN; varying vec3 vCol; varying float vFade;
   const float M = 0.3, R = 0.022; // halo margin, tube radius (m)
   float nh(float n) { return fract(sin(n * 91.345 + 47.13) * 43758.5453); }
   float segH(vec2 p, vec2 a) { return length(vec2(max(abs(p.x - a.x - 0.25) - 0.25, 0.0), p.y - a.y)); }
@@ -86,12 +91,33 @@ const NEON_FS = /* glsl */`
       core = max(core, (1.0 - smoothstep(w * 0.6, w, gd)) * (R / w) * detail);
       glow = mix(0.45, exp(-gd / 0.07) * 0.35, detail) * step(abs(vP.x), inner.x + 0.05) * step(abs(vP.y), inner.y + 0.05);
     }
+    vec3 word = vec3(0.0); float board = 0.0;
+    if (kind < 0.5) {
+      // a dark board behind the tubes: the facade's painted signboard under it would fight the word
+      vec2 qb = abs(vP) - hs; board = 0.88 * (1.0 - smoothstep(-0.03, 0.0, max(qb.x, qb.y)));
+      // the word, fitted to the frame at the atlas cells' 4:1, in its own colour on half the signs
+      vec2 inner = hs - 0.16;
+      vec2 box = inner.x > inner.y * 4.0 ? vec2(inner.y * 8.0, inner.y * 2.0) : vec2(inner.x * 2.0, inner.x * 0.5);
+      vec2 q = vP / box + 0.5;
+      float wi = floor(fract(vN.w * 7.31) * ${NEON_WORDS.length}.0);
+      vec2 uv = (vec2(mod(wi, ${NEON_COLS}.0), floor(wi / ${NEON_COLS}.0)) + vec2(clamp(q.x, 0.0, 1.0), 1.0 - clamp(q.y, 0.0, 1.0))) / vec2(${NEON_COLS}.0, ${NEON_ROWS}.0);
+      vec2 gx = dFdx(uv), gy = dFdy(uv);
+      float lod = log2(max(length(gx), length(gy)) * ${NEON_COLS * 256}.0 + 1e-6);
+      float inBox = step(abs(q.x - 0.5), 0.5) * step(abs(q.y - 0.5), 0.5);
+      float m = textureGrad(uWords, uv, gx, gy).r, aa = fwidth(m) + 1e-3;
+      // strokes are ~6 texels: crisp tubes to ~lod 1, the average coverage (no shimmer) from ~lod 2.5
+      float wd = mix(smoothstep(0.5 - aa, 0.5 + aa, m), m * 0.45, smoothstep(1.0, 2.5, lod)) * inBox;
+      float wGlow = textureGrad(uWords, uv, gx * 10.0, gy * 10.0).r * inBox;
+      vec3 tc = fract(vN.w * 13.7) < 0.5 ? vCol.gbr : vCol;
+      word = mix(tc, vec3(1.0), 0.3) * wd * 3.6 + tc * wGlow * 0.7;
+    }
     float halo = exp(-d / 0.09) * (1.0 - smoothstep(M * 0.55, M, d));
     if (line) halo *= step(abs(vP.x), hs.x); // (eave lines join end to end without a bright seam)
     // a few tubes buzz on and off
     float on = vN.w > 0.97 ? step(0.15, fract(sin(floor(uTime * 9.0) * 12.9898 + vN.w * 311.0) * 43758.5453)) : 1.0;
-    vec3 c = mix(vCol, vec3(1.0), 0.3) * core * 5.0 + vCol * (halo * 0.55 + glow);
-    gl_FragColor = vec4(c * on * vFade * smoothstep(0.12, 0.5, uNight), 1.0);
+    vec3 c = mix(vCol, vec3(1.0), 0.3) * core * 5.0 + vCol * (halo * 0.55 + glow) + word;
+    float k = vFade * smoothstep(0.12, 0.5, uNight);
+    gl_FragColor = vec4(c * on * k, board * k); // (premultiplied: light added, the board covering what is behind)
   }`;
 
 export class NightGlow {
@@ -132,8 +158,9 @@ export class NightGlow {
     const ngeo = new THREE.PlaneGeometry(1, 1);
     ngeo.setAttribute('aNeon', new THREE.InstancedBufferAttribute(new Float32Array(N_CAP * 4), 4).setUsage(THREE.DynamicDrawUsage));
     const nmat = new THREE.ShaderMaterial({
-      uniforms: { uNight: U.night, uTime: U.time, uFar: { value: N_RADIUS } }, vertexShader: NEON_VS, fragmentShader: NEON_FS,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide, forceSinglePass: true,
+      uniforms: { uNight: U.night, uTime: U.time, uFar: { value: N_RADIUS }, uWords: { value: makeNeonWordAtlas() } }, vertexShader: NEON_VS, fragmentShader: NEON_FS,
+      transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide, forceSinglePass: true,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, // wall-flat tubes sit 6 cm off the facade
     });
     this.neon = new THREE.InstancedMesh(ngeo, nmat, N_CAP);
@@ -174,11 +201,11 @@ export class NightGlow {
   async _init() {
     const clear = this._roadGrid(), B = this.game.city.data.buildings;
     await nextTask();
-    const hawkers = new Set(this.game.city.furniture?.hawkers || []); // (rebuilt as open pavilions by the city worker)
+    const rebuilt = this.game.city.rebuilt; // (not drawn as their OSM block: neon on that outline would hang in the air)
     for (let bi = 0; bi < B.length; bi++) {
       if (bi % 4000 === 3999) await nextTask();
       const b = B[bi];
-      if ((b.s !== STYLE_SHOPHOUSE && b.s !== STYLE_LOWRISE) || b.m > 0.5 || b.h < 4 || hawkers.has(b.id)) continue;
+      if ((b.s !== STYLE_SHOPHOUSE && b.s !== STYLE_LOWRISE) || b.m > 0.5 || b.h < 4 || rebuilt.has(b.id)) continue;
       const p = b.p, nV = p.length / 2;
       let area = 0; for (let i = 0; i < nV; i++) { const j = (i + 1) % nV; area += p[i * 2] * p[j * 2 + 1] - p[j * 2] * p[i * 2 + 1]; }
       const out = area > 0 ? 1 : -1;
@@ -192,20 +219,23 @@ export class NightGlow {
         const j = (i + 1) % nV, ex = p[j * 2] - p[i * 2], ez = p[j * 2 + 1] - p[i * 2 + 1], len = Math.hypot(ex, ez);
         if (len < 3 || len > 90) continue;
         const nx = ez / len * out, nz = -ex / len * out, s = clear((p[i * 2] + p[j * 2]) / 2 + nx * 1.5, (p[i * 2 + 1] + p[j * 2 + 1]) / 2 + nz * 1.5);
-        if (b.s === STYLE_SHOPHOUSE) { if (s < bestS) { bestS = s; best = i; } } else if (s < 5 && len > 4) this._front(p, i, j, nx, nz, len, b, fr);
+        if (b.s === STYLE_SHOPHOUSE) { if (s < bestS) { bestS = s; best = i; } } else if (s < 5 && len > 4) this._front(p[i * 2], p[i * 2 + 1], p[j * 2], p[j * 2 + 1], nx, nz, b.id, false, fr);
       }
-      if (best >= 0) { const j = (best + 1) % nV, ex = p[j * 2] - p[best * 2], ez = p[j * 2 + 1] - p[best * 2 + 1], len = Math.hypot(ex, ez); this._front(p, best, j, ez / len * out, -ex / len * out, len, b, fr); }
+      if (best >= 0) { const j = (best + 1) % nV, ex = p[j * 2] - p[best * 2], ez = p[j * 2 + 1] - p[best * 2 + 1], len = Math.hypot(ex, ez); this._front(p[best * 2], p[best * 2 + 1], p[j * 2], p[j * 2 + 1], ez / len * out, -ex / len * out, b.id, true, fr); }
     }
+    // shopfronts a landmark builds itself (Clarke Quay's godowns): its walls, floor and eave heights
+    for (const f of this.game.landmarks?.fronts || []) this._front(f.a[0], f.a[1], f.b[0], f.b[1], f.n[0], f.n[1], f.id, true, f);
     this.xz = this.xz.slice(0, this.n * 2); this.rec = this.rec.slice(0, this.n * 8); this.nrec = this.nrec.slice(0, this.nn * NREC);
   }
 
-  // one pool per shop bay along the wall p[i] -> p[j] (outward normal nx, nz), and the bay's neon if it has any
-  _front(p, i, j, nx, nz, len, b, fr) {
-    const id = b.id, nb = Math.max(1, Math.round(len / BAY)), w = len / nb, ux = (p[j * 2] - p[i * 2]) / len, uz = (p[j * 2 + 1] - p[i * 2 + 1]) / len;
-    const yaw = Math.atan2(nx, nz), shop = b.s === STYLE_SHOPHOUSE;
+  // one pool per shop bay along the wall (x0, z0) -> (x1, z1) (outward normal nx, nz; id seeds it), and the bay's
+  // neon if it has any. The bays and signboards follow the facade shader's grid (round(length / 5.5) per wall).
+  _front(x0, z0, x1, z1, nx, nz, id, shop, fr) {
+    const len = Math.hypot(x1 - x0, z1 - z0), nb = Math.max(1, Math.round(len / BAY)), w = len / nb, ux = (x1 - x0) / len, uz = (z1 - z0) / len;
+    const yaw = Math.atan2(nx, nz);
     for (let k = 0; k < nb; k++) {
       const t = (k + 0.5) * w, h = hash(id * 0.37 + k * 1.7, t);
-      const bx = p[i * 2] + ux * t, bz = p[i * 2 + 1] + uz * t;
+      const bx = x0 + ux * t, bz = z0 + uz * t;
       if (fr.eave && w > 2) this._neon(bx + nx * 0.08, fr.wallTop - (fr.flat ? 0.45 : 0.2), bz + nz * 0.08, yaw, K_LINE, w + 0.6, 0.6, 0.5, fr.eave);
       if (h < 0.22) continue; // shuttered for the night
       let c = PALETTE[Math.floor(hash(id * 1.3 + k * 0.71, 4.1) * PALETTE.length)];

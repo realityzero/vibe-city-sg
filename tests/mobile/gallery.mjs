@@ -24,6 +24,8 @@ export const VIEWS = [
   ['flyer', 9.5, [1400, 28, -70], [1572, 75, -266]],
   ['esplanade', 10, [620, 25, -190], [700, 8, -300]],
   ['esplanade-bay', 17.5, [860, 22, -150], [700, 15, -310]],
+  // the Raffles Place wall across the bay by day (OUB, UOB Plaza, Republic, OUE Bayfront)
+  ['raffles-skyline-day', 9.5, [1010, 24, 250], [300, 95, 360]],
   ['chinatown-street', 11, [-396, 4.5, 424], [-330, 3, 380]],
   ['chinatown-night', 21, [-396, 4.5, 424], [-330, 3, 380]],
   ['cbd-street', 13, [272, 3, 488], [310, 8, 538]],
@@ -34,7 +36,7 @@ export const VIEWS = [
   // (hdb-estate above looks at River Valley's condos; these are Bukit Merah's HDB blocks, playground and hawker centre)
   ['hdb-blocks', 9, [-1745, 30, -13], [-1885, 10, -103]],
   ['hdb-voiddeck', 11, [-1866, 1.7, -74], [-1882, 1.4, -94]],
-  ['playground', 11, [-1915, 6, -100], [-1897, 0, -72]],
+  ['playground', 11, [-1914, 4.5, 1], [-1896, 0.8, 22]],   // (the estate's playground, fitness corner and courtyard)
   ['hawker-centre', 11, [-2580, 3, 814], [-2559, 2.5, 790]],
   ['hawker-maxwell', 11, [-422, 3, 722], [-462, 2.5, 742]],
   ['aerial-city', 15, [-200, 420, 900], [200, 0, 100]],

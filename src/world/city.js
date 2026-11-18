@@ -95,7 +95,9 @@ export class City {
     return (at(i0, j0) * (1 - u) + at(i0 + 1, j0) * u) * (1 - v) + (at(i0, j0 + 1) * (1 - u) + at(i0 + 1, j0 + 1) * u) * v;
   }
 
-  build({ exclusions = [], clearings = [], paint = [], onProgress }) {
+  /** facades: walls a landmark draws with the facade shader ({ geometry, records }, see _facadeRecords); placed: street
+   *  furniture a landmark sets out itself ([kind, x, z, yaw, h], world/worker/streetscape.js) */
+  build({ exclusions = [], clearings = [], paint = [], facades = [], placed = [], onProgress }) {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL('./worker/cityBuilder.worker.js', import.meta.url), { type: 'module' });
       worker.onmessage = e => {
@@ -108,20 +110,31 @@ export class City {
           this.buildingInfo = m.buildingInfo;
           this.furniture = m.furniture; // street furniture: { pieces, obstacles } (world/worker/streetscape.js)
           this.railings = m.railings; // quay railing bays: x, z, yaw, length (StreetDetail draws them)
+          this.rebuilt = new Set(m.rebuilt); // OSM buildings drawn as something else (landmarks, hawker pavilions)
           this.stats = m.stats;
-          this._facadeRecords(m.facadeRecords);
+          this._facadeRecords(m.facadeRecords, facades);
           this._createMeshes(m).then(() => resolve(m.stats), reject);
         }
       };
       worker.onerror = e => reject(e);
-      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, clearings, paint, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
+      worker.postMessage({ type: 'build', cityUrl: new URL('/data/city.json', location.href).href, groundUrl: new URL('/data/ground.png', location.href).href, exclusions, clearings, paint, placed, chunkSize: 300, f32normals: new URLSearchParams(location.search).has('f32normals') });
     });
   }
 
-  // facade parameter records -> RGBA32F texture the facade shaders read per vertex (materials.js FACADE_REC)
-  _facadeRecords(recs) {
-    const texels = recs.length / 4, H = Math.max(1, Math.ceil(texels / FACADE_REC_W));
+  // facade parameter records -> RGBA32F texture the facade shaders read per vertex (materials.js FACADE_REC). Walls a
+  // landmark rebuilds with the facade shader (Clarke Quay's godowns) bring records of their own: appended after the
+  // builder's, their geometry's aRec (an index into its own records) moved on to match before it is uploaded.
+  _facadeRecords(recs, facades = []) {
+    const total = facades.reduce((n, f) => n + f.records.length, recs.length);
+    const texels = total / 4, H = Math.max(1, Math.ceil(texels / FACADE_REC_W));
     const data = new Float32Array(FACADE_REC_W * H * 4); data.set(recs);
+    let o = recs.length;
+    for (const f of facades) {
+      data.set(f.records, o);
+      const a = f.geometry.attributes.aRec.array, base = o / 8;
+      for (let i = 0; i < a.length; i++) a[i] += base;
+      o += f.records.length;
+    }
     const t = new THREE.DataTexture(data, FACADE_REC_W, H, THREE.RGBAFormat, THREE.FloatType);
     t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.flipY = false; t.needsUpdate = true;
     t.userData.releaseSource = true; t.name = 'facadeRecords';

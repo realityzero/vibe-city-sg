@@ -41,6 +41,7 @@ const HABITS = {
   female: { pace: [1.05, 1.45], stops: 0.025, phone: 0.2 }, tourist: { pace: [0.8, 1.15], stops: 0.05, phone: 0.12 },
   auntie: { pace: [0.85, 1.05], stops: 0.035, phone: 0.05 }, uncle: { pace: [0.9, 1.2], stops: 0.03, phone: 0.05 },
   delivery: { pace: [1.55, 1.85], stops: 0.01, phone: 0.45 }, jogger: { pace: [2.6, 3.3], stops: 0.004, phone: 0 },
+  worker: { pace: [1.0, 1.3], stops: 0.02, phone: 0.15 },
 };
 // ground covered per unit of gait cadence by a 1.78 m person (the crowd shader's walk / run cycles)
 const WALK_STRIDE = 1.25, RUN_STRIDE = 3.0, FLEE_SPEED = 5.2;
@@ -69,7 +70,7 @@ export class Pedestrians {
     this.game = game;
     this.walkways = new Walkways(game);
     this.maxWalkers = max;
-    this.max = max + 140; // extra capacity for posed scene crowds and staged street scenes
+    this.max = max + 200; // extra capacity for posed scene crowds, diners (world/scenes.js) and staged street scenes
     // the same people per square metre of view on every preset: the phone's 80 cover a 75 m view, 150 cover ~100 m
     this.view = Math.round(75 * Math.sqrt(max / 80));
     this.keep = this.view * 1.35;   // beyond this anyone not pinned is recycled, seen or not (a few pixels tall)
@@ -118,15 +119,17 @@ export class Pedestrians {
 
   // ------------------------------------------------------------------ people
   pickVariant(x, z, t) {
-    const night = !inHours(t, 6, 21), meal = inHours(t, 11, 14) || inHours(t, 17.5, 21.5);
+    const night = !inHours(t, 6, 21), meal = inHours(t, 11, 14) || inHours(t, 17.5, 21.5), school = inHours(t, 6.5, 8) || inHours(t, 13, 15.5);
     const mix = (MIX[districtAt(x, z)] || DEFAULT_MIX).map(([v, w]) =>
-      [v, w * (night ? ({ office_m: 0.25, office_f: 0.25, auntie: 0.35, student: 0.3 }[v] ?? 1) : 1)]);
-    mix.push(['delivery', meal ? 0.7 : 0.25]);
+      [v, w * (night ? ({ office_m: 0.25, office_f: 0.25, auntie: 0.35, student: 0.3 }[v] ?? 1) : v === 'student' && school ? 2.5 : 1)]);
+    mix.push(['delivery', meal ? 0.7 : 0.25], ['worker', inHours(t, 7.5, 18) ? 0.3 : 0.02]);
     return pickW(mix);
   }
 
   makePed(variant, pos, extra) {
-    const look = randomLook(Math.floor(Math.random() * 1e6), variant);
+    // no twins: a look someone within 30 m already wears (same variant, print and colours) is rolled again
+    let look = randomLook(Math.floor(Math.random() * 1e6), variant);
+    for (let k = 0; k < 4 && this.twin(look, pos); k++) look = randomLook(Math.floor(Math.random() * 1e6), variant);
     const H = HABITS[variant] || HABITS.male;
     const p = {
       variant, look, pos: pos.clone(), yaw: 0, state: 'walk', sw: null, s: 0, dir: 1, lat: 0, target: null, slot: -1,
@@ -143,6 +146,29 @@ export class Pedestrians {
     return p;
   }
 
+  twin(L, pos) {
+    const C = L.colors;
+    for (const p of this.peds) {
+      const q = p.look;
+      if (q.variant === L.variant && q.pattern === L.pattern && q.colors.top === C.top && q.colors.bottom === C.bottom && Math.abs(p.pos.x - pos.x) < 30 && Math.abs(p.pos.z - pos.z) < 30) return true;
+    }
+    return false;
+  }
+
+  /** a walker already within a stride, four within 10 m, or a path that already has one walker per 15 m of it (at
+   * most six): people set off spaced out, in ones and twos, and a sparse estate's one footpath gets no procession */
+  crowded(x, z, w) {
+    const cap = Math.max(2, Math.min(6, Math.floor(w.path.length / 15)));
+    let n = 0, on = 0;
+    for (const p of this.peds) {
+      if (p.state !== 'walk' || p.pose || p.script) continue;
+      if (p.sw === w && ++on >= cap) return true;
+      const d = Math.abs(p.pos.x - x) + Math.abs(p.pos.z - z);
+      if (d < 2.5 || (d < 10 && ++n >= 4)) return true;
+    }
+    return false;
+  }
+
   /** a walker somewhere on the network, biased into the view; seeding fills the whole view at once */
   spawnWalker() {
     const W = this.walkways, V = this.viewer, f = this._fwd;
@@ -151,13 +177,15 @@ export class Pedestrians {
     else { a = Math.random() * Math.PI * 2; d = rnd(10, this.view * 0.5); } // around and behind: there when the camera turns
     const sn = W.snap(V.x + Math.cos(a) * d, V.z + Math.sin(a) * d, 14);
     if (!sn) return null;
-    sn.w.path.sample(sn.s, _p);
+    // (spread along the path: where few paths run, every snap lands on the same spot and a file would set off together)
+    const w = sn.w, s = Math.min(w.path.length, Math.max(0, sn.s + (Math.random() - 0.5) * 20));
+    w.path.sample(s, _p);
     const dist = Math.hypot(_p.x - V.x, _p.z - V.z);
-    if (dist > this.view || (dist < 6 && !this.seeding) || !this.unseen(_p.x, _p.z, dist)) return null;
-    const t = this.game.sky.time, park = sn.w.foot && (this.game.city.maskAt(_p.x, _p.z, 1) > 150 || this.nearWater(_p.x, _p.z));
+    if (dist > this.view || (dist < 6 && !this.seeding) || this.crowded(_p.x, _p.z, w) || !this.unseen(_p.x, _p.z, dist)) return null;
+    const t = this.game.sky.time, park = w.foot && (this.game.city.maskAt(_p.x, _p.z, 1) > 150 || this.nearWater(_p.x, _p.z));
     const variant = park && (inHours(t, 6, 9.5) || inHours(t, 17, 20.5)) && Math.random() < 0.4 ? 'jogger' : this.pickVariant(_p.x, _p.z, t);
-    const p = this.makePed(variant, _p, { sw: sn.w, s: sn.s, dir: Math.random() < 0.5 ? 1 : -1 });
-    p.lat = (Math.random() * 2 - 1) * sn.w.half;
+    const p = this.makePed(variant, _p, { sw: w, s, dir: Math.random() < 0.5 ? 1 : -1 });
+    p.lat = (Math.random() * 2 - 1) * w.half;
     return p;
   }
 

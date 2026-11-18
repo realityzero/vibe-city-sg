@@ -28,6 +28,45 @@ const MERGE = 12; // m: a car merging into one's lane counts as in front once th
 const LOOK0 = 1, LOOKV = 0.35; // pure-pursuit distance from the rear axle: wheelbase + LOOK0 + LOOKV * speed (m)
 // indicator for a connector: + right, - left (U-turns go right: left-hand traffic)
 const turnSide = conn => (!conn || Math.abs(conn.turn) < 0.5 ? 0 : conn.turn > 0 ? 1 : -1);
+// lanes moved across going from lane a into lane b, each placed from the middle of its carriageway (lanes added or
+// dropped share out about the middle)
+const laneShift = (a, b) => Math.abs(a.idx - (a.nLanes - 1) / 2 - b.idx + (b.nLanes - 1) / 2);
+const SIDE = 2.8; // m centre to centre: two lanes closer than this can't each take a car side by side
+const _a = new THREE.Vector3(), NONE = Object.freeze([]);
+/** over how many metres (from its end if `end`, else from its start) lane a runs within SIDE of lane b's last / first
+ * 60 m, 0 if it doesn't: where a road joins or leaves another at a shallow angle the lanes of both run into / out of
+ * the junction overlapping (and some roads' stop lines lie on another road's lane) */
+function alongside(a, b, end) {
+  const P = b.path, from = end ? b.s1 - 60 : b.s0, to = end ? b.s1 : b.s0 + 60;
+  let z = 0;
+  for (let k = 0; k <= 40 && k <= a.s1 - a.s0; k++) {
+    a.path.sample(end ? a.s1 - k : a.s0 + k, _a);
+    let d2 = 1e9;
+    for (let i = 0; i < P.n - 1; i++) {
+      if (P.arc(i + 1) < from) continue;
+      if (P.arc(i) > to) break;
+      const ax = P.x(i), az = P.z(i), dx = P.x(i + 1) - ax, dz = P.z(i + 1) - az, t = clamp(((_a.x - ax) * dx + (_a.z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      if (Math.abs(P.y(i) + (P.y(i + 1) - P.y(i)) * t - _a.y) > 2.5) continue; // (one above the other)
+      const ex = ax + dx * t - _a.x, ez = az + dz * t - _a.z; d2 = Math.min(d2, ex * ex + ez * ez);
+    }
+    if (d2 < SIDE * SIDE) z = k + 1; else if (k > 4) break;
+  }
+  return z;
+}
+/** is car o near enough to car c to be beside it? */
+const beside = (c, o) => { const dx = o.pos.x - c.pos.x, dz = o.pos.z - c.pos.z, r = (c.len + o.len) / 2 + SIDE; return dx * dx + dz * dz < r * r; };
+/** do two paths come within SIDE of each other (cross, or join)? */
+function pathsMeet(A, B) {
+  for (let s = 0; s <= A.length; s += 1) {
+    A.sample(s, _a);
+    for (let i = 0; i < B.n - 1; i++) {
+      const ax = B.x(i), az = B.z(i), dx = B.x(i + 1) - ax, dz = B.z(i + 1) - az, t = clamp(((_a.x - ax) * dx + (_a.z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      const ex = ax + dx * t - _a.x, ez = az + dz * t - _a.z;
+      if (ex * ex + ez * ez < SIDE * SIDE) return true;
+    }
+  }
+  return false;
+}
 
 let carIds = 0;
 export class Traffic {
@@ -55,13 +94,83 @@ export class Traffic {
     this.parking = new Parking(game, parked);
     // the route ahead of the car being driven: up to 6 (path, from s, to s, speed limit or 0) segments, see _route()
     this._rp = new Array(6).fill(null); this._ra = new Float64Array(6); this._rb = new Float64Array(6); this._rv = new Float64Array(6); this._rn = 0;
+    // per lane id: other roads' lanes alongside it at its end / its start (see _joins / _splits)
+    this._jn = new Array(this.net.lanes.length); this._sp = new Array(this.net.lanes.length);
+    this._kp = new Array(this.net.lanes.length); // per lane id: the connectors out of it that keep to the lane (_keep)
+    this._sq = new Array(this.net.lanes.length); this._sqNear = []; // per lane id: squeezed against the other carriageway?
     game.physics.onStep(h => this.fixedStep(h));
+  }
+
+  /** other roads' lanes running into lane l's junction alongside it, closer than SIDE: [{ lane, here: m before l's end,
+   * there: m before its end }] (worked out the first time it's needed) */
+  _joins(l) { return (this._jn[l.id] ??= this._alongside(l, this.net.nodes[l.to].inc, true)); }
+  /** other roads' lanes running out of lane l's start junction alongside it: [{ lane, here: m after l's start, there }] */
+  _splits(l) { return (this._sp[l.id] ??= this._alongside(l, this.net.nodes[l.from].out, false)); }
+  _alongside(l, lanes, end) {
+    let out = NONE;
+    for (const b of lanes) {
+      if (b.edge === l.edge) continue;
+      const here = alongside(l, b, end), there = here && alongside(b, l, end);
+      if (!there) continue;
+      if (out === NONE) out = [];
+      out.push({ lane: b, here, there });
+    }
+    return out;
+  }
+  /** does lane m join lane l's junction alongside it? */
+  _joined(l, m) { for (const j of this._joins(l)) if (j.lane === m) return true; return false; }
+
+  /** the connectors out of lane l a driver keeps to its lane by (where a road just carries on, or splits, every lane links
+   * to every lane: hopping across them cuts through the cars alongside, and across the gore where a road splits). Into
+   * a road that carries on, the lanes nearest this one's place across the carriageway; where roads split or merge, the
+   * lanes nearest where this one ends (the far branch is for the lanes on its side) */
+  _keep(l) {
+    let k = this._kp[l.id];
+    if (k) return k;
+    const node = this.net.nodes[l.to], straight = l.next.filter(o => Math.abs(o.turn) < 0.5);
+    const split = straight.some(o => o.lane.edge !== straight[0].lane.edge);
+    const merge = !split && straight.length && node.inc.some(m => m.edge !== l.edge && m.next.some(o => o.lane.edge === straight[0].lane.edge && Math.abs(o.turn) < 0.5));
+    if (split || merge) {
+      l.path.sample(l.s1, _a, _d);
+      const ax = _a.x, az = _a.z, dx = _d.x, dz = _d.z, lat = o => { o.lane.path.sample(o.lane.s0, _a); return Math.abs(dx * (_a.z - az) - dz * (_a.x - ax)); };
+      const min = Math.min(...straight.map(lat));
+      k = l.next.filter(o => Math.abs(o.turn) >= 0.5 || lat(o) < min + 1);
+    } else k = l.next.filter(o => !l.next.some(p => p.lane.edge === o.lane.edge && laneShift(l, p.lane) < laneShift(l, o.lane) - 0.25));
+    // off a lane squeezed against the other carriageway, into the nearest one of the same road that isn't (if any)
+    k = [...new Set(k.map(o => !this._squeezed(o.lane) ? o : l.next.filter(p => p.lane.edge === o.lane.edge && Math.abs(p.turn - o.turn) < 0.5 && !this._squeezed(p.lane))
+      .sort((a, b) => laneShift(o.lane, a.lane) - laneShift(o.lane, b.lane))[0] || o))];
+    return (this._kp[l.id] = k);
+  }
+
+  /** does lane l run, somewhere between its ends, within SIDE of a lane of another road going the other way? Where OSM
+   * draws a dual carriageway's two ways closer together than their width, the inner lanes of both run over each other
+   * and across the other's kerb: traffic keeps off them where the road has another lane (worked out once per lane) */
+  _squeezed(l) {
+    let q = this._sq[l.id];
+    if (q !== undefined) return q;
+    q = false;
+    for (let s = l.s0; s <= l.s1 && !q; s += 5) {
+      l.path.sample(s, _a, _d);
+      for (const o of this.net.lanesNear(_a.x, _a.z, 8, this._sqNear)) {
+        if (o.edge === l.edge) continue;
+        const P = o.path;
+        for (let i = 0; i < P.n - 1 && !q; i++) {
+          const ax = P.x(i), az = P.z(i), dx = P.x(i + 1) - ax, dz = P.z(i + 1) - az, L2 = dx * dx + dz * dz || 1, t = clamp(((_a.x - ax) * dx + (_a.z - az) * dz) / L2, 0, 1);
+          const ex = ax + dx * t - _a.x, ez = az + dz * t - _a.z;
+          q = ex * ex + ez * ez < SIDE * SIDE && Math.abs(P.y(i) + (P.y(i + 1) - P.y(i)) * t - _a.y) < 2.5 && (dx * _d.x + dz * _d.z) < -0.7 * Math.sqrt(L2);
+        }
+        if (q) break;
+      }
+    }
+    return (this._sq[l.id] = q);
   }
 
   /** the connector a car (optional: a bus keeps to kerb lanes) takes at the end of `lane` */
   pickNext(lane, car) {
-    let opts = lane.next; if (!opts.length) return null;
-    const open = opts.filter(o => !o.lane.closed); if (open.length) opts = open;
+    let opts = this._keep(lane); if (!opts.length) return null;
+    // (a closed street — the satay night — is avoided even if that means leaving one's lane)
+    const open = opts.filter(o => !o.lane.closed), other = open.length ? open : lane.next.filter(o => !o.lane.closed);
+    if (other.length) opts = other;
     // prefer going straight on bigger roads; hairpins (tighter than most cars' lock) only when there is nothing else
     const kerb = car?.stops ? 4 : 1;
     let tot = 0; const w = opts.map(o => { const a = Math.abs(o.turn), s = a < 0.5 ? 3 : a > 2.4 ? 0.02 : 1; const c = o.lane.cls <= lane.cls ? 1.5 : 1; const v = s * c * (o.lane.idx ? 1 : kerb); tot += v; return v; });
@@ -90,6 +199,7 @@ export class Traffic {
       siren: type === 'police' && Math.random() < 0.15,
       // buses pull up at the stops on their lane: the stop ahead, how long they have stood there / will stand
       stops: type === 'bus', stopS: null, dwell: 0, dwellFor: 8 + Math.random() * 10, servedLane: null, servedS: 0, pullOut: 0,
+      zipT: null, // when it came up to where another road's lane runs in alongside its own (its turn there, see leaderGap)
     };
     // the next two junctions are decided ahead (speed planning and indicators look that far)
     car.nextConn = this.pickNext(lane, car);
@@ -211,68 +321,158 @@ export class Traffic {
     return best;
   }
 
+  /** Keep a run of road clear (a street race) until release(). `steps` [{ lane, from, conn }]: each racer's way, lane by
+   * lane (from arc length `from` on, out through connector `conn`). Nobody appears on it; cars on it ahead are let go
+   * while out of sight, or move over a lane; at the junctions it passes through, traffic whose way crosses or joins it
+   * waits at the line as if the junction were full — at the first one too if `start` (the racers' own light holds the
+   * cross traffic there until they go) — and traffic along it goes on through a red (racers run them: a queue at the
+   * light would stand in their way). */
+  holdWay(steps, start) {
+    const lanes = new Map(), conns = new Set(), held = new Set(), first = steps[0]?.lane.to;
+    for (const { lane, from, conn } of steps) {
+      lanes.set(lane, Math.min(lanes.get(lane) ?? Infinity, from));
+      if (conn && (start || lane.to !== first)) conns.add(conn);
+    }
+    for (const x of conns) for (const l of this.net.nodes[x.lane.from].inc) for (const o of l.next) if (!conns.has(o) && pathsMeet(o.path, x.path)) held.add(o);
+    this.way = { lanes, conns, held };
+    this._clearWay();
+  }
+  release() { this.way = null; }
+
+  /** cars ahead on a held way: out of sight they are let go; in sight, under way and with room to finish (a car only
+   * moves across as it rolls: one that stopped half over would stand in the racers' way), they move over to the nearest
+   * lane of the road that is not kept clear, where there is a gap beside them — the rest drive on through */
+  _clearWay() {
+    const W = this.way;
+    for (const [l, from] of W.lanes) for (let i = l.cars.length - 1; i >= 0; i--) {
+      const c = l.cars[i];
+      if (c.keep || c.s < from - 3) continue; // (behind the racers)
+      if (!this.seen(c.pos)) { this.despawn(c); continue; }
+      if (c.speed < 4 || l.s1 - c.s < 25) continue;
+      let to = null;
+      for (const o of this.net.nodes[l.from].out) if (o.edge === l.edge && !W.lanes.has(o) && this._clear(o, c.s, 10, 10) && (!to || Math.abs(o.idx - l.idx) < Math.abs(to.idx - l.idx))) to = o;
+      if (to) this._moveOver(c, to);
+    }
+    for (const x of W.conns) for (const c of this.net.nodes[x.lane.from].occ) if (c.conn === x && !c.keep && !this.seen(c.pos)) this.despawn(c);
+  }
+
+  /** car c changes to lane o of the same road, beside it at the same arc length (pursuit steers it across) */
+  _moveOver(c, o) {
+    c.lane.cars.splice(c.lane.cars.indexOf(c), 1);
+    c.lane = o; o.cars.push(c);
+    c.nextConn = this.pickNext(o, c); c.nextConn2 = c.nextConn && this.pickNext(c.nextConn.lane, c);
+    c.committed = null; c.zipT = null;
+  }
+
+  /** leaderGap's running nearest: car o, d m ahead */
+  _lead(o, d) { if (d < this._gap) { this._gap = d; this._gs = o.speed; } }
+
+  /** cars on lane `L` (its start `base` m ahead of the car), and on other roads' lanes leaving alongside it while still
+   * in the stretch where the two overlap */
+  _onLane(car, L, base) {
+    const half = car.len / 2;
+    for (const o of L.cars) if (o !== car) this._lead(o, base + (o.s - L.s0) - half - o.len / 2);
+    for (const j of this._splits(L)) for (const o of j.lane.cars) { const go = o.s - j.lane.s0; if (go - o.len / 2 < j.there) this._lead(o, base + go - half - o.len / 2); }
+  }
+
+  /** cars on the route past the end of lane `l` (`base` m ahead of the car): in the junction (on connector `x`; just
+   * gone out of `l`, or of a lane alongside it, on another one: still right in front; merging into the lane `x` leads
+   * to and nearer that merge), along that lane, and on through the junction after it (`x2`) while within `horizon` —
+   * the lanes between the nodes of a big junction are a few metres long, and the car beyond one is right in front */
+  _ahead(car, l, x, x2, base, horizon) {
+    const half = car.len / 2;
+    for (let k = 0; k < 2 && x && base < horizon && base < this._gap + 10; k++) {
+      const nl = x.lane, rc = base + x.path.length, node = this.net.nodes[l.to];
+      for (const o of node.occ) if (o !== car && (o.conn === x || ((o.fromLane === l || this._joined(l, o.fromLane)) && o.cs < o.len + 4))) this._lead(o, base + o.cs - half - o.len / 2);
+      this._merging(car, node, nl, rc);
+      this._onLane(car, nl, rc);
+      base = rc + nl.s1 - nl.s0; l = nl; x = k ? null : x2;
+    }
+  }
+
+  /** cars heading into lane `nl` through junction `node`, in it or (unless we are in it ourselves: in the junction
+   * nobody waits for those still to come in) still on their lanes, nearer the merge than our `r` m: in front, in turn
+   * like a zip, once close to it — or right beside us (two lanes running into one, long connectors converging) */
+  _merging(car, node, nl, r) {
+    const half = car.len / 2;
+    for (const o of node.occ) if (o !== car && o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < r && (ro < MERGE || beside(car, o))) this._lead(o, r - ro - half - o.len / 2); }
+    if (r < 40 && car.connNode !== node) for (const m of node.inc) for (const o of m.cars) {
+      // (on a lane running in alongside ours: they take turns as they came, see leaderGap)
+      if (o === car || o.nextConn?.lane !== nl || (car.mode === 'lane' && car.lane.to === node.id && this._joined(car.lane, m))) continue;
+      const ro = m.s1 - o.s + o.nextConn.path.length;
+      if ((ro < r || (ro === r && o.id > car.id)) && (ro < MERGE || beside(car, o))) this._lead(o, r - ro - half - o.len / 2);
+    }
+  }
+
+  /** leaderGap: something that will not move off (a stop line, a car across our way, a person) d m ahead */
+  _stop(d) { if (d < this._gap) { this._gap = Math.max(0, d); this._gs = 0; } }
+
   // distance ahead along the car's route to the nearest blocking thing
   leaderGap(car) {
-    let gap = 1e9, leaderSpeed = 0, person = false;
-    const half = car.len / 2;
+    const half = car.len / 2, horizon = 40 + 1.5 * car.speed;
+    this._gap = 1e9; this._gs = 0;
+    let person = false;
     if (car.mode === 'lane') {
-      for (const o of car.lane.cars) {
-        if (o === car || o.mode !== 'lane') continue;
-        const d = o.s - car.s - half - o.len / 2;
-        if (d > -1.5 && d < gap) { gap = d; leaderSpeed = o.speed; }
-      }
-      // cars in the connector / start of next lane
-      const remain = car.lane.s1 - car.s;
-      if (remain < 40 && car.nextConn) {
-        const nl = car.nextConn.lane;
-        for (const o of nl.cars) { if (o.mode !== 'lane') continue; const d = remain + car.nextConn.path.length + (o.s - nl.s0) - half - o.len / 2; if (d < gap) { gap = d; leaderSpeed = o.speed; } }
-        // cars in the junction: on our connector; just gone out of our lane on another one (still right in front);
-        // merging into the lane we are heading for and nearer that merge
-        const rc = remain + car.nextConn.path.length;
-        for (const o of this.net.nodes[car.lane.to].occ || []) {
-          let d = 1e9;
-          if (o.conn === car.nextConn || (o.fromLane === car.lane && o.cs < o.len + 4)) d = remain + o.cs - half - o.len / 2;
-          else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < rc && ro < MERGE) d = rc - ro - half - o.len / 2; }
-          if (d < gap) { gap = d; leaderSpeed = o.speed; }
+      // anyone on the lane ahead of our middle, however close (one that got into us still has to be let go first)
+      const L = car.lane, remain = L.s1 - car.s, gone = car.s - L.s0;
+      for (const o of L.cars) if (o !== car && (o.s > car.s || (o.s === car.s && o.id > car.id))) this._lead(o, o.s - car.s - half - o.len / 2);
+      // where another road's lane runs in alongside ours, a car takes its turn (zipT) on coming up to where the two
+      // overlap: those on it that came up before us go first, like a zip (by distance to the junction — or to the merge
+      // for one heading into the same lane as us — would starve us: its lane may be shorter than our queue); where one
+      // runs out alongside, its cars further along it are in front while the two still overlap
+      for (const j of this._joins(L)) {
+        if (remain - half >= j.here + 10) continue;
+        if (car.zipT === null) car.zipT = this.clock;
+        for (const o of j.lane.cars) {
+          if (o.zipT === null || o.zipT > car.zipT || (o.zipT === car.zipT && o.id > car.id)) continue;
+          const same = car.nextConn && o.nextConn?.lane === car.nextConn.lane;
+          this._lead(o, remain - (j.lane.s1 - o.s) + (same ? car.nextConn.path.length - o.nextConn.path.length : 0) - half - o.len / 2);
         }
+      }
+      for (const j of this._splits(L)) if (gone - half < j.here) for (const o of j.lane.cars) { const go = o.s - j.lane.s0; if (go > gone && go - o.len / 2 < j.there) this._lead(o, go - gone - half - o.len / 2); }
+      if (remain < horizon && car.nextConn) {
+        this._ahead(car, car.lane, car.nextConn, car.nextConn2, remain, horizon);
         // signals: stop for amber / red unless too close to stop smoothly — then the driver is committed and goes on
         const sig = this.net.signalFor(car.lane), canStop = remain - half - 1 > car.speed * car.speed / 6;
         if (sig === 'amber' || sig === 'red') {
           if (sig === 'amber' && !canStop) car.committed = car.lane;
           else if (car.speed < 2) car.committed = null; // held up short of the line after all: wait for the next green
-          if (car.committed !== car.lane) { const d = remain - half - 1; if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; } }
+          // (on a race's way through a junction it holds, the way is clear: on through the red, out of the racers' way)
+          if (car.committed !== car.lane && !this.way?.conns.has(car.nextConn)) this._stop(remain - half - 1);
         }
+        const node = this.net.nodes[car.lane.to];
         if ((canStop || car.speed < 1) && car.wait < 8) {
           // unsignalised junction: yield if occupied by crossing traffic (unless already too close to stop)
-          const node = this.net.nodes[car.lane.to];
           if (sig === 'none' && node.degree >= 3 && car.wait < 4) {
-            for (const o of node.occ || []) if (o.fromLane !== car.lane && o.conn?.lane !== car.nextConn.lane) { const d = remain - half - 0.5; if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; } break; }
+            for (const o of node.occ) if (o.fromLane !== car.lane && o.conn.lane !== car.nextConn.lane) { this._stop(remain - half - 0.5); break; }
           }
           // anyone in the junction standing across our way (cross traffic clearing it at the start of green, a turn
           // across ours): wait at the line
-          if (node.occ?.size && this._across(car, node.occ, car.nextConn.path, 0, 1e9) < 1e9) { const d = remain - half - 0.5; if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; } }
-        }
+          if (node.occ.size && this._across(car, node.occ, car.nextConn.path, 0, 1e9) < 1e9) this._stop(remain - half - 0.5);
+        } else if (node.occ.size && car.wait < 8) this._stop(remain + this._across(car, node.occ, car.nextConn.path, 0, 1e9, car.lane)); // too late for the line: short of them
+        // a street race coming through: wait at the line if our way crosses or joins theirs
+        if (this.way?.held.has(car.nextConn) && (canStop || car.speed < 1)) this._stop(remain - half - 0.5);
       }
       // a bus pulls up with its middle at the shelter
       if (car.stops) {
         const sb = car.stopS = this._nextStop(car);
-        if (sb !== null) { const d = sb - car.s + car.gap0; if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; } }
+        if (sb !== null) this._stop(sb - car.s + car.gap0);
       }
     } else {
-      const remain = car.conn.path.length - car.cs, nl = car.conn.lane;
+      const remain = car.conn.path.length - car.cs, nl = car.conn.lane, occ = this.net.nodes[car.connNodeId].occ;
       // ahead on our connector, or on another one out of the same lane while the two still overlap; merging into our
       // lane and nearer the merge (strict orders: nobody waits for someone who waits for them)
-      for (const o of this.net.nodes[car.connNodeId].occ) {
-        if (o === car) continue;
-        let d = 1e9;
-        if ((o.conn === car.conn || (o.fromLane === car.fromLane && o.cs < o.len + 4)) && o.cs > car.cs) d = o.cs - car.cs - half - o.len / 2;
-        else if (o.conn.lane === nl) { const ro = o.conn.path.length - o.cs; if (ro < remain && ro < MERGE) d = remain - ro - half - o.len / 2; }
-        if (d < gap) { gap = d; leaderSpeed = o.speed; }
+      for (const o of occ) {
+        if (o === car || o.cs <= car.cs) continue;
+        // (out of a lane alongside ours into the same lane as us: _merging orders the two)
+        if (o.conn === car.conn || (o.cs < o.len + 4 && (o.fromLane === car.fromLane || (o.conn.lane !== nl && this._joined(car.fromLane, o.fromLane))))) this._lead(o, o.cs - car.cs - half - o.len / 2);
       }
-      for (const o of nl.cars) { if (o.mode !== 'lane') continue; const d = remain + (o.s - nl.s0) - half - o.len / 2; if (d < gap) { gap = d; leaderSpeed = o.speed; } }
-      // a car that came into the junction before us and stands across our way: give way to it
-      const d = this._across(car, this.net.nodes[car.connNodeId].occ, car.conn.path, car.cs, car.connT);
-      if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; }
+      this._merging(car, car.connNode, nl, remain);
+      this._onLane(car, nl, remain);
+      if (car.nextConn) this._ahead(car, nl, car.nextConn, car.nextConn2, remain + nl.s1 - nl.s0, horizon);
+      // a car that came into the junction before us and stands across our way: give way to it (one heading into the
+      // same lane takes its turn at the merge instead)
+      this._stop(this._across(car, occ, car.conn.path, car.cs, car.connT, null, nl));
     }
     // dynamic obstacles (player, pedestrians) in a forward cone
     const fx = -Math.sin(car.yaw), fz = -Math.cos(car.yaw);
@@ -280,26 +480,28 @@ export class Traffic {
       const dx = ob.x - car.pos.x, dz = ob.z - car.pos.z;
       const ahead = dx * fx + dz * fz; if (ahead < 0 || ahead > 35) continue;
       const lat = Math.abs(dx * -fz + dz * fx);
-      if (lat < 1.3 + (ob.r || 0.5)) { const d = ahead - half - (ob.r || 0.5) - 0.8; if (d < gap) { gap = Math.max(0, d); leaderSpeed = 0; car.blockedByPlayer = ob.player; person = true; } }
+      if (lat < 1.3 + (ob.r || 0.5)) { const d = ahead - half - (ob.r || 0.5) - 0.8; if (d < this._gap) { this._stop(d); car.blockedByPlayer = ob.player; person = true; } }
     }
-    const r = this._lg || (this._lg = { gap: 0, leaderSpeed: 0, person: false }); r.gap = gap; r.leaderSpeed = leaderSpeed; r.person = person; // reused: callers destructure immediately
+    const r = this._lg || (this._lg = { gap: 0, leaderSpeed: 0, person: false }); r.gap = this._gap; r.leaderSpeed = this._gs; r.person = person; // reused: callers destructure immediately
     return r;
   }
 
   /** distance along `path` from arc length `from` to the first car among `occ` (that entered the junction before time
-   * `since`) whose body is in our way within the next 25 m; 1e9 if none. First come, first through: a car never waits
-   * for one that came in after it, so nobody waits in a circle. */
-  _across(car, occ, path, from, since) {
+   * `since`, not out of lane `except` nor into lane `into`) whose body is in our way within the next 25 m; 1e9 if none.
+   * First come, first through: a car never waits for one that came in after it, so nobody waits in a circle. */
+  _across(car, occ, path, from, since, except, into) {
     let gap = 1e9;
     for (const o of occ) {
-      if (o === car || o.connT >= since) continue;
-      const w = (car.spec.width + o.spec.width) * 0.5 + 0.3, ox = o.pos.x, oz = o.pos.z;
+      if (o === car || o.connT >= since || o.fromLane === except || o.conn.lane === into) continue;
+      const ox = o.pos.x, oz = o.pos.z, fx = -Math.sin(o.yaw), fz = -Math.cos(o.yaw), hl = o.len / 2, hw = o.spec.width / 2;
       for (let i = 0; i < path.n - 1; i++) {
         const s0 = path.arc(i), s1 = path.arc(i + 1);
         if (s1 < from) continue; if (s0 > from + 25) break;
-        const ax = path.x(i), az = path.z(i), dx = path.x(i + 1) - ax, dz = path.z(i + 1) - az, L2 = dx * dx + dz * dz || 1;
-        const t = clamp(((ox - ax) * dx + (oz - az) * dz) / L2, 0, 1), px = ax + dx * t - ox, pz = az + dz * t - oz;
-        if (px * px + pz * pz < w * w) { const d = s0 + (s1 - s0) * t - from - car.len / 2 - o.spec.width / 2; if (d > -car.len / 2 && d < gap) gap = d; break; }
+        const ax = path.x(i), az = path.z(i), dx = path.x(i + 1) - ax, dz = path.z(i + 1) - az, L = Math.sqrt(dx * dx + dz * dz) || 1;
+        const t = clamp(((ox - ax) * dx + (oz - az) * dz) / (L * L), 0, 1), px = ax + dx * t - ox, pz = az + dz * t - oz;
+        // its body's reach across our path and along it (a car crossing at right angles reaches its half length across)
+        const c = Math.abs(fx * dz - fz * dx) / L, k = Math.abs(fx * dx + fz * dz) / L, w = car.spec.width / 2 + c * hl + k * hw + 0.3;
+        if (px * px + pz * pz < w * w) { const d = s0 + (s1 - s0) * t - from - car.len / 2 - (k * hl + c * hw); if (d > -car.len / 2 && d < gap) gap = d; break; }
       }
     }
     return gap;
@@ -372,6 +574,7 @@ export class Traffic {
    * filled at once, with queues at red lights and buses at their stops. */
   _stream() {
     const V = this.viewer, f = this.fwd, R = this.radius, quota = this.quota();
+    if (this.way) this._clearWay();
     let active = 0; for (const c of this.cars) if (c.state === 'drive') active++;
     const filling = this.recenter > 0 || this.cut > 0, seeding = filling || active < quota * 0.35;
     // recycle: out of sight and behind the camera beyond the near ring, or out of range (all of them at a cut, the
@@ -440,13 +643,26 @@ export class Traffic {
   /** room on lane l at s for a car doing v: its following distance to the car ahead (and room to brake for a slow
    * one), and for the car behind (on the lane, or coming into it out of the junction) to keep its own or stop */
   _room(l, s, v) {
-    const behind = (d, u) => d < 8 + Math.max(u * 1.4, u * u / 5);
-    for (const o of l.cars) {
-      const d = o.s - s;
-      if (d > 0 ? d < 8 + v * 1.4 || (o.speed < v * 0.6 && d < 14 + v * v / 4) : behind(-d, o.speed)) return false;
-    }
-    for (const o of this.net.nodes[l.from].occ) if (o.conn.lane === l && behind(s - l.s0 + o.conn.path.length - o.cs, o.speed)) return false;
+    // is car o, d m ahead of s (behind: d < 0), too close?
+    const near = (o, d) => (d > 0 ? d < 8 + v * 1.4 || (o.speed < v * 0.6 && d < 14 + v * v / 4) : -d < 8 + Math.max(o.speed * 1.4, o.speed * o.speed / 5));
+    for (const o of l.cars) if (near(o, o.s - s)) return false;
+    // on another road's lane alongside this one where they join or part, a car is as near as if it were on this one
+    // (up to where the leader search starts counting it)
+    for (const j of this._joins(l)) if (l.s1 - s < j.here + 10) for (const o of j.lane.cars) if (near(o, l.s1 - s - (j.lane.s1 - o.s))) return false;
+    for (const j of this._splits(l)) if (s - l.s0 < j.here) for (const o of j.lane.cars) if (near(o, o.s - j.lane.s0 - (s - l.s0))) return false;
+    // coming into the lane out of the junction behind, or gone out of it into the one ahead
+    for (const o of this.net.nodes[l.from].occ) if (o.conn.lane === l && near(o, -(s - l.s0 + o.conn.path.length - o.cs))) return false;
+    for (const o of this.net.nodes[l.to].occ) if (o.fromLane === l && near(o, l.s1 - s + o.cs)) return false;
     return true;
+  }
+
+  /** may a car doing v appear at s on lane l? Not on a road kept clear for a race, never within 25 m of the player
+   * (nor of their car: a queue or a platoon reaches back from where it was placed), and with room there */
+  _canSpawn(l, s, v) {
+    if (this.way?.lanes.has(l) || (l.nLanes > 1 && this._squeezed(l))) return false;
+    const P = this.game.player, pp = P?.vehicle?.position || P?.position;
+    if (pp) { l.path.sample(s, _a); if (Math.hypot(_a.x - pp.x, _a.z - pp.z) < 25) return false; }
+    return this._room(l, s, v);
   }
 
   /** a car (and on an expressway its platoon) under way at s on lane l; returns how many appeared */
@@ -454,7 +670,7 @@ export class Traffic {
     const fast = l.cls <= 1;
     let v = l.speed * (fast ? 0.8 + Math.random() * 0.15 : 0.45 + Math.random() * 0.35);
     // room to keep its distance, and to stop at the light ahead
-    if (!this._room(l, s, v)) return 0;
+    if (!this._canSpawn(l, s, v)) return 0;
     const sig = this.net.signalFor(l);
     if (sig === 'red' || sig === 'amber') v = Math.min(v, Math.sqrt(Math.max(0, 3 * (l.s1 - s - 6))));
     if (!this.spawnAt(l, s, this._pickType(l), undefined, v)) return 0;
@@ -465,7 +681,7 @@ export class Traffic {
     for (let k = 1 + Math.floor(Math.random() * 4), so = s; k > 0; k--) {
       const o = sibs[Math.floor(Math.random() * sibs.length)] || l;
       so -= 10 + v * 1.3 + Math.random() * 10;
-      if (so < o.s0 + 8 || !this._room(o, so, v)) continue;
+      if (so < o.s0 + 8 || !this._canSpawn(o, so, v)) continue;
       o.path.sample(so, _t);
       const d = Math.hypot(_t.x - this.viewer.x, _t.z - this.viewer.z);
       if (this.seen(_t) && d < POP && this.cut <= 0 && this.recenter <= 0) continue;
@@ -480,7 +696,7 @@ export class Traffic {
     for (let k = 1 + Math.floor(Math.random() * 5); k > 0; k--) {
       const type = this._pickType(l), half = VEHICLE_SPECS[type].length / 2;
       s -= half;
-      if (s < l.s0 + half || !this._clear(l, s, half + 4, half + 4) || !this._room(l, s - half, 0)) break;
+      if (s < l.s0 + half || !this._clear(l, s, half + 4, half + 4) || !this._canSpawn(l, s - half, 0)) break;
       if (!this.spawnAt(l, s, type, undefined, 0)) break;
       n++; s -= half + 2 + Math.random() * 1.5;
     }
@@ -625,7 +841,7 @@ export class Traffic {
         const conn = c.nextConn || this.pickNext(c.lane, c);
         const i = c.lane.cars.indexOf(c); if (i >= 0) c.lane.cars.splice(i, 1);
         if (!conn) { this.despawn(c); return; }
-        c.mode = 'conn'; c.conn = conn; c.cs = over; c.fromLane = c.lane; c.connNodeId = c.lane.to; c.connT = this.clock;
+        c.mode = 'conn'; c.conn = conn; c.cs = over; c.fromLane = c.lane; c.connNodeId = c.lane.to; c.connT = this.clock; c.zipT = null;
         c.connNode = this.net.nodes[c.lane.to]; c.connNode.occ.add(c);
         c.nextConn = c.nextConn2 || this.pickNext(conn.lane, c);
         c.nextConn2 = c.nextConn && this.pickNext(c.nextConn.lane, c);

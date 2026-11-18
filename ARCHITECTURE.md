@@ -57,7 +57,8 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
 - `Game.loop()` paces ticks to a 60 Hz deadline: on 120/144 Hz displays the in-between rAF callbacks are skipped (an
   M1/M2 can't draw the city at 120; steady 60 beats uneven 70-90). Each 60 Hz slot that passes without a tick counts as
   *missed*; `Renderer.trackFrame()` steps resolution down after two one-second windows with >2% missed slots (unless the
-  CPU is the limit) and probes back up with backoff. `gpuBegin/gpuEnd` time reflection + render with
+  CPU is the limit) and probes back up with backoff — down to 0.75 of the preset's pixel ratio, then the water's
+  mirror of the city goes (`onShed`), and only then lower. `gpuBegin/gpuEnd` time reflection + render with
   `EXT_disjoint_timer_query_webgl2` (a headroom hint; it includes CPU-submission gaps).
 - Base M1 / M2 GPUs (`Renderer.detectGpu()`) start with a lower pixel ratio cap (1.0 / 1.15); the user's resolution
   scale (`setResolutionPreference`) multiplies it.
@@ -148,10 +149,25 @@ for a while, so allocation *churn* during the load matters as well as what stays
   emits for what nothing collides with (pitched roofs, gables, arcade / void-deck ceilings, covered walkways):
   `FILTER.sightRay` sees them, driving and walking don't.
 - Radar tiles: 12 cached during play, 40 while the full-screen map is open (trimmed when it closes).
-- Image on a phone: Low renders at 0.8 x CSS pixels (iPhone 12 landscape ~675x312) and the browser stretches it
-  ~3.75x. The FXAA output pass sharpens what FXAA leaves alone (FSR 1's RCAS, `SHARPEN_GLSL` in renderer.js). Wide
-  phones see no more across than a 16:9 screen (`camera.zoom` from `CameraRig`; FOVs stay vertical — read
-  `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels. Geometry thinner than a pixel is
+- Image on a phone: Low renders at 0.8 x CSS pixels (iPhone 12 landscape ~675x312). `gfx/taa.js` resolves it
+  temporally at that resolution, ahead of bloom and tone mapping: the projection is jittered (Halton 2,3), last
+  frame's result reprojected from depth and the two camera poses, clipped to the new 3x3 neighbourhood (variance box,
+  YCoCg, on reversibly tone-mapped colour) and blended at 1/10 (up to 3/10, with a tighter box, the faster the view
+  sweeps: a history resampled every frame softens). Cars and people have no motion vectors: their materials write a
+  stencil mark (`markMoving`: vehicles/material.js, humanoid.js, crowd.js; render state, no new program) and the
+  resolve runs once per mark — moving things take only last frame's same pixel, weighted lightly, and only if a
+  moving thing was there; the static world refuses history where one stood (the history's alpha remembers), so
+  nothing leaves a trail or fades in like a ghost; the player's vehicle (`taa.carry`) is one rigid body with two
+  known poses, reprojected exactly through them. `gfx/upscale.js` then sharpens (FSR 1 RCAS) and analyses edges at
+  the internal resolution and draws the canvas at 1.5 x CSS pixels with FSR 1's EASU (edge-adaptive, no ringing)
+  instead of the browser's bilinear ~3.75x stretch (2 x looked hardly better and cost the A14 ~0.7 ms more); the
+  canvas has no depth buffer. `?notaa` (FXAA instead) and `?noupscale` switch them off for A/B;
+  `tests/scratch/phoneimgshots.mjs` (stills of variants on the same frame),
+  `taamotion.mjs` (consecutive frames stepped at 1/60 s: crawl and ghosting), `passcost.mjs` / `phoneimgab.mjs`
+  (cost). Wide phones see no more across than a 16:9 screen while playing (`camera.zoom` from `CameraRig`; FOVs stay
+  vertical — read `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels; shots that frame a
+  subject (`cameraRig.override`: cutscenes, photo mode, test views) keep the vertical FOV they were framed with and
+  see wider instead, easing back into the cap as play resumes. Geometry thinner than a pixel is
   pre-filtered rather than left to alias: a ribbon at least a pixel wide with opacity = true coverage (Flyer spokes),
   coverage-anti-aliased lines (MBS lasers), alpha blending to the mip-averaged coverage (Supertree lattice), an average
   normal + wider roughness once facets are a few pixels big (Esplanade shades).
@@ -172,7 +188,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   captured in `onPostStep`), so motion is smooth at any refresh rate; Tommy is seated after the vehicles sync. Vehicle
   controls are *stored* by `setDriverControls()` (player, AI, autopilot) and applied per fixed step in
   `Physics.beforeWorldStep`, after every controller callback has run; AI (`PathDriver`) steers from the simulated body,
-  not the interpolated root.
+  not the interpolated root. With `follow` (Claudia's autopilot) it keeps 3 m + 1.2 s behind the traffic car on its
+  route ahead.
 - `Vehicle`: centre of mass ~0.45 m up, steering lock limited by a lateral-acceleration budget and slower at speed,
   ramped pedals (brake wins over throttle; reverse after a short stop), brakes as impulses (force × h), yaw-rate assist,
   inertia-normalised bike balance, support-faded downforce. Parked cars may sleep; input or impacts wake them.
@@ -183,7 +200,20 @@ for a while, so allocation *churn* during the load matters as well as what stays
   at the body's projection. Speed is planned for the bends ahead (`Path.bends()`: comfortable lateral acceleration,
   gentle braking before the corner), indicators blink before and through turns, bodies roll / dive / squat on a spring
   (`TrafficRenderer.setTransform` tilt: body only, wheels stay down). Junctions: amber commits a car that can't stop
-  smoothly; merges and crossings resolve first come, first through. Beyond 140 / 200 m from the camera a car is driven
+  smoothly; crossings resolve first come, first through (nobody in a junction waits for a car still to come in, so
+  nobody waits in a circle), merges in turn by distance to the merge, like a zip. Cars keep to their lane
+  (`Traffic._keep`): where a road carries on, the lane graph links every lane to every lane, so a car takes the lanes
+  nearest its own place across the carriageway, and where roads split or merge the lanes nearest where its lane ends.
+  Where OSM draws a dual carriageway's two ways closer together than their width (~230 lanes, e.g. the ECP by
+  Sheares), the inner lanes of both run over each other and across the other deck's kerb; traffic keeps off such a
+  lane (`_squeezed`) where its road has another, and nothing appears on it.
+  The leader search (`leaderGap`) follows the car's route through the next two junctions — lanes inside a big junction
+  are a few metres long — and sees cars heading into the same lane (two lanes into one) and, where OSM's ways join or
+  part at a shallow angle so that the lanes of both roads overlap for some metres before / after the junction
+  (`_joins` / `_splits`, found per lane the first time it's needed), the cars on the other road's lane as if on its own.
+  Spawns (`_canSpawn`) count those too, and never come within 25 m of the player. `holdWay(steps)` / `release()` keep a
+  run of road clear (Ah Beng's drag race): nobody appears on it, cars ahead on it are let go out of sight or move over a
+  lane, and traffic whose way crosses or joins it waits at the line. Beyond 140 / 200 m from the camera a car is driven
   every 2nd / 3rd frame. Traffic lives around the **camera** (`Traffic.viewer`, like the crowd) and is spent where it
   looks: the quota (`target` x an hourly curve: rush hours full, a lull after midnight) appears in view beyond 170 m or
   behind a building (one sight test a tick), just off the edges of the view ahead, or near the camera; cars left behind
@@ -195,9 +225,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
   shelters on their lane, indicate in and out, and stand 8-18 s. Parked cars (`world/parking.js`): along one kerb of the
   service roads and reversed into the bays of open car parks, found per 120 m cell and kept; the nearest are Traffic
   cars in state `parked` (no AI, solid near the player, stolen with `take`, knocked loose with `wreck`).
-  `tests/mobile/carcount.mjs` counts the cars (and boats) visible in the gallery's road / water views.
-  `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration, jerk, turn speeds, off-line distance,
-  overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right turn from above);
+  `tests/mobile/carcount.mjs` counts the cars (and boats) visible in the gallery's road / water views, and any cars
+  inside each other (the player's included). `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration,
+  jerk, turn speeds, off-line distance, overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right
+  turn from above); `tests/scratch/overlaps.mjs` classifies every overlapping pair (same lane, merge, roads alongside,
+  junction conflict, fresh spawn...) and lists who long-waiting cars wait for;
   `tests/mobile/trafficcpu.mjs` times `Traffic.update` at phone settings.
 - **Boats** (`world/boats.js`): ten river taxis loop the Singapore River (to starboard of its middle, turning at
   Robertson Quay) and Marina Bay, one more and a DUCKtours amphibious bus circle an inner bay loop, ships lie at anchor
@@ -263,15 +295,21 @@ for a while, so allocation *churn* during the load matters as well as what stays
 ## Streetscape (furniture, HDB estates, hawker centres)
 - The city builder places street furniture (`world/worker/streetscape.js`, hash-seeded, after the trees): kopitiam
   tables and umbrellas near food and shopfronts, planters, benches, shared bikes, pushcarts, potted plants by
-  five-foot-way piers, condensers on shophouse back walls, stone tables in HDB void decks, a playground and fitness
-  corner per estate. It keeps clear of buildings, carriageways and their sidewalk lines (hw + 4 m), footway lines
-  (2.4 m), trees and landmark clearings. The pieces (`world/streetpieces.js`) are one `BatchedMesh` with the city's
-  structure material, instanced within 150 m of the camera (420 m for playgrounds): one draw call plus its shadow.
-  Linkways between HDB blocks are chunk `structNear` geometry.
+  five-foot-way piers and wares in front of the shops, condensers on shophouse back walls, stone (xiangqi) tables,
+  bicycles and benches in HDB void decks, a playground and fitness corner per estate and now and then a wake's or a
+  wedding's tent, trees in grates (planted for it), benches, planters and shelters on squares of ~400 m² and more. It
+  keeps clear of buildings, carriageways and their sidewalk lines (hw + 4 m), footway lines (2.4 m), trees and landmark
+  clearings. The pieces (`world/streetpieces.js`) are one `BatchedMesh` with the city's structure material, instanced
+  within 150 m of the camera (420 m for playgrounds, tents and hawker stalls): one draw call plus its shadow. Linkways
+  between HDB blocks are chunk `structNear` geometry.
 - `TreeColliders.trunkNear` also answers for furniture (people walk round it); sturdy pieces get low colliders.
-- Low halls holding a food centre (OSM name or POI) are built as hawker centres: a 3.4 m colonnade with tables round
-  the stalls (facade flag 6) under a hipped roof. Long shophouse walls are rows of ~5.5 m units in their own pastels;
-  a terrace's gable roof is split on the same grid, a roof per unit with a plastered firewall between.
+- Low halls holding a food centre (OSM name or POI) are built as hawker centres: open halls under a hipped roof
+  (columns round the outline, a ceiling of tube lights, a tiled floor: facade flag 6) with back-to-back rows of stalls,
+  fixed tables (some choped with tissue packets), fans and tray returns inside (`worker/hawkerhall.js` lays them out;
+  they're street furniture). Each stall's lightbox, photo menus and NEA sticker are near-detail facade quads (style 15)
+  sampling the sign atlas's food pool (`gfx/signAtlas.js`), lit while it trades. Long shophouse walls are rows of
+  ~5.5 m units in their own pastels; shophouses let as hotels or offices still trade at street level. A terrace's
+  gable roof is split on the same grid, a roof per unit with a plastered firewall between.
 - Chinatown's lantern strings (`world/streetprops.js`) are strung only where rays from the street find a facade on
   both sides, and never through a street tree's crown. Every building outline (and each landmark footprint) is stamped
   into the builder's occupancy grid before trees are planted, so no crown grows through a roof.
@@ -296,6 +334,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
 - `world/streetlife.js`: the director stages one small scene every 20-40 s in view 25-60 m ahead (otters on a
   promenade, junglefowl crossing — traffic waits —, a jaywalking delivery rider, two uncles arguing with onlookers
   filming), recruiting people already there; critters are two instanced draws per species, only while out.
+- Seating (`world/scenes.js`): posed members of the crowd at the builder's tables around the camera (diners at hawker
+  centres and kopitiams by the hour, uncles over the void-deck xiangqi boards, wakes and weddings), the hawker behind
+  each trading stall and a queue at each centre's famous one; within a budget (70 people on the phone), filled out of
+  sight ahead of the camera and let go once behind it. Looks are never repeated within 30 m (same variant, print and
+  colours) and a footpath gets at most a walker per 15 m of it at spawn, so sparse estates send out no processions.
 - `node tests/scratch/pedcount.mjs --url ...` counts visible people per gallery view and the crowd's CPU per frame.
 
 ## Voice-over

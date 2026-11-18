@@ -1,8 +1,9 @@
 // Ah Beng's drag race. At night, stopped first at a red light with a lane free beside you, sometimes a lime hatchback
 // with neon underglow rolls up alongside and revs: flash your lights (L, or FLASH on touch) to take him on. The start
 // lights count down with the real signal, it's ~400 m to a line down the road (going early loses), cash and hype for
-// the win; a loss costs nothing but pride. Ah Beng drives a PathDriver (no traffic code involved); his car is a normal
-// physics vehicle made when he shows up, the underglow one additive quad made at load.
+// the win; a loss costs nothing but pride. From the challenge to the finish traffic keeps both racers' lanes clear and
+// holds the junctions on the way (Traffic.holdWay). Ah Beng drives a PathDriver; his car is a normal physics vehicle
+// made when he shows up, the underglow one additive quad made at load.
 import * as THREE from 'three';
 import { Vehicle } from '../entities/vehicle.js';
 import { PathDriver } from '../entities/aiDriver.js';
@@ -74,10 +75,12 @@ export class DragRace {
     if (!side || side.cars.some(c => c.s > s - 90 && c.s < side.s1 + 2)) return false;
     const ss = project(side, v.position.x, v.position.z);
     if (ss - 40 < 2) return false;
-    const route = straight(side, ss, side.s1 - ss + LENGTH + 30); if (!route) return false; // (he brakes past the line)
+    const his = straight(side, ss, side.s1 - ss + LENGTH + 30); if (!his) return false; // (he brakes past the line)
     side.path.sample(ss - 40, _v, _d);
     if (g.vehicles.some(o => o.position.distanceTo(_v) < 8)) return false;
-    Object.assign(this, { lane, side, ss, route, car: v, line: finishLine(route, side.s1 - ss + LENGTH) });
+    // both racers' lanes down the road, for traffic to keep clear
+    const way = [...his.steps, ...(straight(lane, s, lane.s1 - s + LENGTH + 30)?.steps || [])];
+    Object.assign(this, { lane, side, ss, route: his.pts, way, car: v, line: finishLine(his.pts, side.s1 - ss + LENGTH) });
     return true;
   }
 
@@ -127,6 +130,7 @@ export class DragRace {
     this.revs(dt);
     if (this.accepted) {
       this.state = 'count'; this.t = 0; this.lit = -1;
+      g.traffic.holdWay(this.way, false); // the road ahead cleared, its junctions held (this one by the red until they go)
       g.ui.raceLights({ title: `Street race · ${LENGTH} m`, sub: 'Go on <em>green</em>. Jump it and you lose.', lights: 0 });
       return;
     }
@@ -155,6 +159,7 @@ export class DragRace {
     if (lit === 4) {
       g.audio?.sfx?.('race_go', { volume: 0.8 });
       g.ui.raceLights({ title: 'Go!', sub: `<b>${LENGTH} m</b>`, go: true });
+      g.traffic.holdWay(this.way, true);
       this.drive(this.route, 0.62, 1); // (~150 km/h by the line: quick, not suicidal)
       this.state = 'race'; this.t = 0;
       return;
@@ -175,6 +180,7 @@ export class DragRace {
   /** won (true), lost (false) or called off (null) */
   finish(won, why) {
     const g = this.game;
+    g.traffic.release();
     if (won === true) {
       g.addMoney(PRIZE);
       g.hype?.bump(0.01, 'Your street race went viral on TikTok');
@@ -232,11 +238,14 @@ function finishLine(route, at) {
   const [x, z] = route[route.length - 1]; return [x, z, 0, 0];
 }
 
-/** [[x,z], ...] from lane at s straight on for `len` m (straight-most connectors; null if the road bends away >25°) */
+/** from lane at s straight on for `len` m (straight-most connectors): { pts: [[x,z], ...], steps: [{ lane, from, conn }]
+ * (the lanes it runs along, from arc length `from`, and the connector out of each: for traffic to keep clear) }, or
+ * null if the road bends away >25° */
 function straight(lane, s, len) {
-  const pts = [];
+  const pts = [], steps = [];
   let l = lane, a = s, run = 0, d0 = null;
   for (let hop = 0; hop < 8 && run < len; hop++) {
+    const step = { lane: l, from: a, conn: null }; steps.push(step);
     for (let u = a; u <= l.s1 && run < len; u += 6, run += 6) {
       l.path.sample(u, _v, _d); pts.push([_v.x, _v.z]);
       if (!d0) d0 = [_d.x, _d.z]; else if (_d.x * d0[0] + _d.z * d0[1] < 0.9) return null;
@@ -245,9 +254,9 @@ function straight(lane, s, len) {
     let best = null; for (const o of l.next) if (Math.abs(o.turn) < 0.3 && (!best || Math.abs(o.lane.idx - l.idx) < Math.abs(best.lane.idx - l.idx))) best = o;
     if (!best) return null;
     const c = best.path; for (let k = 1; k < c.n; k++) { pts.push([c.x(k), c.z(k)]); }
-    run += c.length; l = best.lane; a = l.s0;
+    run += c.length; l = best.lane; a = l.s0; step.conn = best;
   }
-  return pts.length > 2 ? pts : null;
+  return pts.length > 2 ? { pts, steps } : null;
 }
 
 // --------------------------------------------------------------------------------------------- underglow

@@ -3,9 +3,13 @@
 //  - Merlion: tourists taking photos, all day
 //  - Supertree Grove: crowds for Garden Rhapsody (19:45 / 20:45)
 //  - Raffles Place: office lunch crowd 12:00–14:00
+//  - Clarke Quay: diners on the bar terraces 18:00–02:00
+//  - Seating: people at the tables the city builder set out (hawker centres, kopitiams, void-deck chess tables, wakes and
+//    weddings) and behind the hawker stalls, with the queue at each centre's famous stall
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { U } from '../gfx/globals.js';
+import { KINDS, SEATS, CHOPE } from './streetpieces.js';
 
 const inWindow = (t, a, b) => (a <= b ? t >= a && t < b : t >= a || t < b);
 const col = (geo, hex) => { const g = geo.index ? geo.toNonIndexed() : geo; const c = new THREE.Color(hex); const a = new Float32Array(g.attributes.position.count * 3); for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); g.deleteAttribute('uv'); return g; };
@@ -25,7 +29,15 @@ export class Scenes {
       this.list.push({ id: 'rhapsody', c: new THREE.Vector3(st.x, 0, st.z), when: show, gen: () => this.scatter(st, 55, 46, ['idle', 'idle', 'idle_phone', 'clap'], ['tourist', 'male', 'female', 'student']) });
     }
     this.list.push({ id: 'rafflesplace', c: new THREE.Vector3(60, 0, 330), window: [12, 14], gen: () => this.scatter({ x: 60, z: 330 }, 35, 30, ['talk', 'idle_phone', 'sit_eat', 'idle'], ['office_m', 'office_f']) });
+    // Clarke Quay: the bar terraces fill up from dusk till late (seats from the landmark: x, z, yaw)
+    const cq = poi('clarkequay');
+    if (cq?.seats?.length) {
+      const c = cq.seats.reduce((a, s) => a.add(new THREE.Vector3(s[0], 0, s[1])), new THREE.Vector3()).divideScalar(cq.seats.length);
+      const who = ['tourist', 'male', 'female', 'office_m', 'office_f'];
+      this.list.push({ id: 'clarkequay', c, window: [18, 2], gen: () => cq.seats.filter(() => Math.random() < 0.6).slice(0, 80).map(([x, z, yaw]) => ({ x, z, yaw, anim: Math.random() < 0.55 ? 'sit_eat' : 'sit', variant: who[Math.floor(Math.random() * who.length)] })) });
+    }
     for (const s of this.list) { s.active = false; s.peds = []; }
+    this.seating = new Seating(game);
   }
 
   // ---------------------------------------------------------------- generators
@@ -123,11 +135,157 @@ export class Scenes {
         s.peds = [];
       }
     }
+    this.seating.update(dt);
     if (this.grillMat) this.grillMat.emissiveIntensity = 3 + Math.sin(U.time.value * 7) * 0.8;
     // satay smoke
     if (this.satayGroup?.visible && g.fx && Math.hypot(P.x - 47, P.z - 686) < 200) {
       this.smokeT = (this.smokeT || 0) - dt;
       if (this.smokeT <= 0) { this.smokeT = 0.08; const gr = this.satayGrills[Math.floor(Math.random() * this.satayGrills.length)]; g.fx.grillSmoke((this._sp ||= new THREE.Vector3()).set(gr[0] + (Math.random() - 0.5) * 1.4, 1, gr[1])); }
     }
+  }
+}
+
+// ---------------------------------------------------------------- seating
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const bump = (t, a, b, ramp = 0.75) => smooth(a - ramp, a + 0.25, t) * (1 - smooth(b - 0.25, b + 0.75, t));
+// how busy the tables are: breakfast, the lunch crush (filling from before eleven), dinner (0..1)
+const meals = t => Math.max(0.55 * bump(t, 7, 9), bump(t, 11.5, 14, 1.25), 0.9 * bump(t, 18, 21));
+// share of hawker stalls trading at an hour: a stall is open while its seed is below it (materials.js lights the
+// boards with the same rule: shopOpenFrac with early = 1)
+const stallsOpen = t => 0.025 + 0.925 * smooth(5.4, 7.8, t) * (1 - smooth(21.2, 23.5, t));
+const yawTo = (dx, dz) => Math.atan2(-dx, -dz); // crowd yaw facing along (dx, dz)
+const CELL = 24, NEAR = 14, HALL_FLOOR = 0.12;
+
+/**
+ * People at the tables the city builder set out and behind the hawker stalls, around the camera. A table (or stall)
+ * fills when it comes within reach ahead of the camera (or right beside it), out of sight where its people would pop
+ * in, and empties once it has fallen behind, unseen; how many sit depends on the hour. They are posed members of the
+ * instanced crowd: no draw calls of their own.
+ */
+class Seating {
+  constructor(game) {
+    const fur = game.city.furniture || {}, F = this.F = fur.pieces || new Float32Array(0), S = this.S = fur.stalls || new Float32Array(0);
+    this.game = game;
+    const kind = Object.fromEntries(KINDS.map((k, i) => [k, i]));
+    this.kind = { [kind.kopitiam]: 'kopitiam', [kind.hawkerTable]: 'hawkerTable', [kind.stoneTable]: 'stoneTable', [kind.tent]: 'tent' };
+    // tables (piece index) and stalls (-1 - stall index) by cell
+    this.grid = new Map();
+    const add = (x, z, id) => { const k = Math.floor(x / CELL) * 100003 + Math.floor(z / CELL); let a = this.grid.get(k); if (!a) this.grid.set(k, a = []); a.push(id); };
+    for (let i = 0; i < F.length / 6; i++) if (this.kind[F[i * 6]]) add(F[i * 6 + 1], F[i * 6 + 3], i);
+    for (let i = 0; i < S.length / 5; i++) add(S[i * 5], S[i * 5 + 1], -1 - i);
+    this.active = new Map();   // id -> its people
+    this.placed = 0;
+    const phone = game.peds.maxWalkers < 100;
+    this.budget = phone ? 70 : 110; this.reach = phone ? 55 : 75;
+    this.t = 0; this._c = []; this.at = new THREE.Vector3(1e9, 0, 0); this.fresh = false;
+  }
+
+  update(dt) {
+    const peds = this.game.peds, V = peds.viewer;
+    // a camera cut (or a relocation, or any jump faster than a car) starts over: nobody sees the old tables empty or
+    // the new ones fill
+    const fresh = peds.seeding || Math.hypot(V.x - this.at.x, V.z - this.at.z) > 25;
+    if (fresh && !this.fresh) for (const id of [...this.active.keys()]) this._release(id);
+    this.fresh = fresh; this.at.copy(V);
+    if ((this.t -= dt) > 0 && !fresh) return;
+    this.t = 0.3;
+    const f = peds._fwd, half = peds.hfov / 2 + 0.35, R = this.reach, t = this.game.sky.time;
+    const cand = this._c; cand.length = 0;
+    for (let gx = Math.floor((V.x - R) / CELL); gx <= Math.floor((V.x + R) / CELL); gx++)
+      for (let gz = Math.floor((V.z - R) / CELL); gz <= Math.floor((V.z + R) / CELL); gz++) {
+        const a = this.grid.get(gx * 100003 + gz); if (!a) continue;
+        for (const id of a) {
+          const dx = this._x(id) - V.x, dz = this._z(id) - V.z, d = Math.hypot(dx, dz);
+          // ahead (the view cone and a margin, so a slow pan finds its tables already taken) or right beside the camera
+          if (d < R && (d < NEAR || Math.abs(Math.atan2(dx * f.y - dz * f.x, dx * f.x + dz * f.y)) < half)) cand.push(d, id);
+        }
+      }
+    const want = new Set();
+    for (let k = 1; k < cand.length; k += 2) want.add(cand[k]);
+    // let go of what fell behind, once nobody can see it go
+    for (const [id, people] of this.active) if (!want.has(id) && !this._seen(people, V, peds)) this._release(id);
+    // fill the nearest new ones, within the budget (in plain sight only beyond the pop-in distance); when it's spent,
+    // a nearer table takes the people of the farthest one nobody is looking at
+    const order = []; for (let k = 0; k < cand.length; k += 2) if (!this.active.has(cand[k + 1])) order.push(k);
+    order.sort((a, b) => cand[a] - cand[b]);
+    for (const k of order) {
+      const d = cand[k], id = cand[k + 1], x = this._x(id), z = this._z(id);
+      if (!fresh && d < peds.popDist && peds.inView(x, 0, z, 1.6)) continue;
+      if (this.placed >= this.budget && !this._evict(d, V, peds)) break;
+      const people = (id >= 0 ? this._table(id, t) : this._stall(-1 - id, t)).map(o => peds.addPose(o)).filter(Boolean);
+      this.active.set(id, people); this.placed += people.length;
+    }
+  }
+
+  // whoever's about at that hour, though few delivery riders sit down to eat (they collect and go)
+  _diner(x, z, t) { const v = this.game.peds.pickVariant(x, z, t); return v === 'delivery' && Math.random() < 0.8 ? 'male' : v; }
+  _x(id) { return id >= 0 ? this.F[id * 6 + 1] : this.S[(-1 - id) * 5]; }
+  _z(id) { return id >= 0 ? this.F[id * 6 + 3] : this.S[(-1 - id) * 5 + 1]; }
+  _release(id) {
+    const people = this.active.get(id);
+    for (const p of people) this.game.peds.remove(p);
+    this.placed -= people.length; this.active.delete(id);
+  }
+  /** make room for a table at distance d: release the farthest unseen one at least 10 m further off */
+  _evict(d, V, peds) {
+    let far = null, fd = d + 10;
+    for (const [id, people] of this.active) {
+      const dd = Math.hypot(this._x(id) - V.x, this._z(id) - V.z);
+      if (dd > fd && people.length && !this._seen(people, V, peds)) { far = id; fd = dd; }
+    }
+    if (far === null) return false;
+    this._release(far);
+    return true;
+  }
+
+  _seen(people, V, peds) { const p = people[0]; return !!p && Math.hypot(p.pos.x - V.x, p.pos.z - V.z) < peds.popDist && peds.inView(p.pos.x, p.pos.y, p.pos.z, 1.6); }
+
+  /** who sits at piece i at hour t: [{x, y, z, yaw, anim, variant}] */
+  _table(i, t) {
+    const F = this.F, o = i * 6, kind = this.kind[F[o]], x = F[o + 1], y = F[o + 2], z = F[o + 3], yaw = F[o + 4], h = F[o + 5];
+    const c = Math.cos(yaw), s = Math.sin(yaw), at = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
+    const peds = this.game.peds, out = [], late = smooth(22.5, 23.5, t) + 1 - smooth(5, 6.5, t);
+    const seat = (lx, lz, fx, fz, anim, variant) => {
+      const [px, pz] = at(lx, lz), [qx, qz] = at(fx, fz);
+      out.push({ x: px, y, z: pz, yaw: yawTo(qx - px, qz - pz), anim, variant: variant || this._diner(px, pz, t) });
+    };
+    const stand = (lx, lz, anim, variant) => { const [px, pz] = at(lx, lz), r = Math.hypot(lx, lz) || 1, [qx, qz] = at(lx * 0.2 / r, lz * 0.2 / r); out.push({ x: px, y, z: pz, yaw: yawTo(qx - px, qz - pz), anim, variant }); };
+    if (kind === 'hawkerTable' || kind === 'kopitiam') {
+      // hawker centres fill to 40-70% at meal times and never quite empty by day; coffee shops have their morning kopi
+      // crowd; both all but empty after closing
+      const busy = (kind === 'hawkerTable' ? 0.08 + 0.12 * bump(t, 8, 18) + 0.5 * meals(t) : 0.06 + 0.25 * bump(t, 6.5, 11) + 0.35 * meals(t)) * (1 - 0.85 * Math.min(1, late));
+      const chope = kind === 'hawkerTable' ? CHOPE[Math.floor(Math.min(11, h * 12) / 4)] : [];
+      SEATS[kind].forEach(([lx, lz], k) => { if (!chope.includes(k) && Math.random() < busy) seat(lx, lz, 0, 0, Math.random() < 0.8 ? 'sit_eat' : 'sit'); });
+    } else if (kind === 'stoneTable') {
+      if (h >= 0.5 && t > 8 && t < 21.5 && Math.random() < 0.8) {
+        // a game of xiangqi: two uncles at the board, a few more standing over them with opinions
+        const S4 = SEATS.stoneTable;
+        seat(S4[0][0], S4[0][1], 0, 0, 'sit_eat', 'uncle'); seat(S4[2][0], S4[2][1], 0, 0, 'sit', 'uncle');
+        const n = 1 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < n; k++) { const a = Math.PI / 2 + (k - (n - 1) / 2) * 0.7 + (k % 2) * Math.PI, r = 1.25 + Math.random() * 0.3; stand(Math.cos(a) * r, Math.sin(a) * r, ['argue', 'talk', 'idle'][k % 3], 'uncle'); }
+      } else if (Math.random() < 0.45 * (1 - late)) SEATS.stoneTable.forEach(([lx, lz], k) => { if (k % 2 === 0 && Math.random() < 0.6) seat(lx, lz, 0, 0, Math.random() < 0.5 ? 'sit' : 'sit_eat'); });
+    } else if (kind === 'tent') {
+      // a wake gathers in the evening, a wedding over lunch and dinner
+      const wed = h >= 0.5, busy = wed ? 0.65 * Math.max(bump(t, 11.5, 15), bump(t, 18.5, 22)) : 0.15 + 0.35 * bump(t, 17, 23.5);
+      for (const [lx, lz, fx, fz] of SEATS.tent[wed ? 1 : 0]) if (Math.random() < busy) seat(lx, lz, fx, fz, wed ? 'sit_eat' : 'sit', wed ? (Math.random() < 0.5 ? 'female' : 'male') : null);
+    }
+    return out;
+  }
+
+  /** the hawker behind stall i's counter while it trades, and the queue at a centre's famous stall */
+  _stall(i, t) {
+    const S = this.S, o = i * 5, x = S[o], z = S[o + 1], yaw = S[o + 2], famous = S[o + 3] > 0.5, seed = S[o + 4];
+    if (seed > stallsOpen(t)) return [];
+    const c = Math.cos(yaw), s = Math.sin(yaw), at = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
+    const out = [], face = yawTo(s, c), back = yawTo(-s, -c);
+    const add = (lx, lz, yw, anim, variant) => { const [px, pz] = at(lx, lz); out.push({ x: px, y: HALL_FLOOR, z: pz, yaw: yw, anim, variant }); };
+    add(-0.3 + seed * 0.6, -1.05, face, seed < 0.6 ? 'talk' : 'idle', 'hawker');
+    if (seed < 0.3) add(0.9, -1.9, face + 0.6, 'idle', 'hawker');
+    if (famous) {
+      // the queue for the famous one: out into the aisle, everyone checking their phone
+      const n = Math.round(1 + 4 * meals(t) + Math.random());
+      for (let k = 0; k < n; k++) add(0.4 + (Math.random() - 0.5) * 0.2, 0.75 + k * 0.62, back + (Math.random() - 0.5) * 0.4, Math.random() < 0.6 ? 'idle_phone' : 'idle', this.game.peds.pickVariant(x, z, t));
+    }
+    return out;
   }
 }

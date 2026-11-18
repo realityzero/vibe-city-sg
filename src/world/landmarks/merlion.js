@@ -1,8 +1,41 @@
 // The Merlion (8.6 m): lion head with a curly mane on a scaled fish body rising from sculpted waves,
 // spouting a water jet into Marina Bay. Plus the Merlion cub behind it.
-import { THREE, U, Bucket, canvasTexture, rng, lerp, smooth, circlePoly, frameFromAngle, uplitMaterial } from './common.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { THREE, U, Bucket, canvasTexture, rng, lerp, smooth, circlePoly, frameFromAngle } from './common.js';
 import { WATER_LEVEL } from '../../core/constants.js';
+
+// the head, mane, fins and waves: cement-fondu skin, faintly mottled
+function stoneTexture() {
+  return canvasTexture(128, 128, (ctx, w, h) => {
+    const R = rng(13);
+    ctx.fillStyle = '#ece8df'; ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 700; i++) { const g = 205 + Math.floor(R() * 45); ctx.fillStyle = `rgba(${g},${g - 4},${g - 10},0.5)`; ctx.fillRect(R() * w, R() * h, 1 + R() * 3, 1 + R() * 3); }
+  });
+}
+
+/**
+ * The statues' stone, floodlit at night by lamps on the deck in front of them (lamps: Vector4s, world position and
+ * strength): each surface lit by how squarely it faces them, falling off with distance — chest, face and jaw bright,
+ * the crown of the mane and the back in shadow — rather than glowing evenly all over.
+ */
+function floodlit(map, lamps, { base = 0xffffff, rough = 0.62 } = {}) {
+  const mat = new THREE.MeshStandardMaterial({ color: base, map, roughness: rough, emissive: 0xffe2bc, emissiveMap: map });
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uNight = U.night; sh.uniforms.uLamps = { value: lamps };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFlP, vFlN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFlP = (modelMatrix * vec4(transformed, 1.0)).xyz; vFlN = mat3(modelMatrix) * objectNormal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform float uNight; uniform vec4 uLamps[${lamps.length}]; varying vec3 vFlP, vFlN;`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+{
+  vec3 n = normalize(vFlN); float k = 0.02;
+  for (int i = 0; i < ${lamps.length}; i++) { vec3 d = uLamps[i].xyz - vFlP; float r = length(d); k += uLamps[i].w * max(dot(n, d / r), 0.0) / (1.0 + r * r * 0.03); }
+  totalEmissiveRadiance *= uNight * k;
+}`);
+  };
+  mat.customProgramCacheKey = () => 'lmflood' + lamps.length;
+  return mat;
+}
 
 function scaleTexture() {
   return canvasTexture(256, 256, (ctx, w, h) => {
@@ -134,26 +167,40 @@ function varTube(curve, rad, segs, radial) {
 }
 
 /**
- * The statues' water jets: GPU particles following a parabola from each mouth plus a continuous core stream, all jets
- * in one Points and one stream mesh. jets: [{ mouth, v0 (world space), count, size, spread, water }]
+ * The statues' water jets, all of them one ribbon mesh and one Points. The stream is a ribbon along the arc turned to
+ * face the camera (never under ~1.5 px wide, fainter by as much as it was widened): a clear glassy rope at the mouth,
+ * bright at its edges, turning white and aerated as it falls, with glints running down it. Where it lands, a churned
+ * patch of foam on the water (a flat quad in the same mesh) and a burst of spray: the Points are droplets thrown up
+ * from the landing point and a drifting mist, plus a few drops shed along the arc. Lit like the scene (sky by day, the
+ * deck's floodlights at night): never a beam. jets: [{ mouth, v0 (world space), count, size, water }]
  */
 function waterJets(jets) {
   const total = jets.reduce((n, j) => n + j.count, 0);
   const seeds = new Float32Array(total * 4), launch = new Float32Array(total * 4), vel = new Float32Array(total * 4), drop = new Float32Array(total * 2);
-  const R = rng(3), arcs = [], tubes = [];
+  const R = rng(3), arcs = [];
+  const pos = [], tang = [], rib = [], idx = [];
   let i = 0;
-  for (const { mouth, v0, count, size, spread, water } of jets) {
+  for (const { mouth, v0, count, size, water } of jets) {
     const tLand = (v0.y + Math.sqrt(v0.y * v0.y + 2 * 9.81 * (mouth.y - water))) / 9.81;
     for (let k = 0; k < count; k++, i++) {
       seeds.set([R(), R() * 2 - 1, R() * 2 - 1, R()], i * 4);
       launch.set([mouth.x, mouth.y, mouth.z, size], i * 4);
       vel.set([v0.x, v0.y, v0.z, tLand], i * 4);
-      drop.set([spread, water], i * 2);
+      drop.set([0.06 * size / 0.55, water], i * 2);
     }
-    // continuous core stream
-    const pts = []; for (let k = 0; k <= 24; k++) { const t = k / 24 * tLand; pts.push(new THREE.Vector3(mouth.x + v0.x * t, mouth.y + v0.y * t - 4.905 * t * t, mouth.z + v0.z * t)); }
-    arcs.push(...pts);
-    tubes.push(varTube(new THREE.CatmullRomCurve3(pts), t => lerp(0.13, 0.42, t) * (size / 0.9), 48, 10));
+    // the stream: SEG sections along the arc, two vertices each (rib: along 0..1, side -1 / 1, width in metres)
+    const SEG = 36, b0 = pos.length / 3;
+    for (let k = 0; k <= SEG; k++) {
+      const t = k / SEG, tt = t * tLand, p = [mouth.x + v0.x * tt, mouth.y + v0.y * tt - 4.905 * tt * tt, mouth.z + v0.z * tt];
+      const d = new THREE.Vector3(v0.x, v0.y - 9.81 * tt, v0.z).normalize(), w = lerp(0.16, 0.5, Math.pow(t, 1.4)) * size / 0.55;
+      for (const side of [-1, 1]) { pos.push(...p); tang.push(d.x, d.y, d.z); rib.push(t, side, w); }
+      if (k < SEG) { const a = b0 + k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      arcs.push(new THREE.Vector3(...p));
+    }
+    // the foam where it lands (rib.x 2: a flat patch, rib.yz its local -1..1)
+    const end = arcs[arcs.length - 1], fr = 1.7 * size / 0.55, b1 = pos.length / 3;
+    for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { pos.push(end.x + u * fr, water + 0.03, end.z + v * fr); tang.push(0, 1, 0); rib.push(2, u, v); }
+    idx.push(b1, b1 + 2, b1 + 1, b1, b1 + 3, b1 + 2);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(total * 3), 3));
@@ -162,7 +209,9 @@ function waterJets(jets) {
   g.setAttribute('vel', new THREE.Float32BufferAttribute(vel, 4));
   g.setAttribute('drop', new THREE.Float32BufferAttribute(drop, 2));
   // (positions come from the shader: bound the arcs and their splashes for culling)
-  g.boundingSphere = new THREE.Sphere().setFromPoints(arcs); g.boundingSphere.radius += 3;
+  g.boundingSphere = new THREE.Sphere().setFromPoints(arcs); g.boundingSphere.radius += 4;
+  // what lights the water: the sky by day, the deck's warm floodlights at night (dim, and less of it out over the bay)
+  const LIGHT = /* glsl */`vec3 jetLight(float along) { return mix(vec3(0.86, 0.93, 1.0), vec3(0.17, 0.14, 0.11) * (1.0 - 0.55 * along), uNight); }`;
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
     uniforms: { uTime: U.time, uNight: U.night, uPxH: { value: 1000 } },
@@ -170,72 +219,105 @@ function waterJets(jets) {
       #include <common>
       #include <logdepthbuf_pars_vertex>
       attribute vec4 seed, launch, vel; attribute vec2 drop; uniform float uTime, uPxH;
-      varying float vA, vGlint;
+      varying float vA, vGlint, vAlong;
       void main() {
-        // a few droplets at a time catch the light and flash
-        vGlint = step(0.86, fract(seed.w * 17.0 + uTime * (0.6 + seed.x)));
-        float uLand = vel.w, uWater = drop.y;
-        float life = uLand * 1.25;
-        float t = fract(uTime / life + seed.x) * life;
-        vec3 jitter = vec3(seed.y, seed.z * 0.6, seed.w * 2.0 - 1.0) * drop.x;
-        vec3 v = vel.xyz * (0.96 + 0.08 * seed.w) + jitter * 2.0;
-        vec3 p = launch.xyz + v * t + vec3(0.0, -4.905, 0.0) * t * t;
-        vA = 1.0;
-        if (p.y < uWater + 0.05) {
-          // splash: bounce up a little and fade
-          float tb = t - uLand; p.y = uWater + max(0.0, 1.6 * tb - 4.9 * tb * tb) * (0.6 + seed.w); p.xz += vec2(seed.y, seed.z) * tb * 1.5;
-          vA = max(0.0, 1.0 - tb * 3.0);
+        float tLand = vel.w, water = drop.y;
+        vec3 land = launch.xyz + vel.xyz * tLand + vec3(0.0, -4.905, 0.0) * tLand * tLand;
+        vec3 p; float size;
+        vGlint = step(0.9, fract(seed.w * 17.0 + uTime * (0.6 + seed.x)));
+        if (seed.w < 0.3) {
+          // a drop shed along the arc, drifting off it a little
+          float t = fract(uTime / tLand * 0.8 + seed.x) * tLand;
+          p = launch.xyz + (vel.xyz + vec3(seed.y, seed.z * 0.5, seed.y * seed.z) * drop.x * 4.0) * t + vec3(0.0, -4.905, 0.0) * t * t;
+          size = launch.w * 0.18; vA = 0.5 * (1.0 - smoothstep(0.85, 1.0, t / tLand)); vAlong = t / tLand;
+        } else {
+          // the burst where it lands: droplets thrown up and out (back the way the stream came, mostly), and mist
+          bool mist = seed.w > 0.8;
+          float life = mist ? 1.6 : 0.85, t = fract(uTime / life + seed.x) * life;
+          vec3 back = -normalize(vec3(vel.x, 0.0, vel.z));
+          vec3 v = vec3(seed.y * 1.6 + back.x * 0.9, 1.6 + 2.2 * fract(seed.w * 7.3), seed.z * 1.6 + back.z * 0.9) * (launch.w / 0.55);
+          if (mist) v *= vec3(0.6, 0.35, 0.6);
+          p = land + v * t + vec3(0.0, mist ? -0.6 : -4.905, 0.0) * t * t;
+          p.y = max(p.y, water + 0.02);
+          size = launch.w * (mist ? 0.9 + 1.6 * t : 0.16);
+          vA = (mist ? 0.16 : 0.55) * (1.0 - t / life); vAlong = 1.0;
         }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        // droplet clusters of launch.w metres, never under 1.5 px: the arc must read across the bay on a phone
-        gl_PointSize = max(1.5, launch.w * (1.0 + t * 0.8) * projectionMatrix[1][1] * 0.5 * uPxH / -mv.z);
+        // never under 1.5 px: a drop smaller than a pixel gives up alpha in proportion (no sparkle on a phone)
+        float px = size * projectionMatrix[1][1] * 0.5 * uPxH / -mv.z;
+        gl_PointSize = max(1.5, px); vA *= min(1.0, px / 1.5);
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */`
       #include <logdepthbuf_pars_fragment>
-      varying float vA, vGlint; uniform float uNight;
+      varying float vA, vGlint, vAlong; uniform float uNight;
+      ${LIGHT}
       void main() {
         #include <logdepthbuf_fragment>
         vec2 c = gl_PointCoord - 0.5; float d = dot(c, c);
         if (d > 0.25) discard;
-        float a = (1.0 - d * 4.0) * (0.2 + 0.5 * vGlint) * vA;
-        // unlit spray: at night it catches the floodlights on the deck (warm white); glints go past white for the bloom
-        vec3 col = mix(vec3(0.93, 0.96, 1.0), vec3(0.6, 0.55, 0.46), uNight) * (1.05 + 1.6 * vGlint);
-        gl_FragColor = vec4(col, a);
+        float a = (1.0 - d * 4.0) * vA * (1.0 + vGlint);
+        gl_FragColor = vec4(jetLight(vAlong) * (1.05 + 1.4 * vGlint), a);
       }`,
   });
   const pts = new THREE.Points(g, mat);
-  const size = new THREE.Vector2();
-  pts.onBeforeRender = r => { const rt = r.getRenderTarget(); mat.uniforms.uPxH.value = rt ? rt.height : r.getDrawingBufferSize(size).y; };
-  const tubeMat = new THREE.ShaderMaterial({
+  const ribbon = new THREE.BufferGeometry();
+  ribbon.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  ribbon.setAttribute('tang', new THREE.Float32BufferAttribute(tang, 3));
+  ribbon.setAttribute('rib', new THREE.Float32BufferAttribute(rib, 3));
+  ribbon.setIndex(idx);
+  ribbon.computeBoundingSphere();
+  const streamMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uTime: U.time, uNight: U.night },
+    uniforms: { uTime: U.time, uNight: U.night, uPxH: { value: 1000 } },
     vertexShader: /* glsl */`#include <common>
       #include <logdepthbuf_pars_vertex>
-      varying vec2 vUv; varying vec3 vN, vV;
+      attribute vec3 tang, rib; uniform float uPxH;
+      varying vec3 vRib; varying float vCover;
       void main(){
-        vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vN = normalMatrix * normal; vV = -mv.xyz;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vRib = rib; vCover = 1.0;
+        if (rib.x < 1.5) {
+          // across the stream, square to the view: at least 1.5 px wide, the coverage it really has kept in alpha
+          vec3 across = normalize(cross((modelViewMatrix * vec4(tang, 0.0)).xyz, mv.xyz));
+          float px = 2.0 * -mv.z / (projectionMatrix[1][1] * uPxH), w = max(rib.z, 1.5 * px);
+          vCover = rib.z / w;
+          mv.xyz += across * rib.y * w * 0.5;
+        }
         gl_Position = projectionMatrix * mv;
         #include <logdepthbuf_vertex>
       }`,
-    // a rope of water, not a solid arc: clear through its middle, white where the sheet is seen edge-on, with aerated
-    // streaks racing along it (past white: they catch the bloom)
     fragmentShader: /* glsl */`#include <logdepthbuf_pars_fragment>
-      varying vec2 vUv; varying vec3 vN, vV; uniform float uTime, uNight;
-      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+      varying vec3 vRib; varying float vCover; uniform float uTime, uNight;
+      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1.0, 0.0)), f.x), mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), f.x), f.y); }
+      ${LIGHT}
       void main(){
         #include <logdepthbuf_fragment>
-        float rim = 1.0 - abs(dot(normalize(vN), normalize(vV)));
-        float n = h(floor(vec2(vUv.x * 8.0, vUv.y * 48.0 - uTime * 34.0)));
-        float streak = smoothstep(0.7, 1.0, n);
-        float along = vUv.y * 0.25; // 0 at the mouth, 1 at the water
-        float a = (0.05 + 0.45 * rim * rim + 0.25 * streak) * (1.0 - along * 0.75);
-        vec3 col = mix(vec3(0.9, 0.96, 1.0), vec3(0.62, 0.56, 0.48), uNight) * (0.95 + 0.5 * rim + 1.3 * streak);
-        gl_FragColor = vec4(col, a); }`,
+        if (vRib.x > 1.5) {
+          // the foam: a churned ring round where the stream hits, flickering
+          vec2 q = vRib.yz; float r = length(q);
+          float n = h(floor(q * 7.0) + floor(uTime * 9.0) * vec2(0.37, 0.71));
+          float a = smoothstep(1.0, 0.45, r) * (0.18 + 0.4 * n) * (0.6 + 0.4 * smoothstep(0.0, 0.5, r));
+          gl_FragColor = vec4(jetLight(1.0) * 1.1, a);
+          return;
+        }
+        float t = vRib.x, s = vRib.y, edge = smoothstep(0.45, 1.0, abs(s));
+        // aerated streaks racing down it (more the further it falls) and glints, soft value noise long along the
+        // stream; where its cells are under a pixel they give way to their average (no shimmer)
+        float cells = t * 70.0 - uTime * 22.0, sub = smoothstep(0.4, 1.0, fwidth(t * 70.0));
+        float streak = mix(smoothstep(0.58 - 0.3 * t, 0.95, noise(vec2(s * 2.0 + 3.0, cells))), 0.2 + 0.2 * t, sub);
+        float glint = smoothstep(0.9, 0.98, noise(vec2(s * 5.0 + 9.0, cells * 1.7 + 31.0))) * (1.0 - sub);
+        float a = (0.1 + 0.45 * edge + 0.4 * streak * (0.35 + t)) * (1.0 - 0.4 * smoothstep(0.92, 1.0, t)) + 0.6 * glint;
+        gl_FragColor = vec4(jetLight(t) * (1.0 + 0.5 * edge + 0.5 * streak + 1.6 * glint), min(a, 1.0) * vCover);
+      }`,
   });
-  const stream = new THREE.Mesh(mergeGeometries(tubes, false), tubeMat);
+  const stream = new THREE.Mesh(ribbon, streamMat);
+  // the render target being drawn (main or reflection) sets the pixel size
+  const size = new THREE.Vector2(), pxH = r => { const rt = r.getRenderTarget(); return rt ? rt.height : r.getDrawingBufferSize(size).y; };
+  pts.onBeforeRender = r => { mat.uniforms.uPxH.value = pxH(r); };
+  stream.onBeforeRender = r => { streamMat.uniforms.uPxH.value = pxH(r); };
   const grp = new THREE.Group(); grp.add(pts, stream);
   return grp;
 }
@@ -287,18 +369,25 @@ function plazaGeometry(isWater) {
 }
 
 export function buildMerlion(city, quality, renderer, env = {}) {
-  // floodlit warm-white from the deck at night: brightest at the foot, the whole statue still lit up to the mane
-  const body = uplitMaterial(0xffe6c4, 0.3, { y0: 0, y1: 15, floor: 0.4, base: 0xffffff, map: scaleTexture(), rough: 0.62 });
-  const stone = uplitMaterial(0xffe6c4, 0.22, { y0: 0, y1: 15, floor: 0.4, base: 0xe6e1d6, rough: 0.7 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2c2a27, roughness: 0.9 });
-  const plinth = new THREE.MeshStandardMaterial({ color: 0xb8b0a2, roughness: 0.85 });
-  const group = new THREE.Group(); group.name = 'Merlion';
-  const pois = [], colliders = [];
   const statues = [
     // the hero statue a touch over life size (8.6 m -> ~10.8 m): read from across the bay against the CBD behind it
     { x: 612.5, z: 22.5, yaw: -0.12, scale: 1.25, name: 'Merlion', id: 'merlion', water: WATER_LEVEL, hero: true },
     { x: 590, z: 22.4, yaw: -0.05, scale: 0.26, name: 'Merlion Cub', id: 'merlion_cub', water: 0.6 },
   ];
+  const frameOf = s => frameFromAngle(s.x, s.z, s.yaw, s.hero ? 0.02 : 0.6).multiply(new THREE.Matrix4().makeScale(s.scale, s.scale, s.scale));
+  // floodlights set in the deck in front of each statue (local: +x is where it faces), aimed up at it
+  const lamps = [];
+  for (const s of statues) {
+    const F = frameOf(s), at = (x, y, z, w) => { const p = new THREE.Vector3(x, y, z).applyMatrix4(F); lamps.push(new THREE.Vector4(p.x, p.y, p.z, w)); };
+    if (s.hero) { at(3.9, 0.2, -2.4, 0.32); at(4.2, 0.2, 0, 0.3); at(3.9, 0.2, 2.4, 0.32); at(-3.4, 0.2, 0, 0.08); }
+    else at(4.2, 0.2, 0, 0.1);
+  }
+  const body = floodlit(scaleTexture(), lamps);
+  const stone = floodlit(stoneTexture(), lamps, { base: 0xe6e1d6, rough: 0.7 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2c2a27, roughness: 0.9 });
+  const plinth = new THREE.MeshStandardMaterial({ color: 0xb8b0a2, roughness: 0.85 });
+  const group = new THREE.Group(); group.name = 'Merlion';
+  const pois = [], colliders = [];
   const B = new Bucket(), jets = []; // both statues: one draw per material, one for their jets
   for (const s of statues) {
     const S = new Bucket();
@@ -310,14 +399,13 @@ export function buildMerlion(city, quality, renderer, env = {}) {
       const ped = new THREE.CylinderGeometry(2.6, 2.8, 2.2, 20); ped.translate(0, -1.1, 0); S.add(plinth, ped);
       const basin = new THREE.TorusGeometry(5.5, 0.35, 6, 32); basin.rotateX(Math.PI / 2); basin.translate(6, -2.4, 0); S.add(plinth, basin);
     }
-    const F = frameFromAngle(s.x, s.z, s.yaw, s.hero ? 0.02 : 0.6);
-    F.multiply(new THREE.Matrix4().makeScale(s.scale, s.scale, s.scale));
+    const F = frameOf(s);
     B.addBucket(S, F);
     // jet in world space
     const dir = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     jets.push({
       mouth: mouth.clone().applyMatrix4(F), v0: dir.multiplyScalar(7.2 * Math.sqrt(s.scale)).add(new THREE.Vector3(0, 1.6 * Math.sqrt(s.scale), 0)),
-      count: s.hero ? 500 : 160, size: s.hero ? 0.55 : 0.35, spread: s.hero ? 0.09 : 0.06 /* a slim arc, as the real one */, water: s.hero ? WATER_LEVEL : 0.1,
+      count: s.hero ? 280 : 70, size: s.hero ? 0.55 : 0.35, water: s.hero ? WATER_LEVEL : 0.1,
     });
     pois.push({ id: s.id, name: s.name, x: s.x, y: 0, z: s.z });
     colliders.push({ type: 'cylinder', center: [s.x, 4.3 * s.scale, s.z], radius: 2.5 * s.scale, halfHeight: 4.3 * s.scale });

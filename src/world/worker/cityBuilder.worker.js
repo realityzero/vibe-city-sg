@@ -3,6 +3,9 @@
 // Output buffers are transferred back to the main thread.
 import earcut from 'earcut';
 import { buildStreetscape } from './streetscape.js';
+import { Kit, lin, STALL, TRAY } from '../streetpieces.js';
+import { hallLayout } from './hawkerhall.js';
+import { FOOD_FIRST, FOOD_COUNT } from '../../gfx/signAtlas.js';
 import { loadGroundMask, groundEdgeDistance } from '../groundmask.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
@@ -127,6 +130,7 @@ function recIndex(f1, f2) {
   return (REC.last = i);
 }
 const ROOF_LAYOUT = { position: 3, normal: 3, color: 3, aRoof: 4 };
+const CANOPY = new Kit(), CANOPY_COL = { top: lin(0x6c737a), soffit: lin(0xd6d6d0) }; // office towers' lobby canopies
 const N_UP = [0, 1, 0], N_DOWN = [0, -1, 0];
 const ROAD_LAYOUT = { position: 3, normal: 3, aRoad: 4, aLanes: 4, aJunc: 4 };
 const SIMPLE_LAYOUT = { position: 3, normal: 3, color: 3 };
@@ -229,7 +233,7 @@ const ROOF_CLAY = [0x9c5b36, 0x8f5a3a, 0xa86a42, 0x7f523a, 0x936147, 0x8a5a40, 0
 const pick = (arr, s) => arr[Math.floor(s * arr.length) % arr.length];
 const ROOF_CLAY_LIN = ROOF_CLAY.map(h => srgbToLin(c3(h))), FIREWALL_LIN = srgbToLin(c3(0xd6d0c3)); // (terrace roofs)
 
-async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], chunkSize = 300, quality = 'high' }) {
+async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], placed = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
@@ -366,7 +370,11 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   // collected for the street furniture (streetscape.js): shopfront points, pier-side pot spots, wares in front of the
   // shops, shophouse back walls,
   // HDB blocks, and table spots in void decks and hawker colonnades
-  const hawkerIds = []; // (hawker halls are rebuilt as colonnaded pavilions: the night neon skips them)
+  // OSM buildings not drawn as their own block (taken over by a landmark, or rebuilt as an open hawker hall):
+  // nothing else may hang on their outlines (the night neon would float in the air)
+  const rebuilt = [];
+  // per stall: front-centre x, z, yaw (to its aisle), 1 for the famous one, its seed (when it trades: world/scenes.js)
+  const hawkerStalls = [];
   const shopFronts = [], piers = [], shopGoods = [], shopBacks = [], hdbBlocks = [], colonnade = [];
   // hawker centres: low halls named as one, or holding one (OSM puts most as a POI inside a plain building)
   const HAWKER = /food cent(re|er)|hawker|cooked food/i, hawkerPois = city.pois.filter(p => HAWKER.test(p.n || ''));
@@ -406,13 +414,13 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     if (outer.length < 3) continue;
     if (!b.noPhys && (b.m || 0) < 3) clearOfRoads(outer);
     const [cx, cz] = centroidOf(outer);
-    if (excluded(cx, cz)) continue;
+    if (excluded(cx, cz)) { rebuilt.push(b.id); continue; }
     if (area2(outer) < 0) outer.reverse();
     const holes = (b.ho || []).map(ringOf).filter(h => h.length >= 3).map(h => (area2(h) > 0 ? h.reverse() : h));
     const seed = hash1(b.id + 0.5);
     const style = b.s;
     const hawker = isHawkerHall(b, outer, Math.abs(area2(outer)) / 2);
-    if (hawker) hawkerIds.push(b.id);
+    if (hawker) rebuilt.push(b.id);
     // (a single-storey hall's OSM height is its roof's; the stalls stand under a 4.6 m colonnade below it)
     const top = hawker ? Math.min(b.h, 4.5 * (b.l || 1) + 3) : b.h;
     const base = b.m || 0;
@@ -435,7 +443,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     // shophouses: the OSM height usually includes the roof; keep the pitch modest and extend the walls so every floor shows
     let topAdj = top;
     if (style === STYLE.shophouse && roofShape) { roofH = Math.min(roofH, Math.max(1.4, (top - base) * 0.22)); topAdj = top + roofH * 0.6; }
-    if (hawker) topAdj = Math.max(top, 4.6 + 1.2 + roofH);
+    // (an open hall: 5.6 m to the ceiling of a single-storey one, under a fascia; 4.8 m under the floors of a block)
+    const hallH = (b.l || 1) > 1 ? 4.8 : 5.6;
+    if (hawker) topAdj = Math.max(top, hallH + 1.0 + roofH);
     const area = Math.abs(area2(outer)) / 2;
     let floorH = style === STYLE.shophouse ? 3.9 : style === STYLE.glass ? 4.1 : style === STYLE.office ? 3.9 : style === STYLE.parking ? 3.0 : style === STYLE.hdb ? 2.85 : style === STYLE.civic ? 5.0 : 3.25;
     // (distant procedural outskirts skip the parapet: its inner faces are sub-pixel there, ~90k triangles)
@@ -451,7 +461,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
 
     // ---- per-edge facade flags, packed into aF2.w as accent + 16*flag (+ 128*use):
     // 1 shophouse front above the five-foot-way (signboard), 2 recessed shopfront, 3 HDB void-deck back wall,
-    // 4 HDB common-corridor side, 5 HDB end wall (painted block number), 6 hawker stalls behind the colonnade
+    // 4 HDB common-corridor side, 5 HDB end wall (painted block number), 6 hawker hall (columns, ceiling, floor)
     const nE = outer.length, eFlag = new Array(nE).fill(0);
     const edgeN = i => { const p = outer[i], q = outer[(i + 1) % nE]; const ex = q[0] - p[0], ez = q[1] - p[1], len = Math.hypot(ex, ez) || 1; return [ez / len, -ex / len, len]; };
     let recess = null, H1 = 0;
@@ -481,10 +491,6 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         }
       }
     }
-    if (hawker) {
-      const D = 3.4, r2 = recessRing(outer, new Array(nE).fill(D));
-      if (r2) recess = { ring: r2, D: new Array(nE).fill(D), pw: 0.6, step: 6, first: false, flag: 6, h: 4.6 };
-    }
     let hdbO = null, hdbSlab = false;
     if (isHdb) {
       hdbO = obb(outer);
@@ -503,7 +509,8 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
       }
       if (!b.noPhys && base < 0.5 && hdbO) hdbBlocks.push({ ring: outer, cx, cz, ux: hdbO.ux, uz: hdbO.uz });
     }
-    if (recess) H1 = gBase + (recess.h || floorH);
+    if (recess) H1 = gBase + floorH;
+    if (hawker) H1 = gBase + hallH;
 
     const OT = b.noPhys ? 'o.' : '';
     const addWalls = (ring, yA, yB, f1x, colour, inward = false, flags = null, tag = 'w.main') => {
@@ -539,24 +546,99 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
       wallTris += 2;
     };
     // square column (4 faces, wall material style 13) + its collider
-    const pillar = (pcx, pcz, ux, uz, w, yA, yB, f2) => {
+    const pillar = (pcx, pcz, ux, uz, w, yA, yB, f2, g = ch.wallsNear) => {
       const h = w / 2, vx = -uz, vz = ux, fP = [13, seed, floorH, base];
       const C = [[-h, -h], [h, -h], [h, h], [-h, h]].map(([a, q]) => [pcx + ux * a + vx * q, pcz + uz * a + vz * q]);
       for (let k = 0; k < 4; k++) {
         const P0 = C[k], Q0 = C[(k + 1) % 4];
         let nx = Q0[1] - P0[1], nz = -(Q0[0] - P0[0]); const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
         if (nx * ((P0[0] + Q0[0]) / 2 - pcx) + nz * ((P0[1] + Q0[1]) / 2 - pcz) < 0) { nx = -nx; nz = -nz; }
-        wQuad([P0[0], yA, P0[1]], [Q0[0], yA, Q0[1]], [Q0[0], yB, Q0[1]], [P0[0], yB, P0[1]], [nx, 0, nz], wallCol, [k * w, yA], [k * w + w, yA], [k * w + w, yB], [k * w, yB], fP, f2, ch.wallsNear);
+        wQuad([P0[0], yA, P0[1]], [Q0[0], yA, Q0[1]], [Q0[0], yB, Q0[1]], [P0[0], yB, P0[1]], [nx, 0, nz], wallCol, [k * w, yA], [k * w + w, yA], [k * w + w, yB], [k * w, yB], fP, f2, g);
         physQuad(ch, [P0[0], yA, P0[1]], [Q0[0], yA, Q0[1]], [Q0[0], yB, Q0[1]], [P0[0], yB, P0[1]]);
       }
     };
 
-    if (recess) {
+    if (hawker) {
+      // ---- hawker centre: an open-sided hall. Columns round the outline carry the fascia (and any floors above) and a
+      // ceiling of tube lights; inside, on a tiled floor, islands of stalls stand back to back with tables, fans and
+      // tray-return stations round them (worker/hawkerhall.js lays it out)
+      const FLOOR_Y = 0.12, fA = accent + 16 * 6, o = obb(outer), f2h = [1, wallTop, blockNo, fA], flCol = srgbToLin(c3(0xb4b2ac));
+      addWalls(outer, H1, wallTop, (b.l || 1) > 1 ? [style, seed, floorH, H1] : [STYLE.plain, seed, floorH, base], wallCol, false, eFlag);
+      // ceiling (drawn from afar with the fascia: the open sides show it) and floor over the outline, uv in the hall's
+      // frame (the ceiling's tubes run in rows along it)
+      const flat = []; for (const p of outer) flat.push(p[0], p[1]);
+      const tris = earcut(flat), ux0 = o ? o.ux : 1, uz0 = o ? o.uz : 0;
+      const uA = i => flat[i * 2] * ux0 + flat[i * 2 + 1] * uz0, vA = i => -flat[i * 2] * uz0 + flat[i * 2 + 1] * ux0;
+      const fC = [12, seed, floorH, base], fF = [14, seed, floorH, base];
+      TAG = 'w.ffw';
+      for (let t = 0; t < tris.length; t += 3) {
+        let ia = tris[t], ib = tris[t + 1], ic = tris[t + 2];
+        // (wound to face down for the ceiling, the other way for the floor)
+        if ((flat[ib * 2] - flat[ia * 2]) * (flat[ic * 2 + 1] - flat[ia * 2 + 1]) - (flat[ic * 2] - flat[ia * 2]) * (flat[ib * 2 + 1] - flat[ia * 2 + 1]) < 0) { const k = ib; ib = ic; ic = k; }
+        const ax = flat[ia * 2], az = flat[ia * 2 + 1], bx = flat[ib * 2], bz = flat[ib * 2 + 1], cx2 = flat[ic * 2], cz2 = flat[ic * 2 + 1];
+        const G = ch.walls, N = ch.wallsNear;
+        G.tri(G.wv(ax, H1, az, N_DOWN, wallCol, uA(ia), vA(ia), fC, f2h), G.wv(bx, H1, bz, N_DOWN, wallCol, uA(ib), vA(ib), fC, f2h), G.wv(cx2, H1, cz2, N_DOWN, wallCol, uA(ic), vA(ic), fC, f2h));
+        N.tri(N.wv(ax, FLOOR_Y, az, N_UP, flCol, uA(ia), vA(ia), fF, f2h), N.wv(cx2, FLOOR_Y, cz2, N_UP, flCol, uA(ic), vA(ic), fF, f2h), N.wv(bx, FLOOR_Y, bz, N_UP, flCol, uA(ib), vA(ib), fF, f2h));
+        occlTri(ch, [ax, H1, az], [bx, H1, bz], [cx2, H1, cz2]);
+        physTri(ch, [ax, FLOOR_Y, az], [cx2, FLOOR_Y, cz2], [bx, FLOOR_Y, bz]);
+        wallTris += 2;
+      }
+      // the floor's step round the edge, and the columns (drawn from afar too: without them the hall would float)
+      TAG = 'w.pillar';
+      for (let i = 0; i < nE; i++) {
+        const p = outer[i], q = outer[(i + 1) % nE], len = Math.hypot(q[0] - p[0], q[1] - p[1]); if (len < 0.6) continue;
+        const ux = (q[0] - p[0]) / len, uz = (q[1] - p[1]) / len, inx = -uz, inz = ux, f2 = [len, wallTop, blockNo, fA];
+        wQuad([p[0], -0.3, p[1]], [q[0], -0.3, q[1]], [q[0], FLOOR_Y, q[1]], [p[0], FLOOR_Y, p[1]], [-inx, 0, -inz], flCol, [0, -0.3], [len, -0.3], [len, FLOOR_Y], [0, FLOOR_Y], [11, seed, floorH, base], f2, ch.wallsNear);
+        physQuad(ch, [p[0], -0.3, p[1]], [q[0], -0.3, q[1]], [q[0], FLOOR_Y, q[1]], [p[0], FLOOR_Y, p[1]]);
+        const pw = 0.6, nP = Math.max(2, Math.round(len / 6) + 1);
+        for (let k = 1; k < nP; k++) {
+          const t = pw / 2 + 0.02 + (len - pw - 0.04) * k / (nP - 1);
+          pillar(p[0] + ux * t + inx * (pw / 2 + 0.03), p[1] + uz * t + inz * (pw / 2 + 0.03), ux, uz, pw, y0, H1, f2, ch.walls);
+        }
+      }
+      // inside: stalls (each with its lightbox over its photo menus and the grade sticker on its counter), the rows'
+      // colliders, tray returns with their boards, fans and tables (one stool colour a centre, ~15% of them choped);
+      // stalls, fans, trays and tables are instanced street furniture, the boards near-detail facade quads
+      if (o) {
+        const lay = hallLayout(outer, o, k => hash1(b.id * 7.3 + k), pip), S = lay.stalls, nS = S.length / 4;
+        const first = Math.floor(hash1(b.id * 2.9) * FOOD_COUNT), famous = Math.floor(hash1(b.id * 5.1) * nS);
+        // a facade quad facing the stall's aisle: local x lx0..lx1 (left to right seen from the front), height ly0..ly1
+        const board = (x, z, yaw, lx0, lx1, ly0, ly1, lz, kind, cell, sd) => {
+          const c = Math.cos(yaw), s = Math.sin(yaw), P = (lx, y) => [x + lx * c + lz * s, FLOOR_Y + y, z - lx * s + lz * c], w = lx1 - lx0, y0b = FLOOR_Y + ly0, y1b = FLOOR_Y + ly1;
+          wQuad(P(lx0, ly0), P(lx1, ly0), P(lx1, ly1), P(lx0, ly1), [s, 0, c], [0.8, 0.8, 0.78], [0, y0b], [w, y0b], [w, y1b], [0, y1b], [15, sd, ly1 - ly0, y0b], [w, kind, cell, 0], ch.wallsNear);
+        };
+        TAG = 's.hawker';
+        const [p0, p1] = STALL.PANEL, [sx, sy, ss] = STALL.STICKER;
+        for (let i = 0; i < nS; i++) {
+          const x = S[i * 4], z = S[i * 4 + 1], yaw = S[i * 4 + 2], k = S[i * 4 + 3], sd = hash1(b.id + k * 3.7);
+          colonnade.push([x, z, yaw, 'stall', sd, FLOOR_Y]);
+          board(x, z, yaw, -STALL.PANEL_W / 2, STALL.PANEL_W / 2, p0, p1, 0.005, 0, FOOD_FIRST + (first + k * 7) % FOOD_COUNT, sd);
+          board(x, z, yaw, sx - ss / 2, sx + ss / 2, sy, sy + ss, 0.006, 1, FOOD_FIRST + FOOD_COUNT + 1, sd);
+          hawkerStalls.push(x, z, yaw, i === famous ? 1 : 0, sd);
+        }
+        const I = lay.islands;
+        for (let i = 0; i < I.length; i += 8) for (let k = 0; k < 4; k++) {
+          const a = i + k * 2, c = i + ((k + 1) % 4) * 2;
+          physWall(ch, I[a], I[a + 1], I[c], I[c + 1], FLOOR_Y, FLOOR_Y + 2.6);
+        }
+        const T = lay.trays;
+        for (let i = 0; i < T.length; i += 3) {
+          const x = T[i], z = T[i + 1], yaw = T[i + 2], sd = hash1(b.id * 3.3 + i), c = Math.cos(yaw) * 0.82, s = Math.sin(yaw) * 0.82;
+          colonnade.push([x, z, yaw, 'trays', sd, FLOOR_Y]);
+          board(x, z, yaw, -TRAY.BOARD_W / 2, TRAY.BOARD_W / 2, TRAY.BOARD[0], TRAY.BOARD[1], -0.235, 2, FOOD_FIRST + FOOD_COUNT, sd);
+          physWall(ch, x - c, z + s, x + c, z - s, FLOOR_Y, FLOOR_Y + 1.5);
+        }
+        for (let i = 0; i < lay.fans.length; i += 2) colonnade.push([lay.fans[i], lay.fans[i + 1], 0, 'fan', hash1(b.id + i * 1.3), H1]);
+        const stool = Math.floor(hash1(b.id * 4.1) * 4);
+        for (let i = 0; i < lay.tables.length; i += 3) {
+          const hc = hash1(b.id * 9.7 + i * 0.37), chope = hc < 0.1 ? 1 : hc < 0.15 ? 2 : 0;
+          colonnade.push([lay.tables[i], lay.tables[i + 1], lay.tables[i + 2], 'hawkerTable', (stool + 4 * chope + 0.5) / 12, FLOOR_Y]);
+        }
+      }
+    } else if (recess) {
       // upper floors stand on the original outline; the ground floor steps back behind a colonnade
       addWalls(outer, H1, wallTop, f1, wallCol, false, eFlag);
-      // (hawker stalls are shopfronts: one tall bay each under the colonnade)
-      const f1r = hawker ? [STYLE.shophouse, seed, H1 - gBase, base] : f1;
-      addWalls(recess.ring, y0, H1, f1r, wallCol, false, recess.D.map((d, i) => d > 0 ? recess.flag : eFlag[i]), 'w.recess');
+      addWalls(recess.ring, y0, H1, f1, wallCol, false, recess.D.map((d, i) => d > 0 ? recess.flag : eFlag[i]), 'w.recess');
       const FLOOR_Y = 0.12, col0 = colonnade.length;
       for (let i = 0; i < nE; i++) {
         if (!(recess.D[i] > 0)) continue;
@@ -587,20 +669,40 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
             shopGoods.push([p[0] + ux * tm + inx * dm, p[1] + uz * tm + inz * dm, Math.atan2(-inx, -inz)]);
           }
         }
-        // furniture in the bays: stone tables in the void deck, the hawker centre's tables all round
-        // (bays meeting at a corner share it: one set there)
-        const spot = (x, z, kind) => {
+        // furniture in the void deck's bays (bays meeting at a corner share it: one set there)
+        const spot = (x, z, kind, yaw = Math.atan2(ux, uz)) => {
           for (let j = col0; j < colonnade.length; j++) if (Math.hypot(colonnade[j][0] - x, colonnade[j][1] - z) < 2.6) return;
-          colonnade.push([x, z, Math.atan2(ux, uz), kind]);
+          colonnade.push([x, z, yaw, kind, undefined, FLOOR_Y]); // (on the bay's raised floor)
         };
+        // stone (chess) tables mid-bay; residents' bicycles and benches against the back wall, facing out
         if (!isShop && gBase < 0.5) for (let k = 1; k < nP; k++) {
-          const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), d = recess.D[i] / 2;
-          if (hawker) for (const o of len / (nP - 1) > 5.2 ? [-1.35, 1.35] : [0]) spot(p[0] + ux * (t + o) + inx * d, p[1] + uz * (t + o) + inz * d, 'kopitiam');
-          else if (len / (nP - 1) > 4 && hash1(b.id * 1.9 + i * 7.3 + k * 3.1) < 0.3) spot(p[0] + ux * t + inx * d, p[1] + uz * t + inz * d, 'stoneTable');
+          const t = pw / 2 + (len - pw) * (k - 0.5) / (nP - 1), D = recess.D[i], hb = hash1(b.id * 1.9 + i * 7.3 + k * 3.1);
+          if (len / (nP - 1) <= 4) continue;
+          if (hb < 0.3) spot(p[0] + ux * t + inx * D / 2, p[1] + uz * t + inz * D / 2, 'stoneTable');
+          else if (hb < 0.42) spot(p[0] + ux * t + inx * (D - 0.75), p[1] + uz * t + inz * (D - 0.75), 'cycles', Math.atan2(-inx, -inz));
+          else if (hb < 0.52) spot(p[0] + ux * t + inx * (D - 0.4), p[1] + uz * t + inz * (D - 0.4), 'bench', Math.atan2(-inx, -inz));
         }
       }
     } else addWalls(outer, y0, wallTop, f1, wallCol, false, eFlag);
     for (const h of holes) addWalls(h, y0, wallTop, f1, wallCol, false, null, 'w.hole');
+    // a canopy over the street front of an office tower's glazed lobby: at street level the tower otherwise came down
+    // to the pavement as one sheet of glass. The edge nearest a road, kept short of its kerb (near detail only).
+    if (!b.noPhys && (style === STYLE.glass || style === STYLE.office) && top >= 80 && base < 0.5 && !recess) {
+      let bi = -1, bs = 12;
+      for (let i = 0; i < nE; i++) {
+        const [nx, nz, len] = edgeN(i); if (len < 10) continue;
+        const p = outer[i], q = outer[(i + 1) % nE], sc = roadScore((p[0] + q[0]) / 2 + nx * 0.5, (p[1] + q[1]) / 2 + nz * 0.5);
+        if (sc < bs) { bs = sc; bi = i; }
+      }
+      const D = Math.min(3.2, bs - 0.8);
+      if (bi >= 0 && D > 1.6) {
+        TAG = 's.canopy';
+        const [nx, nz, len] = edgeN(bi), p = outer[bi], q = outer[(bi + 1) % nE], hw = Math.min(len * 0.6, 26) / 2, y = floorH + 0.2;
+        CANOPY.at(ch.structNear, (p[0] + q[0]) / 2 + nx * D / 2, y, (p[1] + q[1]) / 2 + nz * D / 2, Math.atan2(nx, nz));
+        CANOPY.box(0, 0, 0, hw, 0.38, D / 2, CANOPY_COL.top);
+        CANOPY.quad(-hw, 0, -D / 2, hw, 0, -D / 2, hw, 0, D / 2, -hw, 0, D / 2, CANOPY_COL.soffit);
+      }
+    }
     if (flatParapet) {
       const pf = [STYLE.plain, seed, floorH, base];
       addWalls(outer, roofY, top, pf, wallCol, true, null, 'w.parapet');
@@ -685,7 +787,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         // stops at the party walls, no overhang there, and a plastered firewall, a ridge of triangular section with its
         // crest hf above the tiles, stands up each one. Each unit adds the one at its end furthest along a fixed world
         // direction, so a row of separately mapped units gets one per party wall
-        const shopGable = roofShape === 1 && style === STYLE.shophouse;
+        const shopGable = roofShape === 1 && style === STYLE.shophouse && !hawker; // (a hawker hall keeps its own roof)
         if (shopGable && (o.ux < 0 || (o.ux === 0 && o.uz < 0))) { o.ux = -o.ux; o.uz = -o.uz; }
         const ov = 0.35, ovU = shopGable ? 0 : ov; // eave overhang
         const L = o.L / 2 + ovU, Wh = o.Wd / 2 + ov;
@@ -838,34 +940,43 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         boxGeo(S, x, roofY, z, 0.9, 1.2, 0.9, srgbToLin(c3(0x8a8f94)));
       }
     }
-    // ---- HDB laundry poles (bamboo/steel poles out of service-yard windows, some with washing)
+    // ---- HDB laundry poles: 1.2-1.5 m out of the service-yard windows, thickest along the kitchen side of a slab block
+    // (the long side away from the common corridor), most of them hung with washing: shirts on hangers facing the
+    // street, towels and sarongs over the pole, now and then a bedsheet
     if (isHdb && !b.noPhys && hdbO && (b.l || 0) > 3) {
       TAG = 's.laundry';
       const S = ch.structNear, levels = Math.min(b.l, 25), wh = floorH;
-      const CLOTH = [0xe23b3b, 0x2f6fd6, 0xf2f2ee, 0xf2c230, 0x3ca55c, 0xe87ab0, 0x222222, 0x8a5cc8, 0xff8a3d].map(h => srgbToLin(c3(h)));
+      const CLOTH = [0xe23b3b, 0x2f6fd6, 0xf2f2ee, 0xf2c230, 0x3ca55c, 0xe87ab0, 0x222222, 0x8a5cc8, 0xff8a3d, 0x2bb3c0, 0xf4f0e0, 0xd8402a].map(h => srgbToLin(c3(h)));
       const poleCol = srgbToLin(c3(0xb8bcbf));
       for (let i = 0; i < nE; i++) {
         if (eFlag[i] === 4 || eFlag[i] === 5) continue;
         const [nx, nz, len] = edgeN(i); if (len < 10) continue;
+        const kitchen = hdbSlab && len > 16 && Math.abs(nx * -hdbO.uz + nz * hdbO.ux) > 0.8, dens = kitchen ? 0.22 : 0.07;
         const p = outer[i], ux = (outer[(i + 1) % nE][0] - p[0]) / len, uz = (outer[(i + 1) % nE][1] - p[1]) / len;
         const nCols = Math.max(1, Math.floor(len / 3.0 + 0.5)), cw = len / nCols;
         for (let f = 1; f < levels; f++) for (let c = 0; c < nCols; c++) {
-          const hr = hash1(b.id * 3.7 + f * 31.3 + c * 7.1 + i * 101.9);
-          if (hr > 0.085) continue;
+          const hr = hash1(b.id * 3.7 + f * 31.3 + c * 7.1 + i * 101.9) / dens;
+          if (hr > 1) continue;
           const u = (c + 0.5) * cw, y = gBase + f * wh + wh * 0.72;
           const bx = p[0] + ux * u, bz = p[1] + uz * u;
-          // pole sticks straight out 1.6 m; three thin quads (cheap prism)
-          const L = 1.6, ex = bx + nx * L, ez = bz + nz * L, t = 0.035;
+          const L = 1.2 + hash1(hr * 13.1) * 0.3, ex = bx + nx * L, ez = bz + nz * L, t = 0.03;
           quadGeo(S, [bx, y - t, bz], [ex, y - t, ez], [ex, y + t, ez], [bx, y + t, bz], [ux, 0, uz], poleCol, true);
           quadGeo(S, [bx - ux * t, y + t, bz - uz * t], [ex - ux * t, y + t, ez - uz * t], [ex + ux * t, y + t, ez + uz * t], [bx + ux * t, y + t, bz + uz * t], [0, 1, 0], poleCol);
-          // washing: 1-3 garments hanging below the pole
-          if (hr < 0.06) {
-            const nG = 1 + Math.floor(hash1(hr * 999) * 3);
-            for (let g = 0; g < nG; g++) {
-              const s0 = 0.25 + g * 0.45, s1 = s0 + 0.32 + hash1(hr * 77 + g) * 0.1, drop = 0.45 + hash1(hr * 55 + g) * 0.45;
-              const col = CLOTH[Math.floor(hash1(hr * 333 + g * 9) * CLOTH.length)];
-              const ax = bx + nx * s0, az = bz + nz * s0, cx2 = bx + nx * s1, cz2 = bz + nz * s1;
+          if (hr > 0.8) continue; // (a bare pole)
+          let s0 = 0.2;
+          for (let g = 0; s0 < L - 0.25; g++) {
+            const hg = hash1(hr * 97.3 + g * 5.1), col = CLOTH[Math.floor(hash1(hr * 333 + g * 9) * CLOTH.length)];
+            if (hg < 0.55) {
+              // a shirt on a hanger, square to the pole: seen from the street (one-sided: only the street sees it)
+              const w = 0.24 + hg * 0.08, drop = 0.55 + hg * 0.25, cxs = bx + nx * (s0 + 0.12), czs = bz + nz * (s0 + 0.12);
+              quadGeo(S, [cxs - ux * w, y - drop, czs - uz * w], [cxs + ux * w, y - drop, czs + uz * w], [cxs + ux * w * 0.8, y - 0.06, czs + uz * w * 0.8], [cxs - ux * w * 0.8, y - 0.06, czs - uz * w * 0.8], [nx, 0, nz], col);
+              s0 += 0.3;
+            } else {
+              // a towel or sarong over the pole (now and then a bedsheet nearly to the floor below)
+              const sheet = hg > 0.93, w = sheet ? 0.9 : 0.35 + (hg - 0.55) * 0.6, drop = sheet ? 1.5 : 0.5 + (hg - 0.55) * 1.2;
+              const s1 = Math.min(L - 0.05, s0 + w), ax = bx + nx * s0, az = bz + nz * s0, cx2 = bx + nx * s1, cz2 = bz + nz * s1;
               quadGeo(S, [ax, y - drop, az], [cx2, y - drop, cz2], [cx2, y - t, cz2], [ax, y - t, az], [ux, 0, uz], col, true);
+              s0 = s1 + 0.08;
             }
           }
         }
@@ -1190,8 +1301,9 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   // ================= STREET FURNITURE ================= (after the trees: it keeps clear of them)
   const tFurn = performance.now();
   const furniture = buildStreetscape({
-    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
+    city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, placed, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
     chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occDisc(x, z, r, 115), setTag: t => { TAG = t; },
+    plant: (x, z, type, scale, rot) => { trees.push(x, z, type, scale, rot); occStroke([[x, z], [x, z]], 2.5, 120); },
   });
   furniture.counts.ms = Math.round(performance.now() - tFurn);
 
@@ -1220,10 +1332,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   }
   const treeArr = new Float32Array(trees); transfer.push(treeArr.buffer);
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
-  transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer);
-  const railings = railBays.out(); transfer.push(railings.buffer);
+  const stallArr = new Float32Array(hawkerStalls), railings = railBays.out();
+  transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer, stallArr.buffer, railings.buffer);
   const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, hawkers: hawkerIds }, railings, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, stalls: stallArr }, rebuilt, railings, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {

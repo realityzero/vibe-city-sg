@@ -97,6 +97,8 @@ export class Parking {
     const keep = new Set(); for (let k = 0; k < Math.min(this.max, idx.length); k++) keep.add(want[idx[k] + 1]);
     for (const s of this.spots) if (!keep.has(s)) { if (s.car) T.despawn(s.car); s.car = null; s.gone = false; }
     this.spots = [...keep];
-    for (const s of this.spots) if (!s.car && !s.gone) s.car = T.park(s);
+    // (not into a spot where a real vehicle stands: the player's car after a teleport, say)
+    const vs = this.game.vehicles || [];
+    for (const s of this.spots) if (!s.car && !s.gone && !vs.some(v => Math.hypot(v.position.x - s.x, v.position.z - s.z) < 6)) s.car = T.park(s);
   }
 }

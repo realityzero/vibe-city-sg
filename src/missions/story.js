@@ -485,9 +485,11 @@ export const STORY = [
         for (let k = 0; k < n; k++) pts.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
       }
       const total = pts.reduce((acc, p, i) => i ? acc + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0, 0);
+      // gates stand on the road they mark: a bridge deck, not the water under it
+      const gate = ([x, z]) => V(x, Math.max(0, g.roadnet.nearestLane(x, z, 12)?.pos.y ?? 0), z);
       const cps = []; let acc = 0;
-      for (let i = 1; i < pts.length; i++) { acc += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (acc >= 160) { cps.push(V(pts[i][0], 0, pts[i][1])); acc = 0; } }
-      cps.push(V(pts[pts.length - 1][0], 0, pts[pts.length - 1][1]));
+      for (let i = 1; i < pts.length; i++) { acc += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (acc >= 160) { cps.push(gate(pts[i])); acc = 0; } }
+      cps.push(gate(pts[pts.length - 1]));
       const LAPS = 2;
       // grid
       const startDir = V(pts[3][0] - pts[0][0], 0, pts[3][1] - pts[0][1]).normalize();

@@ -33,13 +33,16 @@ const BUILDERS = [
 ];
 
 /**
- * @returns {Promise<{group, exclusions, colliders, reflective, update, pois, stats, clearings, paint}>} (clearings: plazas
- * kept free of trees; paint: [OSM building id, wall colour] for buildings the city builder renders)
+ * @returns {Promise<{group, exclusions, colliders, reflective, update, pois, stats, clearings, paint, facades, fronts, furniture}>}
+ * (clearings: plazas kept free of trees; paint: [OSM building id, wall colour] for buildings the city builder renders;
+ * facades: walls drawn with the city's facade shader, { geometry, records } for City.build; fronts: shopfronts a
+ * landmark rebuilt, for the night neon (world/nightglow.js); furniture: street furniture it sets out, [kind, x, z, yaw, h])
  */
-export async function createLandmarks({ THREE = THREE_NS, city, renderer, quality = 'high', isWater = () => false } = {}) {
+export async function createLandmarks({ THREE = THREE_NS, city, renderer, quality = 'high', isWater = () => false, facade = null } = {}) {
   const group = new THREE.Group(); group.name = 'landmarks';
   const exclusions = [], colliders = [], reflective = [], pois = [], updaters = [], perLandmark = {}, clearings = [], paint = [];
-  const env = { isWater }; // what builders may ask about the site (the ground mask)
+  const facades = [], fronts = [], furniture = [];
+  const env = { isWater, facade }; // what builders may ask about the site (the ground mask) and the city's facade material
   for (const [name, build] of BUILDERS) {
     // a task boundary between landmarks (awaiting a synchronous builder only queues a microtask, which lets no tap
     // through): the whole set was one ~0.5 s task on a phone
@@ -52,6 +55,9 @@ export async function createLandmarks({ THREE = THREE_NS, city, renderer, qualit
     pois.push(...(r.pois || []));
     clearings.push(...(r.clearings || []));
     paint.push(...(r.paint || []));
+    facades.push(...(r.facades || []));
+    fronts.push(...(r.fronts || []));
+    furniture.push(...(r.furniture || []));
     if (r.update) updaters.push(r.update);
     let calls = 0; r.group.traverse(o => { if (o.isMesh || o.isPoints) calls++; });
     perLandmark[name] = { tris: triCount(r.group), calls };
@@ -59,7 +65,7 @@ export async function createLandmarks({ THREE = THREE_NS, city, renderer, qualit
   const stats = { tris: Object.values(perLandmark).reduce((a, b) => a + b.tris, 0), calls: Object.values(perLandmark).reduce((a, b) => a + b.calls, 0), perLandmark };
   console.log('[landmarks]', JSON.stringify(stats));
   return {
-    group, exclusions, colliders, reflective, pois, stats, clearings, paint,
+    group, exclusions, colliders, reflective, pois, stats, clearings, paint, facades, fronts, furniture,
     update(dt, env = {}) { for (const u of updaters) u(dt, env); },
   };
 }

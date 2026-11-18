@@ -9,6 +9,7 @@
 // Per-car state comes from instanced attributes (iPaint vec3, iLights vec4) or uniforms (uPaint, uLights).
 // iLights = (head 0..1, brake 0..1, siren 0/1, bits: 1 indL, 2 indR, 4 reverse, 8 taxi hired).
 import * as THREE from 'three';
+import { markMoving } from '../../gfx/taa.js';
 
 export const vehicleTime = { value: 0 };
 
@@ -196,6 +197,7 @@ export function createVehicleMaterial(atlas, { instanced = false, transparent = 
     alphaTest: 0.5, envMapIntensity: 1,
   });
   if (transparent) { m.transparent = true; m.alphaTest = 0; m.opacity = 0.82; m.depthWrite = false; }
+  markMoving(m); // (vehicles move on their own: temporal AA treats their pixels apart, gfx/taa.js)
   m.userData.uPaint = { value: new THREE.Color(1, 1, 1) };
   m.userData.uLights = { value: new THREE.Vector4(0, 0, 0, 0) };
   if (rig) m.userData.uPart = { value: Array.from({ length: RIG_SLOTS }, () => new THREE.Matrix4()) };
