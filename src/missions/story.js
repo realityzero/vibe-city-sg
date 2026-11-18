@@ -120,10 +120,10 @@ async function lionCityDrive(c, meet) {
   await kenCall(c);
   c.objective('Drive to <b>Lau Pa Sat</b> to meet Ken. Follow the <b>GPS route</b> on the radar.');
   tips(c, [
-    [8, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. Pink markers start missions. <b>II</b> pauses the game.'],
-    [20, 'Hold <b>B</b> for a <b>Kopi Gao</b> boost. Near misses at speed pay cash.', 'Hold <b>KOPI</b> for a <b>Kopi Gao</b> boost. Near misses at speed pay cash.'],
+    [8, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. <b>II</b> pauses.'],
+    [20, 'Hold <b>B</b> for a <b>Kopi Gao</b> boost. Near misses at speed pay cash.', 'Hold <b>KOPI</b> to boost. Near misses pay cash.'],
     [34, 'At Lau Pa Sat press <b>F</b> to get out. By any other car, <b>F</b> "borrows" it. In Singapore that\'s a fine. Everything here is a fine.',
-      'At Lau Pa Sat tap <b>EXIT</b> to get out. By any other car, <b>ENTER</b> "borrows" it. In Singapore that\'s a fine. Everything here is a fine.'],
+      'At Lau Pa Sat tap <b>EXIT</b>. "Borrowing" a car is a fine. Everything here is.'],
   ]);
   await arrive;
   return meetKen(c, meet);
@@ -206,9 +206,9 @@ export const STORY = [
       await kenCall(c);
       c.objective('Go to <b>Lau Pa Sat</b> to meet Ken. Follow the <b>GPS route</b> on the radar.');
       tips(c, [
-        [1.5, '<b>W A S D</b> to move, <b>mouse</b> to look (click the screen to lock it). Hold <b>Shift</b> to sprint.', 'Move with your <b>left thumb</b>, drag anywhere else to look. Hold <b>RUN</b> to sprint.'],
-        [10, 'Press <b>F</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.', 'Tap <b>ENTER</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.'],
-        [20, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. Pink markers start missions. <b>II</b> pauses the game.'],
+        [1.5, '<b>W A S D</b> to move, <b>mouse</b> to look (click the screen to lock it). Hold <b>Shift</b> to sprint.', '<b>Left thumb</b> moves, drag elsewhere to look, hold <b>RUN</b> to sprint.'],
+        [10, 'Press <b>F</b> next to a car to "borrow" it. In Singapore that\'s a fine. Everything here is a fine.', 'Tap <b>ENTER</b> by a car to "borrow" it. That\'s a fine, lah.'],
+        [20, 'Press <b>M</b> for the map. Pink markers start missions. <b>Esc</b> pauses the game.', 'Tap the <b>radar</b> for the map. <b>II</b> pauses.'],
       ]);
       await c.reach(meet, { radius: 3.5, onFoot: true });
       return meetKen(c, meet);

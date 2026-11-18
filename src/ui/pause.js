@@ -5,7 +5,7 @@ import { el, escapeHtml, fmtInt } from './util.js';
 
 export const DEFAULT_SETTINGS = {
   quality: 'high', resolutionScale: 1, drawDistance: 1800, mouseSensitivity: 1, invertY: false,
-  masterVolume: 0.8, musicVolume: 0.7, radioVolume: 0.7, sfxVolume: 0.8, subtitles: true,
+  masterVolume: 0.8, musicVolume: 0.7, radioVolume: 0.7, sfxVolume: 0.8, subtitles: true, autoGas: false,
 };
 
 const pct = v => `${Math.round(v * 100)}%`;
@@ -20,6 +20,7 @@ const SCHEMA = [
   { grp: 'Controls' },
   { key: 'mouseSensitivity', label: 'Mouse sensitivity', type: 'range', min: 0.2, max: 3, step: 0.05, fmt: v => `${(+v).toFixed(2)}×` },
   { key: 'invertY', label: 'Invert Y axis', type: 'toggle' },
+  { key: 'autoGas', label: 'Auto-gas (touch: the stick drives)', type: 'toggle' },
   { grp: 'Audio' },
   { key: 'masterVolume', label: 'Master volume', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },
   { key: 'musicVolume', label: 'Music volume', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },

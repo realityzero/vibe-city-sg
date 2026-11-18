@@ -1,0 +1,81 @@
+/* Spice overlays (ui/spice.js): Fine City ticket + camera flash, cash floaters, the filming view counter, the one-line
+   objective and the drag-race start lights. */
+
+/* ---------------------------------------------------------------- Fine City ticket */
+.vc-ticket { position: absolute; left: 50%; top: 12%; z-index: 3; opacity: 0; pointer-events: none; transform: translateX(-50%); }
+.vc-ticket.go { animation: vc-ticket-in .42s cubic-bezier(.2,.9,.3,1.15) both; }
+.vc-ticket.out { animation: vc-ticket-out .5s ease-in both; }
+.vc-touchmode .vc-ticket { top: 24%; } /* (under the objective and the tips) */
+.vc-root:has(.vc-race.on) .vc-ticket { top: 38%; } /* (a red-light camera mid-race: clear of the race lights) */
+@keyframes vc-ticket-in { 0% { opacity: 0; transform: translateX(-50%) translateY(-55%) rotate(-9deg); } 100% { opacity: 1; transform: translateX(-50%) rotate(-2.5deg); } }
+@keyframes vc-ticket-out { 0% { opacity: 1; transform: translateX(-50%) rotate(-2.5deg); } 100% { opacity: 0; transform: translateX(-50%) translateY(-35%) rotate(1deg) scale(.9); } }
+.vc-ticket .slip { position: relative; width: calc(var(--u) * 34); padding: calc(var(--u) * 2.1) calc(var(--u) * 2.2) calc(var(--u) * 1.6); border-radius: calc(var(--u) * .5);
+  background: linear-gradient(90deg, var(--pink), var(--cyan)) top / 100% calc(var(--u) * .7) no-repeat, #f6f0e2; color: #1d1030;
+  box-shadow: 0 calc(var(--u) * 1) calc(var(--u) * 3) rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.25); }
+.vc-ticket .hd { font: 700 calc(var(--u) * 1.35)/1.3 var(--f-ui); letter-spacing: .16em; text-transform: uppercase; color: #74688a; }
+.vc-ticket .what { margin-top: calc(var(--u) * .6); font: italic 800 calc(var(--u) * 4.1)/1 var(--f-hud); letter-spacing: .04em; text-transform: uppercase; }
+.vc-ticket .amt { margin-top: calc(var(--u) * .5); font: 400 calc(var(--u) * 6.2)/1 var(--f-display); color: #cf1840; letter-spacing: .01em; }
+.vc-ticket .det { margin-top: calc(var(--u) * .5); font: 600 calc(var(--u) * 1.85)/1.3 var(--f-ui); color: #3b2f4f; }
+.vc-ticket .det b { color: #cf1840; font-weight: 800; }
+.vc-ticket .stamp { position: absolute; right: calc(var(--u) * 1.4); top: calc(var(--u) * 10.2); padding: calc(var(--u) * .25) calc(var(--u) * 1.1) calc(var(--u) * .35);
+  border: calc(var(--u) * .45) solid rgba(207,24,64,.85); border-radius: calc(var(--u) * .7); color: rgba(207,24,64,.85);
+  font: 400 calc(var(--u) * 2.9)/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; mix-blend-mode: multiply; opacity: 0; transform: rotate(-13deg) scale(2.4); }
+.vc-ticket.go .stamp { animation: vc-stamp .26s .38s cubic-bezier(.5,0,.75,.4) forwards; }
+@keyframes vc-stamp { to { opacity: 1; transform: rotate(-13deg) scale(1); } }
+
+/* the camera's flash: only exists (has a layer) while it plays */
+.vc-camflash { position: absolute; inset: 0; z-index: 4; background: #f4f8ff; opacity: 0; display: none; pointer-events: none; }
+.vc-camflash.go { display: block; animation: vc-camflash .45s ease-out both; }
+@keyframes vc-camflash { 0% { opacity: .9; } 100% { opacity: 0; } }
+
+/* ---------------------------------------------------------------- cash floater beside the money (left of the HUD) */
+.vc-hud-col { position: relative; }
+.vc-floater { position: absolute; right: calc(100% + var(--u) * 12.4); top: calc(var(--u) * 5.6); font: italic 800 calc(var(--u) * 3.6)/1 var(--f-hud); letter-spacing: .02em; white-space: nowrap; opacity: 0; pointer-events: none; color: var(--red); }
+.vc-floater[data-tone="erp"] { color: var(--gold); }
+.vc-floater[data-tone="gain"] { color: var(--money); }
+.vc-floater.go { animation: vc-floater 1.9s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes vc-floater { 0% { opacity: 0; transform: translateX(40%); } 10% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; transform: translateX(-25%); } }
+
+/* ---------------------------------------------------------------- the crowd is filming: REC pill + views */
+.vc-views { display: flex; align-items: center; gap: calc(var(--u) * .8); padding: calc(var(--u) * .55) calc(var(--u) * 1.5) calc(var(--u) * .6) calc(var(--u) * 1.1); border-radius: 99em;
+  background: rgba(8,4,20,.66); border: 1px solid rgba(255,63,164,.55); box-shadow: 0 0 calc(var(--u) * 1.6) rgba(255,63,164,.3);
+  font: italic 800 calc(var(--u) * 3)/1 var(--f-hud); color: #fff; letter-spacing: .02em; white-space: nowrap; opacity: 0; transform: translateX(25%); transition: opacity .35s, transform .35s; }
+.vc-views.on { opacity: 1; transform: none; }
+.vc-views .rec { width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); border-radius: 50%; background: var(--red); box-shadow: 0 0 calc(var(--u) * .9) var(--red); animation: vc-starflash 1s steps(1) infinite; }
+.vc-views span { font: italic 600 .68em/1 var(--f-hud); letter-spacing: .16em; text-transform: uppercase; color: #ffd6ef; }
+.vc-views em { font: italic 700 .68em/1 var(--f-hud); letter-spacing: .1em; text-transform: uppercase; color: var(--cyan-hi); }
+.vc-views em:empty { display: none; }
+
+/* ---------------------------------------------------------------- one-line objective (top centre) */
+.vc-goal { position: absolute; left: 50%; top: calc(var(--u) * 2.4); transform: translateX(-50%); max-width: min(48vw, calc(var(--u) * 84)); display: flex; align-items: center; gap: calc(var(--u) * .9);
+  padding: calc(var(--u) * .6) calc(var(--u) * 1.7) calc(var(--u) * .65) calc(var(--u) * 1.2); border-radius: 99em; background: rgba(8,4,20,.55); border: 1px solid rgba(255,255,255,.14);
+  font: 600 calc(var(--u) * 2.05)/1.2 var(--f-ui); color: #f3eeff; white-space: nowrap; opacity: 0; transition: opacity .4s; }
+.vc-goal.on { opacity: 1; }
+.vc-goal.pop { animation: vc-goal-pop 1.2s ease-out; }
+@keyframes vc-goal-pop { 0% { box-shadow: 0 0 calc(var(--u) * 2.5) var(--pink); border-color: var(--pink); } 100% { box-shadow: none; } }
+.vc-goal .d { flex: none; width: calc(var(--u) * 1); height: calc(var(--u) * 1); background: var(--pink); transform: rotate(45deg); box-shadow: 0 0 calc(var(--u) * .8) var(--pink); }
+.vc-goal .tx { overflow: hidden; text-overflow: ellipsis; }
+.vc-goal b { color: var(--pink-hi); font-weight: 700; }
+.vc-goal em { color: var(--money); font-style: normal; }
+.vc-goal i { color: var(--cyan); font-style: normal; }
+.vc-goal u { color: var(--gold); text-decoration: none; }
+.vc-root.vc-cine .vc-goal, .vc-root.vc-photomode .vc-goal, .vc-root.vc-slowmo-on .vc-goal, .vc-goal.hud-off { opacity: 0 !important; }
+/* the station flash moves down out of the objective's way (touch shows the station on its radio button instead) */
+.vc-flash-radio { top: calc(var(--u) * 8.4); }
+.vc-touchmode .vc-flash-radio { display: none; }
+
+/* ---------------------------------------------------------------- drag race: challenge + start lights */
+.vc-race { position: absolute; left: 50%; top: 15%; transform: translateX(-50%) translateY(-15%); z-index: 3; text-align: center; opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s; }
+.vc-race.on { opacity: 1; transform: translateX(-50%); }
+.vc-race .lt { display: none; gap: calc(var(--u) * 1.2); justify-content: center; margin: 0 auto calc(var(--u) * 1.2); padding: calc(var(--u) * .9) calc(var(--u) * 1.4); width: max-content;
+  border-radius: calc(var(--u) * 1.6); background: #0b0716; border: calc(var(--u) * .3) solid #2a2140; box-shadow: 0 calc(var(--u) * .6) calc(var(--u) * 2) rgba(0,0,0,.6); }
+.vc-race.lit .lt { display: flex; }
+.vc-race .lt i { width: calc(var(--u) * 4.2); height: calc(var(--u) * 4.2); border-radius: 50%; background: #3a1222; box-shadow: inset 0 calc(var(--u) * -.4) calc(var(--u) * .8) rgba(0,0,0,.6); }
+.vc-race .lt i.on { background: radial-gradient(circle at 40% 35%, #ff9aa8, var(--red) 60%); box-shadow: 0 0 calc(var(--u) * 2.4) var(--red); }
+.vc-race .lt i.go { background: radial-gradient(circle at 40% 35%, #c8ffd9, #2fe07a 60%); box-shadow: 0 0 calc(var(--u) * 2.8) #2fe07a; }
+.vc-race .t { font: 400 calc(var(--u) * 5.2)/1 var(--f-display); letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; transform: skewX(-8deg);
+  background: linear-gradient(180deg, #fff 0%, var(--cyan-hi) 40%, var(--cyan) 60%, var(--purple) 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 calc(var(--u)*.4) 0 #000) drop-shadow(0 0 calc(var(--u)*2.4) rgba(47,230,255,.5)); padding: 0 .2em; }
+.vc-race .s { margin-top: calc(var(--u) * .8); font: 600 calc(var(--u) * 2.2)/1.3 var(--f-ui); color: #f3eeff; text-shadow: 0 1px 3px #000, 0 0 calc(var(--u)*1) #000; }
+.vc-race .s b { color: var(--pink-hi); font-weight: 700; }
+.vc-race .s em { color: var(--money); font-style: normal; }
