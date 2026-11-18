@@ -45,6 +45,8 @@ import { Autopilot } from './entities/autopilot.js';
 import { Claudia } from './missions/claudia.js';
 import { Scenes } from './world/scenes.js';
 import { Hype } from './missions/hype.js';
+import { FineCity } from './missions/finecity.js';
+import { DragRace } from './missions/dragrace.js';
 import { TouchControls, isTouchFirst } from './ui/touch.js';
 import { WATER_LEVEL } from './core/constants.js';
 import { bakeHeightField } from './gfx/heightfield.js';
@@ -416,6 +418,8 @@ export class Game {
     this.claudia = new Claudia(this);
     this.scenes = new Scenes(this);
     this.hype = new Hype(this);
+    this.fines = new FineCity(this);
+    this.dragRace = new DragRace(this);
     this.simScale = 1;
     this.wireEvents();
     await this.mark('missions & systems');
@@ -560,7 +564,9 @@ export class Game {
     if (this._toldDriving) return;
     this._toldDriving = true;
     setTimeout(() => this.ui.hint('<b>W/S</b> drive & brake, <b>A/D</b> steer, <b>Space</b> handbrake. <b>Q/E</b> change radio station, <b>V</b> camera, <b>F</b> get out.',
-      'Hold <b>GAS</b> to drive, <b>BRAKE</b> to stop and reverse, steer with your <b>left thumb</b>. <b>DRIFT</b> is the handbrake, <b>RADIO</b> changes station, <b>EXIT</b> gets out.', 9000), delay);
+      this.settings.autoGas ? 'Steer with your <b>left thumb</b>: auto-gas drives. <b>BRAKE</b> stops and reverses.' : 'Hold <b>GAS</b> to drive, <b>BRAKE</b> to stop, steer with your <b>left thumb</b>.', 9000), delay);
+    // (touch tips are one line each: the radio one follows)
+    if (this.touch?.on) setTimeout(() => this.ui.hint(null, 'Tap the <b>station name</b> up top to change the radio.', 5000), delay + 6000);
   }
 
   async playerDown(reason) {
@@ -803,6 +809,8 @@ export class Game {
       this.ambient.update(simDt);
       this.scenes.update(simDt);
       this.hype.update(simDt);
+      this.fines.update(simDt);
+      this.dragRace.update(simDt);
       this.updateVehicleFx(simDt);
       this.cleanupVehicles(simDt);
       this.juice.update(simDt, dt);
@@ -896,7 +904,7 @@ export class Game {
       if (v.health <= 0) {
         v.burnT = (v.burnT || 0) + dt;
         // fair warning, GTA-style: the engine burns for six seconds before it goes up
-        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.hint('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', '<b>She\'s on fire!</b> Get out — tap <b>EXIT</b> — and run.', 4000); this.audio?.sfx?.('wanted_up'); }
+        if (!v.fireWarned && v === this.player.vehicle) { v.fireWarned = true; this.ui.hint('<b>She\'s on fire!</b> Get out — press <b>F</b> — and run.', '<b>She\'s on fire!</b> Tap <b>EXIT</b> and run.', 4000); this.audio?.sfx?.('wanted_up'); }
         if (v.burnT > 6) this.explodeVehicle(v);
       }
     }
@@ -959,6 +967,7 @@ export class Game {
       const z = districtAt(p.position.x, p.position.z);
       // (not while a cutscene hides the HUD: the district would be marked as seen and never shown)
       if (z && z !== this._zone && this.ui.hud.visible) { this._zone = z; this.ui.hud.flashZone(z); }
+      if (!this.missions.active) this.ui.goal(this.missions.freeRoamGoal(p.position), true);
     }
     // radar
     // radar: mission-critical blips always; amenities only when close (the full map shows everything)
@@ -966,8 +975,10 @@ export class Game {
     this._amenT = (this._amenT || 0) - dt;
     if (this._amenT <= 0 || !this._amen) {
       this._amenT = 0.2;
-      const near = b => Math.hypot(b.x - p.position.x, b.z - p.position.z) < 260;
-      this._amen = [...this.spawns.blips(), ...this.activities.blips(), ...this.services.blips(), ...this.ambient.blips(), ...(this.missions.active ? [] : this.stunts.blips())].filter(near);
+      const dist = b => Math.hypot(b.x - p.position.x, b.z - p.position.z), near = b => dist(b) < 260;
+      // the three nearest side activities always show (at the radar's rim when far): there's always something to do
+      const acts = this.activities.blips().sort((a, b) => dist(a) - dist(b)).filter((b, i) => i < 3 || near(b));
+      this._amen = [...this.spawns.blips(), ...this.services.blips(), ...this.ambient.blips(), ...(this.missions.active ? [] : this.stunts.blips())].filter(near).concat(acts);
     }
     const blips = this.missions.blips().concat(this.taxi.blips(), this._amen);
     for (const u of this.wanted.units) blips.push({ x: u.v.position.x, z: u.v.position.z, type: 'police' });

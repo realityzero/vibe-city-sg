@@ -93,7 +93,7 @@ export class Extras {
         g.money = Math.max(0, g.money - G.price);
         g.progress.stats.erp += G.price;
         g.audio?.sfx?.('erp_beep');
-        g.ui.splash(`ERP S$${G.price.toFixed(2)} DEDUCTED`, '#ffcc00');
+        g.fines.erp(G.price);
       }
       G.side = Math.abs(along) < 30 && lat < G.hw + 4 ? side : 0;
     }

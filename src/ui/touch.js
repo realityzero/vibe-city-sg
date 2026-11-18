@@ -1,7 +1,9 @@
 // On-screen controls for phones and tablets. A floating move stick on the left, context buttons on the right (on foot,
 // swimming, driving, boating, flying), drag anywhere else to look, pinch to zoom the camera, tap the radar for the map,
-// and a pause button (plus skip while a line or the intro plays; camera, Claudia and fullscreen live in the pause menu,
-// out of the prime top strip). Buttons dispatch the same key events a
+// and a pause button (plus skip while a line or the intro plays, and the radio station in a car — tap it for the next;
+// camera, Claudia and fullscreen live in the pause menu, out of the prime top strip). Driving keeps to four big buttons
+// (gas, brake, drift, exit) plus the Kopi boost; FLASH appears only while a street racer waits for an answer, and the
+// auto-gas setting drives while the thumb is on the stick (GAS gives its place to BRAKE). Buttons dispatch the same key events a
 // keyboard would, so every system that listens for keys works unchanged; the stick feeds Input.stick and look drags
 // feed Input.mouse. Turns on for touch-first devices or at the first touch, and off again when a real mouse moves.
 import './touch.css';
@@ -16,7 +18,7 @@ const BTN = {
   jump: ['JUMP', 'Space'], run: ['RUN', 'ShiftLeft', true], punch: ['PUNCH', 'Attack'], enter: ['ENTER', 'KeyF'],
   climb: ['CLIMB', 'Space'], fast: ['FAST', 'ShiftLeft', true], board: ['BOARD', 'KeyF'],
   gas: ['GAS', 'KeyW', true], brake: ['BRAKE', 'KeyS', true], hbrake: ['DRIFT', 'Space', true], exit: ['EXIT', 'KeyF'],
-  horn: ['HORN', 'KeyH'], radio: ['RADIO', 'KeyE'], nitro: ['KOPI', 'KeyB', true],
+  horn: ['HORN', 'KeyH'], nitro: ['KOPI', 'KeyB', true], flash: ['FLASH', 'KeyL'],
   up: ['UP', 'Space', true], down: ['DOWN', 'ShiftLeft', true],
 };
 // per mode: [button, slot]. Slots fan out from the bottom-right corner: a big thumb button, b left of it, c above it,
@@ -24,11 +26,11 @@ const BTN = {
 const MODES = {
   foot: [['jump', 'a'], ['run', 'b'], ['punch', 'c'], ['enter', 'd']],
   swim: [['climb', 'a'], ['fast', 'b'], ['board', 'd']],
-  car: [['gas', 'a'], ['brake', 'b'], ['hbrake', 'c'], ['exit', 'd'], ['horn', 'e'], ['radio', 'f'], ['nitro', 'g']],
+  car: [['gas', 'a'], ['brake', 'b'], ['hbrake', 'c'], ['exit', 'd'], ['flash', 'e'], ['nitro', 'g']],
   boat: [['gas', 'a'], ['brake', 'b'], ['exit', 'd'], ['horn', 'e']],
   air: [['up', 'a'], ['down', 'b'], ['exit', 'd']],
 };
-const SYS = [['pause', 'II', 'Escape'], ['skip', '▶▶', 'Enter']];
+const SYS = [['pause', 'II', 'Escape'], ['skip', '▶▶', 'Enter'], ['radio', '', 'KeyE']];
 const LOOK_GAIN = 2.4;   // touch px -> mouse px (a third of the screen turns ~100°)
 const PINCH_GAIN = 0.012; // pinch px -> wheel steps
 
@@ -43,6 +45,7 @@ export class TouchControls {
     this.held = new Set();
     this.stickId = null; this.looks = new Map(); this.pinchD = 0;
     this.mode = ''; this.flags = '';
+    this.autoW = false; this.station = null;
     const root = this.root = el('div', 'vc-touch');
     this.surf = el('div', 'surf');
     this.stick = el('div', 'stick', '<div class="knob"></div>'); this.knob = this.stick.firstChild;
@@ -53,6 +56,7 @@ export class TouchControls {
       this.bind(b, code, false);
       this.bar.appendChild(b);
     }
+    this.radioBtn = this.bar.querySelector('.radio');
     root.append(this.surf, this.stick, this.cluster, this.bar, el('div', 'rotate', '<b>Turn your device sideways</b><span>Vibe City plays in landscape</span>'));
     game.ui.root.appendChild(root);
     this.bindSurface();
@@ -155,6 +159,7 @@ export class TouchControls {
   }
 
   releaseAll() {
+    this.autoW = false;
     for (const code of [...this.held]) this.key(code, false);
     for (const b of this.root.querySelectorAll('.on')) b.classList.remove('on');
     if (this.stickId != null) this.releaseStick();
@@ -193,11 +198,23 @@ export class TouchControls {
     const ctl = play && p.controlsEnabled && g.input.enabled;
     const mode = v ? (v.isAircraft || v.spec.kind === 'drone' ? 'air' : v.isBoat ? 'boat' : 'car') : p?.swimming ? 'swim' : 'foot';
     if (mode !== this.mode) { this.releaseAll(); this.mode = mode; this.buildCluster(mode); this.root.dataset.mode = mode; }
-    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.ui._sub || g.ui.skippable ? 'sub' : ''}`;
+    const auto = mode === 'car' && !!g.settings.autoGas;
+    const flags = `${play ? 'play ' : ''}${ctl ? 'ctl ' : ''}${g._nearVehicle ? 'near ' : ''}${g.hype?.kopiEl?.style.display === 'block' ? 'kopi ' : ''}${g.dragRace?.asking ? 'race ' : ''}${auto ? 'auto ' : ''}${g.ui._sub || g.ui.skippable ? 'sub' : ''}`;
     if (flags !== this.flags) {
       if (this.flags.includes('ctl') && !ctl) this.releaseAll();
       this.flags = flags;
       this.root.className = `vc-touch ${flags}`;
+    }
+    // auto-gas: the throttle is down while the thumb is on the stick (pulled back or BRAKE held: off, so S reverses)
+    const st = this.input.stick, w = auto && ctl && st.active && st.y > -0.3 && !this.held.has('KeyS');
+    if (w !== this.autoW) { this.autoW = w; this.key('KeyW', w); }
+    // the radio button names the station (it only shows in a car)
+    const radio = g.audio?.radio, cur = mode === 'car' && radio ? radio.current : null;
+    if (cur !== this.station) {
+      this.station = cur;
+      const m = cur == null ? null : cur < 0 ? { name: 'Radio off', color: '#888' } : radio.stations[cur];
+      this.radioBtn.classList.toggle('on-air', !!m);
+      if (m) this.radioBtn.innerHTML = `<i style="background:${m.color};color:${m.color}"></i><span>${m.name}</span>`;
     }
   }
 }

@@ -10,6 +10,7 @@ import { TitleScreen, LoadingScreen, DEFAULT_CONTROLS } from './screens.js';
 import { Phone } from './phone.js';
 import { showChoice } from './choice.js';
 import { makeStunt, makeFare, makePhoto, makeBarks, makeCollectibles, makeCheat } from './extras.js';
+import { makeTicket, makeFloater, makeViews, makeGoal, makeRaceLights } from './spice.js';
 import { el, wait, keyify, lineMs, fmtMoney, escapeHtml, restartClass } from './util.js';
 
 export { DISTRICTS, districtAt, LANDMARKS } from './districts.js';
@@ -41,7 +42,7 @@ export class UI {
     this.radar = new Radar(game);
     this.hud = new Hud(game);
     const hudSetVisible = this.hud.setVisible.bind(this.hud);
-    this.hud.setVisible = v => { hudSetVisible(v); this.radar.setVisible(v); this.trackers.style.opacity = v ? 1 : 0; };
+    this.hud.setVisible = v => { hudSetVisible(v); this.radar.setVisible(v); this.trackers.style.opacity = v ? 1 : 0; this.goal?.el.classList.toggle('hud-off', !v); };
     const hudUpdate = this.hud.update.bind(this.hud);
     this.hud.update = s => { if (s.time != null) this._gameTime = s.time; hudUpdate(s); };
     this.trackers = el('div', 'vc-trackers'); this.hud.topRight.appendChild(this.trackers);
@@ -89,6 +90,12 @@ export class UI {
     this._fx.appendChild(this._slowmo);
     this._shave = el('div', 'vc-shave', '<div class="t">Close Shave</div><div class="c"></div>');
     this._fx.appendChild(this._shave);
+    // Fine City tickets, cash floaters, the filming view counter, the one-line objective, drag-race lights (spice.js)
+    this.ticket = makeTicket(this);
+    this.floater = makeFloater(this.hud);
+    this.views = makeViews(this.hud.topRight);
+    this.goal = makeGoal(game);
+    this.raceLights = makeRaceLights(this);
 
     window.addEventListener('keydown', e => {
       if (e.__uiHandled || e.target?.closest?.('input, textarea, [contenteditable]')) return;
@@ -141,11 +148,13 @@ export class UI {
   objective(text, duration = 7000) {
     this._log({ text, objective: true });
     this._timedShow(this._objEl, text, duration, 'obj');
+    this.goal(text); // (stays up as the one-line objective until the next one or the mission's end)
   }
   /** true while the on-screen touch controls are up (ui/touch.js) */
   get touchMode() { return this.root.classList.contains('vc-touchmode'); }
-  /** A controls tip in the player's own terms: the keyboard wording, or the on-screen buttons on a touch screen. */
-  hint(keys, touch, duration) { this.help(touch && this.touchMode ? touch : keys, duration); }
+  /** A controls tip in the player's own terms: the keyboard wording, or the on-screen buttons on a touch screen (there a
+   *  one-line toast that clears itself sooner: the screen is small and the thumbs are busy). */
+  hint(keys, touch, duration = 6500) { const t = !!touch && this.touchMode; this.help(t ? touch : keys, t ? Math.min(duration, 5500) : duration); }
   help(text, duration = 6500) {
     if (!text) { this._helpEl.classList.remove('vc-show'); return; }
     this._timedShow(this._helpEl, keyify(text), duration, 'help');

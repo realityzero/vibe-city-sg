@@ -110,6 +110,7 @@ export class StreetLife {
     this.game = game; this.peds = peds;
     this.critters = new Critters(game.scene);
     this.event = null;
+    this.focus = null; // stageAt(): where the next spot() must be
     this.t = rnd(12, 25);
   }
 
@@ -126,6 +127,7 @@ export class StreetLife {
 
   /** a point on a footpath 25-60 m ahead in plain view (nothing in between), optionally filtered */
   spot(filter, { min = 25, max = 60, tries = 12, foot } = {}) {
+    if (this.focus) return this.spotAt(this.focus, filter, foot);
     const P = this.peds, V = P.viewer, f = P._fwd, cam = this.game.camera.position;
     for (let k = 0; k < tries; k++) {
       const a = Math.atan2(f.y, f.x) + (Math.random() - 0.5) * P.hfov * 0.7, d = rnd(min, max);
@@ -140,6 +142,33 @@ export class StreetLife {
       if (!filter || filter(s)) return s;
     }
     return null;
+  }
+
+  /** Stage one scene right now around `at` (a point by the road ahead) instead of wherever the director would look:
+   *  the first drive's scripted beats (missions/firstdrive.js). Returns the scene, or null if it doesn't fit there (the
+   *  time of day is ignored: the beat was asked for). A scene already running gives way only to one that fits. */
+  stageAt(kind, at) {
+    const prev = this.event, had = this.critters.list.length;
+    let ev = null;
+    this.focus = at;
+    try { ev = this[kind](12); } finally { this.focus = null; }
+    if (!ev) return null;
+    if (prev) { prev.end(); this.critters.list.splice(0, had); } // (its animals were the first in the list)
+    this.event = ev;
+    return ev;
+  }
+
+  /** the footpath point nearest `at`, if it is in plain view (stageAt's spot) */
+  spotAt(at, filter, foot) {
+    const P = this.peds, cam = this.game.camera.position;
+    const sn = P.walkways.snap(at.x, at.z, 8, foot === undefined ? null : w => !!w.foot === foot);
+    if (!sn) return null;
+    sn.w.path.sample(sn.s, _p, _d);
+    if (!P.inView(_p.x, 0, _p.z)) return null;
+    _v.set(_p.x - cam.x, 1 - cam.y, _p.z - cam.z); const L = _v.length();
+    if (this.game.physics.raycast(cam, _v.multiplyScalar(1 / L), L - 1)) return null;
+    const s = { w: sn.w, s: sn.s, x: _p.x, z: _p.z, dx: _d.x, dz: _d.z };
+    return !filter || filter(s) ? s : null;
   }
 
   /** people near (x,z) walking along a footpath (not mid-crossing), nearest first: recruits for a scene */

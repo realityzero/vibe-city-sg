@@ -1,10 +1,13 @@
 // Hype economy: everything Tommy does in public moves the startup's valuation.
-// Stunts go "viral" (+), crashes and arrests make the news (−); the HUD valuation line reflects it.
+// Stunts go "viral" (+), crashes and arrests make the news (−); the HUD valuation line reflects it. Whatever the
+// street films (Pedestrians 'filmed') racks up views on the HUD's REC counter, and views are hype.
 // Also: Kopi Gao boost (B in a car) — a caffeine-fuelled nitro that recharges over time.
 import * as THREE from 'three';
 
 const VIRAL = ['went viral on TikTok', 'is trending on Rednote', 'made the front page of HardwareZone', 'got 2M views on Instagram Reels', 'was reposted by a Temasick intern', 'was turned into a LinkedIn thought-leadership post'];
 const BAD = ['made the Straits Times (not in a good way)', 'is being discussed in a very long Reddit thread', 'was screenshotted by a VC'];
+// what a clip of each kind pulls per person filming it (views), and its hashtag
+const CLIP = { stunt: [9000, '#sendit'], explosion: [7000, '#breaking'], crash: [3500, '#onlyinsg'], supercar: [2500, '#carspotting'], nearmiss: [1800, '#closecall'], hit: [1200, '#kenasaman'] };
 
 export class Hype {
   constructor(game) {
@@ -16,6 +19,7 @@ export class Hype {
     ev.on('playerBusted', () => this.bump(-0.04, `Your arrest ${pick(BAD)}`));
     ev.on('trafficWreck', () => { if (Math.random() < 0.25) this.bump(-0.004); });
     ev.on('pedHit', () => this.bump(-0.01));
+    ev.on('filmed', e => this.filmed(e));
     // boost meter under the speedometer (styled with the HUD: ui/theme.css .vc-kopi)
     this.kopiEl = document.createElement('div'); this.kopiEl.className = 'vc-kopi';
     this.kopiEl.style.display = 'none';
@@ -33,6 +37,14 @@ export class Hype {
     m.valuation = Math.max(250000, Math.round(m.valuation * (1 + frac)));
     m.state.valuation = m.valuation;
     if (msg && Math.abs(frac) >= 0.01) this.game.ui.toast(`${msg} · valuation ${frac > 0 ? '▲' : '▼'} ${(Math.abs(frac) * 100).toFixed(1)}%`);
+  }
+
+  /** people filmed Tommy: views on the REC counter, and (except for running people over) a little hype */
+  filmed({ count, kind }) {
+    const [per, tag] = CLIP[kind] || CLIP.crash;
+    const views = Math.round(count * per * (0.6 + Math.random() * 0.8));
+    this.game.ui.views(views, tag);
+    if (kind !== 'hit') this.bump(Math.min(0.012, views / 4e6));
   }
 
   update(dt) {

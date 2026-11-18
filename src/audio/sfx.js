@@ -2,7 +2,7 @@
 // opts: {volume, pitch, duration}. Builders only create nodes that stop themselves.
 import { pulseWave } from './engine.js';
 
-export const UI_SFX = new Set(['cheat', 'stunt', 'taxi_meter', 'pickup', 'money', 'checkpoint', 'mission_start', 'mission_passed', 'mission_failed', 'wasted', 'busted', 'phone_ring', 'text_message', 'ui_select', 'ui_back', 'ui_hover', 'typing', 'keyclick', 'bug_squash', 'ship_it', 'cash_register', 'erp_beep', 'wanted_up']);
+export const UI_SFX = new Set(['cheat', 'stunt', 'taxi_meter', 'pickup', 'money', 'checkpoint', 'mission_start', 'mission_passed', 'mission_failed', 'wasted', 'busted', 'phone_ring', 'text_message', 'ui_select', 'ui_back', 'ui_hover', 'typing', 'keyclick', 'bug_squash', 'ship_it', 'cash_register', 'erp_beep', 'wanted_up', 'stamp', 'race_beep', 'race_go']);
 export const IMPORTANT_SFX = new Set(['cheat', 'stunt', 'splash_big', 'mission_start', 'mission_passed', 'mission_failed', 'wasted', 'busted', 'explosion', 'crash_heavy', 'phone_ring', 'checkpoint', 'money', 'pickup', 'wanted_up']);
 export const REVERB_SFX = { splash_big: 0.15, stunt: 0.25, flyer_chime: 0.4, crowd_gasp: 0.2, rotor_start: 0.15, durian_thud: 0.05, explosion: 0.35, thunder: 0.45, crash_heavy: 0.15, siren_burst: 0.2, crowd_cheer: 0.25, applause: 0.2, splash: 0.1, horn: 0.08, mission_failed: 0.3, wasted: 0.4, busted: 0.25 };
 
@@ -266,6 +266,15 @@ export function createSfx(sys) {
       return t + dur + 0.1;
     },
     erp_beep(out, t) { tone(out, 'square', 1000, 0, t, 0.16, 0.1, { hold: 0.12, lp: 2800 }); return t + 0.25; },
+    // a rubber stamp on a notice of offence: a dull thump, a paper slap
+    stamp(out, t) {
+      thud(out, t, 0.7, 150, 60, 0.12);
+      nz(out, t, 0.07, 0.35, { type: 'bandpass', f0: 1400, q: 0.8 });
+      return t + 0.3;
+    },
+    // drag-race start lights: a low beep per red, a high long one for green
+    race_beep(out, t) { tone(out, 'square', 660, 0, t, 0.18, 0.08, { hold: 0.1, lp: 2400 }); return t + 0.3; },
+    race_go(out, t) { tone(out, 'square', 1320, 0, t, 0.5, 0.09, { hold: 0.4, lp: 3200 }); return t + 0.7; },
     wanted_up(out, t) {
       tone(out, 'square', 880, 0, t, 0.12, 0.09, { hold: 0.08, lp: 3000 });
       tone(out, 'square', 1175, 0, t + 0.13, 0.16, 0.09, { hold: 0.1, lp: 3000 });

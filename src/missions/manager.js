@@ -232,6 +232,15 @@ export class Missions {
     if (g.hint) this.game.ui.help(g.hint, 8000);
   }
 
+  /** the one-line objective between missions: the next story mission's marker, else the nearest side activity */
+  freeRoamGoal(p) {
+    const far = (x, z) => { const d = Math.hypot(x - p.x, z - p.z); return d >= 950 ? `${(d / 1000).toFixed(1)} km` : `${Math.max(50, Math.round(d / 50) * 50)} m`; };
+    if (this.giver) return `Next mission: <b>${this.giver.mission.title}</b> · ${far(this.giver.pos.x, this.giver.pos.z)}`;
+    let best = null, bd = Infinity;
+    for (const a of this.game.activities?.list || []) { const d = Math.hypot(a.pos.x - p.x, a.pos.z - p.z); if (d < bd) { bd = d; best = a; } }
+    return best ? `<em>${best.label}</em> · ${far(best.pos.x, best.pos.z)}` : null;
+  }
+
   blips() {
     const b = [];
     if (this.giver) b.push({ x: this.giver.pos.x, z: this.giver.pos.z, type: 'mission', label: this.giver.mission.title });
@@ -246,6 +255,7 @@ export class Missions {
     if (this.giver) { this.giver.m.dispose(); this.giver = null; }
     const ctx = new Ctx(this, mission);
     this.active = { mission, ctx };
+    this.game.ui.goal(null); // (until the mission sets its first objective)
     this.game.audio?.sfx?.('mission_start');
     if (!mission.noTitle) this.game.ui.missionTitle(mission.title, mission.subtitle || '');
     let ok = false, reason = '';
@@ -294,7 +304,7 @@ export class Missions {
     ctx.waiters.clear();
     this.prompt = null;
     this.game.routeTo(null);
-    this.game.ui.timer.hide(); this.game.ui.counter.hide(); this.game.ui.bar.hide();
+    this.game.ui.timer.hide(); this.game.ui.counter.hide(); this.game.ui.bar.hide(); this.game.ui.goal(null);
     this.game.cameraRig.override = null;
     this.game.player.controlsEnabled = true;
     this.game.ui.letterbox(false);
