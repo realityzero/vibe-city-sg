@@ -868,6 +868,19 @@ function treeMaterial(atlas, uFade) {
   m.customProgramCacheKey = () => 'tree-near-v6';
   return withLampField(m);
 }
+// near trees in the sun's shadow map. A leaf card maps a whole atlas tile onto ~2.5 m, so at the mip a 10-13 cm
+// shadow texel asks for, a crown casts a per-texel scatter of leaf dots that filtering turns into grey grain. One mip
+// coarser (gradients x2; the coverage-preserving mips keep each tile's density) the clumps cast patches of shade
+// with sun flecks between them. (Two reach the 4 px tiles on Low: too coarse to hold the density, crowns thin out.)
+// Bark samples the atlas's solid corner with no gradient: level 0.
+function leafDepthMaterial(atlas) {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: atlas, alphaTest: 0.42, side: THREE.DoubleSide });
+  m.onBeforeCompile = sh => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', 'diffuseColor *= textureGrad(map, vMapUv, dFdx(vMapUv) * 2.0, dFdy(vMapUv) * 2.0);');
+  };
+  m.customProgramCacheKey = () => 'tree-near-depth-v1';
+  return m;
+}
 
 // impostor cards (see bakeImpostors). One quad per side view + one top quad per tree; attributes iA = (x, z, yaw,
 // scale), iB = (species, vertical scale). uFade: near↔impostor hand-over band, uFar: draw distance.
@@ -1098,7 +1111,7 @@ export class Vegetation {
     this.buildMs.bake = Math.round(performance.now() - t0);
     await brk();
     const matNear = treeMaterial(atlas.tex, this.uFade);
-    const depthNear = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: atlas.tex, alphaTest: 0.42, side: THREE.DoubleSide });
+    const depthNear = leafDepthMaterial(atlas.tex);
     this.meshes = [];
     this.stats = [];
     for (let t = 0; t < KINDS.length; t++) {
