@@ -406,7 +406,7 @@ export class Traffic {
       const s = queue ? l.s1 - 1 : l.s0 + 8 + Math.random() * (l.s1 - l.s0 - 12);
       l.path.sample(s, _p);
       const d = Math.hypot(_p.x - V.x, _p.z - V.z);
-      if (d > R || Math.hypot(_p.x - pp.x, _p.z - pp.z) < (filling ? 12 : 25)) continue;
+      if (d > R || Math.hypot(_p.x - pp.x, _p.z - pp.z) < 25) continue;
       if (!this._unseen(_p, d, filling, l)) continue;
       const n = queue ? this._queue(l) : this._spawnFlowing(l, s);
       active += n; got += n;
@@ -517,9 +517,9 @@ export class Traffic {
 
   /** at a cut: buses standing at some of the stops in view */
   _seedStops() {
-    const V = this.viewer;
+    const V = this.viewer, pp = this.game.player?.position || V;
     for (const st of this.stops) {
-      if (Math.random() < 0.4 || Math.hypot(st.x - V.x, st.z - V.z) > POP) continue;
+      if (Math.random() < 0.4 || Math.hypot(st.x - V.x, st.z - V.z) > POP || Math.hypot(st.x - pp.x, st.z - pp.z) < 25) continue;
       _p.set(st.x, 0, st.z);
       if (!this.seen(_p) || !this._clear(st.lane, st.s, 14, 10)) continue;
       const c = this.spawnAt(st.lane, st.s, 'bus', undefined, 0);
