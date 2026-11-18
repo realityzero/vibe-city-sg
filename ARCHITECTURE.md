@@ -282,7 +282,7 @@ for a while, so allocation *churn* during the load matters as well as what stays
   filming), recruiting people already there; critters are two instanced draws per species, only while out.
 - Seating (`world/scenes.js`): posed members of the crowd at the builder's tables around the camera (diners at hawker
   centres and kopitiams by the hour, uncles over the void-deck xiangqi boards, wakes and weddings), the hawker behind
-  each trading stall and a queue at each centre's famous one; within a budget (56 people on the phone), filled out of
+  each trading stall and a queue at each centre's famous one; within a budget (70 people on the phone), filled out of
   sight ahead of the camera and let go once behind it. Looks are never repeated within 30 m (same variant, print and
   colours) and a footpath gets at most a walker per 15 m of it at spawn, so sparse estates send out no processions.
 - `node tests/scratch/pedcount.mjs --url ...` counts visible people per gallery view and the crowd's CPU per frame.

@@ -168,18 +168,20 @@ class Seating {
     this.active = new Map();   // id -> its people
     this.placed = 0;
     const phone = game.peds.maxWalkers < 100;
-    this.budget = phone ? 56 : 110; this.reach = phone ? 55 : 75;
-    this.t = 0; this._c = [];
+    this.budget = phone ? 70 : 110; this.reach = phone ? 55 : 75;
+    this.t = 0; this._c = []; this.at = new THREE.Vector3(1e9, 0, 0); this.fresh = false;
   }
 
   update(dt) {
-    const peds = this.game.peds;
-    // a camera cut (or a relocation) starts over: nobody sees the old tables empty or the new ones fill
-    if (peds.seeding && !this.seeding) for (const id of [...this.active.keys()]) this._release(id);
-    this.seeding = peds.seeding;
-    if ((this.t -= dt) > 0 && !peds.seeding) return;
+    const peds = this.game.peds, V = peds.viewer;
+    // a camera cut (or a relocation, or any jump faster than a car) starts over: nobody sees the old tables empty or
+    // the new ones fill
+    const fresh = peds.seeding || Math.hypot(V.x - this.at.x, V.z - this.at.z) > 25;
+    if (fresh && !this.fresh) for (const id of [...this.active.keys()]) this._release(id);
+    this.fresh = fresh; this.at.copy(V);
+    if ((this.t -= dt) > 0 && !fresh) return;
     this.t = 0.3;
-    const V = peds.viewer, f = peds._fwd, half = peds.hfov / 2 + 0.35, R = this.reach, t = this.game.sky.time;
+    const f = peds._fwd, half = peds.hfov / 2 + 0.35, R = this.reach, t = this.game.sky.time;
     const cand = this._c; cand.length = 0;
     for (let gx = Math.floor((V.x - R) / CELL); gx <= Math.floor((V.x + R) / CELL); gx++)
       for (let gz = Math.floor((V.z - R) / CELL); gz <= Math.floor((V.z + R) / CELL); gz++) {
@@ -200,13 +202,15 @@ class Seating {
     order.sort((a, b) => cand[a] - cand[b]);
     for (const k of order) {
       const d = cand[k], id = cand[k + 1], x = this._x(id), z = this._z(id);
-      if (!peds.seeding && d < peds.popDist && peds.inView(x, 0, z, 1.6)) continue;
+      if (!fresh && d < peds.popDist && peds.inView(x, 0, z, 1.6)) continue;
       if (this.placed >= this.budget && !this._evict(d, V, peds)) break;
       const people = (id >= 0 ? this._table(id, t) : this._stall(-1 - id, t)).map(o => peds.addPose(o)).filter(Boolean);
       this.active.set(id, people); this.placed += people.length;
     }
   }
 
+  // whoever's about at that hour, though few delivery riders sit down to eat (they collect and go)
+  _diner(x, z, t) { const v = this.game.peds.pickVariant(x, z, t); return v === 'delivery' && Math.random() < 0.8 ? 'male' : v; }
   _x(id) { return id >= 0 ? this.F[id * 6 + 1] : this.S[(-1 - id) * 5]; }
   _z(id) { return id >= 0 ? this.F[id * 6 + 3] : this.S[(-1 - id) * 5 + 1]; }
   _release(id) {
@@ -235,7 +239,7 @@ class Seating {
     const peds = this.game.peds, out = [], late = smooth(22.5, 23.5, t) + 1 - smooth(5, 6.5, t);
     const seat = (lx, lz, fx, fz, anim, variant) => {
       const [px, pz] = at(lx, lz), [qx, qz] = at(fx, fz);
-      out.push({ x: px, y, z: pz, yaw: yawTo(qx - px, qz - pz), anim, variant: variant || peds.pickVariant(px, pz, t) });
+      out.push({ x: px, y, z: pz, yaw: yawTo(qx - px, qz - pz), anim, variant: variant || this._diner(px, pz, t) });
     };
     const stand = (lx, lz, anim, variant) => { const [px, pz] = at(lx, lz), r = Math.hypot(lx, lz) || 1, [qx, qz] = at(lx * 0.2 / r, lz * 0.2 / r); out.push({ x: px, y, z: pz, yaw: yawTo(qx - px, qz - pz), anim, variant }); };
     if (kind === 'hawkerTable' || kind === 'kopitiam') {
