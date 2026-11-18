@@ -647,8 +647,9 @@ export class Traffic {
     const near = (o, d) => (d > 0 ? d < 8 + v * 1.4 || (o.speed < v * 0.6 && d < 14 + v * v / 4) : -d < 8 + Math.max(o.speed * 1.4, o.speed * o.speed / 5));
     for (const o of l.cars) if (near(o, o.s - s)) return false;
     // on another road's lane alongside this one where they join or part, a car is as near as if it were on this one
-    for (const j of this._joins(l)) for (const o of j.lane.cars) if (near(o, l.s1 - s - (j.lane.s1 - o.s))) return false;
-    for (const j of this._splits(l)) for (const o of j.lane.cars) if (near(o, o.s - j.lane.s0 - (s - l.s0))) return false;
+    // (up to where the leader search starts counting it)
+    for (const j of this._joins(l)) if (l.s1 - s < j.here + 10) for (const o of j.lane.cars) if (near(o, l.s1 - s - (j.lane.s1 - o.s))) return false;
+    for (const j of this._splits(l)) if (s - l.s0 < j.here) for (const o of j.lane.cars) if (near(o, o.s - j.lane.s0 - (s - l.s0))) return false;
     // coming into the lane out of the junction behind, or gone out of it into the one ahead
     for (const o of this.net.nodes[l.from].occ) if (o.conn.lane === l && near(o, -(s - l.s0 + o.conn.path.length - o.cs))) return false;
     for (const o of this.net.nodes[l.to].occ) if (o.fromLane === l && near(o, l.s1 - s + o.cs)) return false;
