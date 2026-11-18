@@ -1,14 +1,19 @@
 // Street-life director: every 20-40 s it stages one small Singapore moment 25-60 m ahead of the camera, where it will
 // be seen: an otter family crossing the riverside promenade while people film them, junglefowl strutting across a
-// road (traffic waits), a jaywalking delivery rider, two uncles arguing at the kerb with onlookers recording.
+// road (traffic waits), a jaywalking delivery rider, two uncles arguing at the kerb with onlookers recording, NS boys
+// in uniform booked out at an MRT exit. And when the 4 pm storm breaks (weather 'downpour') it drops whatever it was
+// doing: people without an umbrella dash for the five-foot ways and shelter there, a kerb floods (and soaks whoever
+// stands by it when the player's car ploughs through), then it all drains away.
 // Scenes reuse the crowd (people already on the street are recruited; newcomers only appear out of sight) and share
 // one "find a visible spot" helper; each is a small script ({ at, update(dt) -> still running, end() }) that ends by
 // handing everyone back to the crowd.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CROWD_ANIM as A } from '../entities/humanoid/index.js';
+import { CROWD_ANIM as A, CROWD_ACC, HAIR } from '../entities/humanoid/index.js';
+import { FILTER } from '../physics/physics.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = a => a[Math.floor(Math.random() * a.length)];
 const yawTo = (dx, dz) => Math.atan2(-dx, -dz);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _p = new THREE.Vector3(), _d = new THREE.Vector3();
 
@@ -109,9 +114,18 @@ export class StreetLife {
   constructor(game, peds) {
     this.game = game; this.peds = peds;
     this.critters = new Critters(game.scene);
+    this.flood = new Flood(game.scene);
     this.event = null;
     this.focus = null; // stageAt(): where the next spot() must be
     this.t = rnd(12, 25);
+    this.booked = new Map(); // MRT station -> game hour NS boys last booked out there
+    game.events.on('downpour', () => this.storm());
+  }
+
+  /** the storm breaks: it takes over from any scene running */
+  storm() {
+    if (this.event) { this.event.end(); this.critters.clear(); }
+    this.event = this.downpour();
   }
 
   update(dt) {
@@ -121,7 +135,7 @@ export class StreetLife {
     if (this.event || (this.t -= dt) > 0) return;
     this.t = 3; // nothing fitted: look again shortly
     const v = g.player.vehicle; if ((v && Math.abs(v.speed) > 14) || g.cameraRig?.override) return; // whizzing past, or a cutscene
-    const tm = g.sky.time, order = [this.otters, this.fowl, this.jaywalker, this.argument].sort(() => Math.random() - 0.5);
+    const tm = g.sky.time, order = [this.otters, this.fowl, this.jaywalker, this.argument, this.nsBoys].sort(() => Math.random() - 0.5);
     for (const stage of order) { const ev = stage.call(this, tm); if (ev) { this.event = ev; return; } }
   }
 
@@ -338,4 +352,179 @@ export class StreetLife {
       end: () => { for (const q of [p1, p2]) { q.cadence = 0; if (this.peds.peds.includes(q)) this.peds.release(q); } },
     };
   }
+
+  // ---------------------------------------------------------------- NS boys booked out at an MRT exit
+  nsBoys(tm) {
+    if (tm < 9 || tm > 22) return null;
+    const g = this.game, P = this.peds, V = P.viewer;
+    // an exit just beyond the pop-in ring, in view, that hasn't had them in the last two game hours
+    const st = g.ambient?.stations.find(s => {
+      const d = Math.hypot(s.pos.x - V.x, s.pos.z - V.z);
+      return d > P.popDist + 3 && d < P.popDist + 35 && P.inView(s.pos.x, 0, s.pos.z) && Math.abs(tm - (this.booked.get(s) ?? -99)) > 2;
+    });
+    if (!st) return null;
+    const sn = P.walkways.snap(st.pos.x, st.pos.z, 12); if (!sn) return null;
+    sn.w.path.sample(Math.min(sn.w.path.length, sn.s + 2.5), _p);
+    const cx = _p.x, cz = _p.z, n = 3 + Math.floor(Math.random() * 2), boys = [];
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2 + rnd(-0.3, 0.3), r = rnd(0.75, 0.95), x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+      if (!P.freeSpot(x, z)) continue;
+      const b = P.addScripted('male', x, z, yawTo(cx - x, cz - z), i === 0 ? A.talk : pick([A.idle_phone, A.idle, A.talk]));
+      if (b) boys.push(dressNS(b));
+    }
+    if (boys.length < 3) { for (const b of boys) P.remove(b); return null; }
+    this.booked.set(st, tm);
+    const LINES = ['Book out liao! Where to makan?', 'Sian, Sunday night must book in again.', 'Eh, Jurong Point or Bugis?', 'Finally can eat McSpicy!', 'My encik damn garang one.', 'Wah, 200 days to ORD only.'];
+    let t = 0, sayT = rnd(1, 3), line = Math.floor(Math.random() * LINES.length);
+    const life = rnd(30, 45);
+    return {
+      at: new THREE.Vector3(cx, 0, cz),
+      update: dt => {
+        t += dt;
+        if ((sayT -= dt) <= 0) { sayT = rnd(5, 9); this.game.bark?.('admire', pick(boys).pos, 2, { text: LINES[line++ % LINES.length] }); }
+        return t < 3 || (t < life && !this.gone(cx, cz));
+      },
+      // (they walk off, in uniform, each to the nearest footpath)
+      end: () => { for (const b of boys) if (P.peds.includes(b)) P.release(b); },
+    };
+  }
+
+  // ---------------------------------------------------------------- the 4 pm storm
+  downpour() {
+    const g = this.game, P = this.peds, V = P.viewer;
+    // who runs: people walking a pavement in view who'd be slow to get an umbrella up (or have none), to the nearest
+    // cover on the building side
+    const runners = [];
+    for (const p of P.peds) {
+      if (runners.length >= 8) break;
+      if (p.state !== 'walk' || p.script || p.pose || p.cluster || !p.sw || p.sw.foot || p.umbrellaTh < 0.2) continue;
+      if (Math.hypot(p.pos.x - V.x, p.pos.z - V.z) > 55 || !P.inView(p.pos.x, 0, p.pos.z)) continue;
+      const to = this.cover(p);
+      if (!to) continue;
+      P.detach(p); p.state = 'script'; p.script = true; p.anim = A.run; p.dash = to;
+      runners.push(p);
+    }
+    if (runners[0]) g.bark?.('admire', runners[0].pos, 2, { text: pick(['Wah, rain liao! Run!', 'Aiyoh, my hair!', 'Walao, the sky open already!']) });
+    // the kerb that floods: a straight stretch of carriageway edge in view, near the camera
+    const s = this.spot(s => !s.w.foot && !s.w.edge.y && (s.half = this.straight(s)) > 0, { min: 10, max: 45, tries: 24, foot: false });
+    if (s) this.flood.place(s, s.half * 2);
+    let t = 0, dryT = 0, splashT = 0;
+    return {
+      at: s ? new THREE.Vector3(s.x, 0, s.z) : V.clone(),
+      update: dt => {
+        t += dt;
+        for (const p of runners) {
+          if (!p.dash) continue;
+          _v.subVectors(p.dash, p.pos); _v.y = 0; const l = _v.length();
+          if (l > 0.3) { _v.multiplyScalar(1 / l); p.pos.addScaledVector(_v, Math.min(l, 4.2 * dt)); p.yaw = yawTo(_v.x, _v.z); p.cadence = 4.2; }
+          else { p.dash = null; p.cadence = 0; p.anim = Math.random() < 0.6 ? A.idle_phone : A.idle; p.yaw += Math.PI; } // (under cover, facing the rain)
+        }
+        const rain = g.weather.rain;
+        this.flood.update(dt, rain > 0.5 && t > 6);
+        if ((splashT -= dt) <= 0 && this.flood.under(g.player)) { splashT = 3; this.splash(); }
+        if (rain < 0.3) dryT += dt;
+        return t < 4 || dryT < 8 || this.flood.level > 0;
+      },
+      end: () => { this.flood.hide(); for (const p of runners) { p.cadence = 0; p.dash = null; if (P.peds.includes(p)) P.release(p); } },
+    };
+  }
+
+  /** the nearest cover from a person's pavement, on the side away from the road: under an arcade or overhang (a
+   *  sight-only ceiling above), else tight against the wall; null if no building is within 7 m */
+  cover(p) {
+    const g = this.game;
+    p.sw.path.sample(p.s, _p, _d);
+    const ax = -_d.z * p.sw.side, az = _d.x * p.sw.side; // away from the road
+    let last = null;
+    for (let k = 0.8; k <= 7; k += 0.8) {
+      const x = p.pos.x + ax * k, z = p.pos.z + az * k;
+      if (g.safe.insideBuilding(x, z, 0.35)) return last;
+      last = new THREE.Vector3(x, 0, z);
+      if (g.physics.raycast({ x, y: 1.2, z }, { x: 0, y: 1, z: 0 }, 9, FILTER.sightRay)) return last;
+    }
+    return null;
+  }
+
+  /** how far (m, each way: 12, 9 or 6; 0 for none) a walkway's road runs straight from point s: the flood's half length */
+  straight(s) {
+    for (const h of [12, 9, 6]) {
+      if (s.s < h || s.s > s.w.path.length - h) continue;
+      s.w.path.sample(s.s - h, _p, _d); const x0 = _d.x, z0 = _d.z;
+      s.w.path.sample(s.s + h, _p, _d);
+      if (x0 * _d.x + z0 * _d.z > 0.97) return h;
+    }
+    return 0;
+  }
+
+  // the player's car through the flooded kerb: a sheet of spray, and whoever stood beside it is soaked (and films it)
+  splash() {
+    const g = this.game, v = g.player.vehicle, F = this.flood;
+    for (let k = 0; k < 4; k++) g.fx?.spray(_p.copy(v.position).setY(0.3), _d.set(-F.rx, 0.6, -F.rz), 1);
+    g.audio?.sfx?.('splash', { position: v.position });
+    for (const p of this.peds.peds) {
+      if (Math.abs(p.pos.x - v.position.x) > 6 || Math.abs(p.pos.z - v.position.z) > 6) continue;
+      g.bark?.('admire', p.pos, 0, { text: pick(['Walao! My shoes!', 'Oi! Kena splash!', 'Aiyoh, my office pants!']) });
+      g.juice?.film(v.position, 'splash', true);
+      return;
+    }
+  }
+}
+
+// NS boys on book-out: No. 4 uniform in SAF green, field pack, short hair, boots
+function dressNS(p) {
+  const L = p.look, C = L.colors;
+  C.top = C.bottom = 0x4b5a3a; C.acc = 0x3c4730; C.shoes = 0x151412; C.hair = HAIR.black;
+  L.acc = CROWD_ACC.backpack; L.pattern = 0; L.hair = 1; L.sleeve = 1; L.pants = 1; L.tucked = true; L.fem = 0; L.girth = Math.min(L.girth, 0.15);
+  p.umbrellaTh = 2; // (they march on through it)
+  return p;
+}
+
+// A flooded kerb: one soft-edged sheet of standing water along the gutter (it mirrors the sky; the alpha is a few
+// blotches) that rises with the downpour and drains after it. Made at load, so its program compiles in the warm-up.
+class Flood {
+  constructor(scene) {
+    const c = document.createElement('canvas'); c.width = 32; c.height = 128;
+    const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 128);
+    for (let i = 0; i < 10; i++) {
+      const cx = 16 + rnd(-4, 4), cz = 8 + i * 12.5, r = rnd(10, 15), gr = x.createRadialGradient(cx, cz, 0, cx, cz, r);
+      gr.addColorStop(0, '#fff'); gr.addColorStop(0.55, 'rgba(255,255,255,.85)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = gr; x.fillRect(0, 0, 32, 128);
+    }
+    x.globalCompositeOperation = 'multiply'; // (faded to nothing at the sheet's sides and ends)
+    for (const [x1, z1] of [[32, 0], [0, 128]]) {
+      const gr = x.createLinearGradient(0, 0, x1, z1);
+      gr.addColorStop(0, '#000'); gr.addColorStop(0.2, '#fff'); gr.addColorStop(0.8, '#fff'); gr.addColorStop(1, '#000');
+      x.fillStyle = gr; x.fillRect(0, 0, 32, 128);
+    }
+    this.mat = new THREE.MeshStandardMaterial({ color: 0x0d1518, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0, alphaMap: new THREE.CanvasTexture(c),
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), this.mat);
+    this.mesh.visible = false; this.mesh.renderOrder = 1;
+    scene.add(this.mesh);
+    this.level = 0; this.len = 0; this.w = 0; this.rx = 0; this.rz = 0; this.ax = 0; this.az = 0;
+  }
+  /** along the gutter by walkway point s (2.6 m out from the pavement line: just inside the carriageway), len m long */
+  place(s, len) {
+    const side = s.w.side;
+    this.len = len;
+    this.ax = s.dx; this.az = s.dz; this.rx = s.dz * side; this.rz = -s.dx * side; // along the road, towards it
+    this.mesh.position.set(s.x + this.rx * 2.6, 0.04, s.z + this.rz * 2.6);
+    this.mesh.rotation.y = Math.atan2(s.dx, s.dz);
+    this.level = 0; this.mesh.visible = true; this.update(0, true);
+  }
+  /** rising while it pours, draining once it stops */
+  update(dt, pouring) {
+    if (!this.mesh.visible) return;
+    this.level = Math.max(0, Math.min(1, this.level + dt * (pouring ? 1 / 12 : -1 / 20)));
+    this.w = 0.6 + this.level * 1.8;
+    this.mesh.scale.set(this.w, 1, this.len);
+    this.mat.opacity = 0.92 * Math.min(1, this.level * 1.6);
+  }
+  /** is the player driving through it? */
+  under(P) {
+    const v = P.vehicle; if (!v || this.level < 0.3 || v.speed < 7 || v.isBoat || v.isAircraft) return false;
+    const dx = v.position.x - this.mesh.position.x, dz = v.position.z - this.mesh.position.z;
+    return Math.abs(dx * this.ax + dz * this.az) < this.len / 2 && Math.abs(dx * this.rx + dz * this.rz) < this.w / 2 + 1;
+  }
+  hide() { this.mesh.visible = false; this.level = 0; }
 }
