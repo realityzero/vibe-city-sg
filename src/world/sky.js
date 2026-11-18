@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { U } from '../gfx/globals.js';
 import { HF } from '../gfx/heightfield.js';
+import '../gfx/shadowfilter.js'; // rotated-tent PCF for the sun shadow (patches three's shadow chunk)
 import { LIT } from '../gfx/materials.js';
 
 const LAT = 1.29 * Math.PI / 180;
