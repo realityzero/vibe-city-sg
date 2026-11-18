@@ -12,6 +12,7 @@ const TOWERS = [-160, -50, 60];
 const TW = 26;            // half width of a tower along the line
 const TOP = 191;          // tower top / SkyPark underside
 const DECK = 198.5;       // SkyPark deck level
+const HULL = 12;          // depth of the SkyPark hull's keel under its parapet (amidships)
 const LEG = 14;           // leg thickness
 const SPLAY = 27, JOIN = 74;
 
@@ -83,9 +84,10 @@ class Lasers {
 
 export function buildMBS(city, quality) {
   const M = materials();
-  // hotel towers at night: mostly dark glass with scattered warm rooms (many curtained), the spandrels washed amber by
-  // the floodlights at their feet
-  const towerMat = facadeMaterial({ wall: 0xd5dadc, glass: 0x3d5462, cell: [2.15, 3.47], frame: [0.02, 0.3, 0.02], lit: 0.24, seed: 3, bands: 1, litIntensity: 1.5, warm: 0xffb36b, glassRough: 0.06, wallGlow: 0.32, wallGlowColor: 0xffb46a, wallGlowY: [10, TOP, 0.3] });
+  // hotel towers: a strong horizontal band of blue-grey glass on every floor between pale spandrels; at night most
+  // rooms lit behind their curtains, an even warm-white stripe per floor (little room-to-room variation: no scattered
+  // gold sparkle), the spandrels washed by the floodlights at their feet
+  const towerMat = facadeMaterial({ wall: 0xdfe3e4, glass: 0x3a5463, cell: [6.45, 3.47], frame: [0.0, 0.36, 0.04], lit: 0.8, vary: 0.3, curtains: 0.9, seed: 3, litIntensity: 0.85, warm: 0xffdcae, cool: 0xfff0dc, glassRough: 0.05, wallGlow: 0.16, wallGlowColor: 0xffe6c8, wallGlowY: [10, TOP, 0.35] });
   const innerMat = facadeMaterial({ wall: 0x9aa3a8, glass: 0x2e3b42, cell: [3.0, 3.47], frame: [0.1, 0.3, 0.05], lit: 0.25, seed: 5, litIntensity: 1.6 });
   const hullMat = new THREE.MeshStandardMaterial({ color: 0xe9ebec, roughness: 0.4, metalness: 0.35 });
   const deckMat = new THREE.MeshStandardMaterial({ color: 0xb59e80, roughness: 0.75 });
@@ -133,7 +135,6 @@ export function buildMBS(city, quality) {
   const outline = [];
   for (const u of us) outline.push([u, -skyParkHalfWidth(u)]);
   for (let i = us.length - 1; i >= 0; i--) outline.push([us[i], skyParkHalfWidth(us[i])]);
-  const yBottom = u => (u > 84 ? lerp(TOP - 0.5, TOP + 4.5, smooth(Math.min(1, (u - 84) / 62))) : TOP - 0.5);
   {
     const pos = [], nor = [], fac = [];
     // top deck
@@ -142,51 +143,38 @@ export function buildMBS(city, quality) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
     B.add(deckMat, fixWinding(g), F);
-    // edge band + hull loft (top ring at DECK-2 -> bottom ring inset)
-    const ring = outline;
-    const n = ring.length;
-    const band = [], bandN = [], hull = [], hullN = [];
-    const inset = 3.5;
-    const bot = ring.map(([u, a]) => { const w = skyParkHalfWidth(u); const s = w > inset + 0.5 ? (w - inset) / w : 0.3; return [u, a * s, yBottom(u)]; });
+    // edge band: the parapet round the deck
+    const ring = outline, n = ring.length, band = [], bandN = [];
     for (let i = 0; i < n; i++) {
-      const j = (i + 1) % n; const p = ring[i], q = ring[j];
-      const du = q[0] - p[0], da = q[1] - p[1]; const l = Math.hypot(du, da) || 1;
-      const nx = da / l, nz = -du / l; // outward (ring is CW/CCW unknown; fixWinding handles)
-      const quad = (A, Bq, C, D, arr, narr, nn) => { for (const v of [A, Bq, C, A, C, D]) { arr.push(...v); narr.push(...nn); } };
-      quad([p[0], DECK - 2.2, p[1]], [q[0], DECK - 2.2, q[1]], [q[0], DECK + 1.1, q[1]], [p[0], DECK + 1.1, p[1]], band, bandN, [nx, 0, nz]);
-      const pb = bot[i], qb = bot[j];
-      quad([pb[0], pb[2], pb[1]], [qb[0], qb[2], qb[1]], [q[0], DECK - 2.2, q[1]], [p[0], DECK - 2.2, p[1]], hull, hullN, [nx * 0.6, -0.8, nz * 0.6]);
+      const p = ring[i], q = ring[(i + 1) % n], du = q[0] - p[0], da = q[1] - p[1], l = Math.hypot(du, da) || 1;
+      for (const v of [[p[0], DECK - 2.2, p[1]], [q[0], DECK - 2.2, q[1]], [q[0], DECK + 1.1, q[1]], [p[0], DECK - 2.2, p[1]], [q[0], DECK + 1.1, q[1]], [p[0], DECK + 1.1, p[1]]]) { band.push(...v); bandN.push(da / l, 0, -du / l); }
     }
-    // outward check for band normals using signed area
-    const sA = signedArea(ring.map(([u, a]) => [u, a]));
-    const flip = sA < 0 ? -1 : 1;
-    for (let i = 0; i < bandN.length; i += 3) { bandN[i] *= flip; bandN[i + 2] *= flip; }
-    for (let i = 0; i < hullN.length; i += 3) { hullN[i] *= flip; hullN[i + 2] *= flip; }
+    // (outward: the ring's winding is whatever the outline's is)
+    if (signedArea(ring) < 0) for (let i = 0; i < bandN.length; i += 3) { bandN[i] *= -1; bandN[i + 2] *= -1; }
     const gb = new THREE.BufferGeometry(); gb.setAttribute('position', new THREE.Float32BufferAttribute(band, 3)); gb.setAttribute('normal', new THREE.Float32BufferAttribute(bandN, 3));
     B.add(bandGlow, fixWinding(gb), F);
-    const gh = new THREE.BufferGeometry(); gh.setAttribute('position', new THREE.Float32BufferAttribute(hull, 3)); gh.setAttribute('normal', new THREE.Float32BufferAttribute(hullN, 3));
-    B.add(hullMat, fixWinding(gh), F);
-    // underside plate
-    const bt = THREE.ShapeUtils.triangulateShape(bot.map(p => new THREE.Vector2(p[0], p[1])), []);
-    const up = [], un = [];
-    for (const t of bt) for (const k of t) { up.push(bot[k][0], bot[k][2], bot[k][1]); un.push(0, -1, 0); }
-    const gu = new THREE.BufferGeometry(); gu.setAttribute('position', new THREE.Float32BufferAttribute(up, 3)); gu.setAttribute('normal', new THREE.Float32BufferAttribute(un, 3));
-    B.add(hullMat, fixWinding(gu), F);
-    // underside light strips along both bottom edges
-    const strip = (side) => {
-      const sp = [], sn = [];
+    // the hull under it is a boat's, not a plank's: a rounded keel HULL m under the parapet amidships, its line rising
+    // to a rounded stern and sweeping up along the cantilevered prow to its tip. Rows across it at every u (a: -1..1 of the
+    // half width), wound to face out and down; two lines of light run along it at night.
+    const keel = u => HULL * (1 - 0.35 * Math.pow((u + 50) / 146, 2)) * (u > 84 ? 1 - 0.85 * smooth(Math.min(1, (u - 84) / 62)) : u < -176 ? lerp(0.35, 1, smooth((u + 196) / 20)) : 1);
+    const hullAt = (u, a) => [u, DECK - 2.2 - keel(u) * (1 - Math.pow(Math.abs(a), 2.4)), a * skyParkHalfWidth(u)];
+    const NA = 14, hp = [], hi = [];
+    for (const u of us) for (let j = 0; j <= NA; j++) hp.push(...hullAt(u, -1 + 2 * j / NA));
+    for (let i = 0; i < us.length - 1; i++) for (let j = 0; j < NA; j++) {
+      const a = i * (NA + 1) + j, b = a + NA + 1;
+      hi.push(a, b, b + 1, a, b + 1, a + 1);
+    }
+    const gh = new THREE.BufferGeometry(); gh.setAttribute('position', new THREE.Float32BufferAttribute(hp, 3)); gh.setIndex(hi); gh.computeVertexNormals();
+    B.add(hullMat, gh, F);
+    for (const side of [-1, 1]) {
+      const sp = [], a0 = Math.min(side * 0.56, side * 0.64), a1 = Math.max(side * 0.56, side * 0.64), off = v => [v[0], v[1] - 0.06, v[2]];
       for (let i = 0; i < us.length - 1; i++) {
-        const ua = us[i], ub = us[i + 1];
-        const wa = skyParkHalfWidth(ua), wb = skyParkHalfWidth(ub);
-        const sa = wa > inset + 0.5 ? wa - inset : wa * 0.3, sb = wb > inset + 0.5 ? wb - inset : wb * 0.3;
-        const A = [ua, yBottom(ua) - 0.05, side * sa], Bq = [ub, yBottom(ub) - 0.05, side * sb];
-        const C = [ub, yBottom(ub) - 0.05, side * (sb - 1.2)], D = [ua, yBottom(ua) - 0.05, side * (sa - 1.2)];
-        for (const v of [A, Bq, C, A, C, D]) { sp.push(...v); sn.push(0, -1, 0); }
+        const A = off(hullAt(us[i], a0)), Bq = off(hullAt(us[i + 1], a0)), C = off(hullAt(us[i + 1], a1)), D = off(hullAt(us[i], a1));
+        sp.push(...A, ...Bq, ...C, ...A, ...C, ...D);
       }
-      const g2 = new THREE.BufferGeometry(); g2.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); g2.setAttribute('normal', new THREE.Float32BufferAttribute(sn, 3));
-      return fixWinding(g2);
-    };
-    B.add(underGlow, strip(1), F); B.add(underGlow, strip(-1), F);
+      const g2 = new THREE.BufferGeometry(); g2.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); g2.computeVertexNormals();
+      B.add(underGlow, g2, F);
+    }
   }
   // infinity pool along the west (city-facing) edge, in three basins
   for (const [a0, a1] of [[-186, -136], [-133, -84], [-81, -32]]) {
