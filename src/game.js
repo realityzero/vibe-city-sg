@@ -827,7 +827,7 @@ export class Game {
     U.cameraPos.value.copy(this.camera.position);
     this.sky.rain = U.rain.value;
     const focus = this.player ? this.player.position : this.camera.position;
-    this.sky.update(dt, focus);
+    this.sky.update(dt, focus, this.camera);
     if (this.R.autoExposure) { this.R.autoExposure.base = this.sky.exposure; this.R.exposureFx.uniforms.get('uOn').value = params.has('noae') ? 0 : 1; }
     this.R.renderer.toneMappingExposure = this.sky.exposure;
     this.R.updateSun(this.sky.sun, U.rain.value, this.camera);

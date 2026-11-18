@@ -76,6 +76,12 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   texture at load. City materials (`patch()` in materials.js) ray-march it toward the sun beyond the shadow map's box
   (far-field shadows to ~0.9 km) and sample it for street-canyon sky occlusion; tree impostors take the sun term per
   vertex, the water its far-field sun shadow (no hard-edged shadow-map box on the bay). `?nohf` disables it.
+- **Sun shadow map** (`sky.js`, `gfx/shadowfit.js`, `gfx/shadowfilter.js`): the map serves the circle of `shadowRadius`
+  round the player, the height field beyond it. Its box is a fixed square (0.62 of that radius: ~1.6x the texel
+  density of a box centred on the player), fitted each frame to what the camera sees of the circle and snapped to
+  whole texels, so edges don't crawl as the view moves; where it can't reach (far corners of a wide view, tall
+  facades) the height field shades (`hfMapOut()`). PCF is a rotated 4-tap tent — three's taps turn by per-pixel noise,
+  a fixed dot pattern without TAA — and fades out across the box's edge band.
 - **Height fog** (`gfx/heightfog.js`) replaces three's fog chunks: exp² fog whose density thins with altitude. Its
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the

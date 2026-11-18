@@ -25,7 +25,7 @@ const HF_EVAL = /* glsl */`
   if (uHFOn > 0.5) {
     vec3 hfP = cameraPosition + (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
     vec3 hfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
-    float farW = smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(hfP.xz - uHFShadowC.xz));
+    float farW = max(smoothstep(uHFShadowR * 0.7, uHFShadowR * 0.95, length(hfP.xz - uHFShadowC.xz)), hfMapOut());
     if (farW > 0.0) hfSun = mix(1.0, hfSunVis(hfP, hfN, uHFSun), farW);
     // canyon occlusion fades out with distance (haze hides it; saves 18 taps on the far city)
     float hfD = length(hfP - cameraPosition);
@@ -1294,10 +1294,11 @@ float maskClass(vec4 v, float f, float lo) {
       // vegetation channel: crisp, slightly irregular edges (the mask is only 2 m/px)
       float edgeN = (vnoise(wp * 0.9) - 0.5) * 0.12 + (vnoise(wp * 3.7) - 0.5) * 0.05;
       // class codes from the unfiltered texels (see maskClass); coverage stays with the filtered, mip-mapped m.
-      // Inside a uniform area (the mask doesn't change across the pixel quad) the filtered code is the class itself
+      // (Everywhere, not only where the filtered code varies across the pixel quad: the GPU's filter weights come in
+      // steps, so that test came and went in rings near every class border, and where it failed the pixel took the
+      // blended code's class — a dot lattice over sidewalks and plazas.)
       float gc = g, bc = b;
-      vec2 maskVar = fwidth(vec2(g, b));
-      if (!outside && max(maskVar.x, maskVar.y) > 1e-4) {
+      if (!outside) {
         ivec2 msz = textureSize(uMask, 0);
         vec2 tc = muv * vec2(msz) - 0.5;
         ivec2 t0 = clamp(ivec2(floor(tc)), ivec2(0), msz - 2);
