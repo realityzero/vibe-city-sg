@@ -495,43 +495,76 @@ export class Crowd {
 const pick = (r, a) => a[(r() * a.length) | 0];
 const PAT = Object.fromEntries(PATTERN_LIST.map((n, i) => [n, i]));
 const VARIANTS = ['office_m', 'office_m', 'office_f', 'office_f', 'auntie', 'uncle', 'tourist', 'student', 'male', 'male', 'female', 'female'];
+// prints are tinted by the top colour (the atlas cells are pale): florals and batiks in many colourways
+const TINTS = [0xffffff, 0xffffff, 0xffd8e0, 0xd8f0ff, 0xfff0b8, 0xe0ffd8, 0xffc8a0, 0xe8d8ff, 0xb8f0f0];
+// baju kurung and sarees: one fabric, top and skirt; a tudung over the hair
+const KURUNG = [0xf7a8c4, 0x8fd3c8, 0xc9b6f2, 0xf6d98a, 0x9cc8f0, 0xe0e8a0, 0xf2b8a0, 0x2f8f8a, 0x7a3a6a, 0xd8e8f8];
+const SAREE = [0xd6246e, 0xf08c00, 0x1f8a5a, 0x2f4fb8, 0xb8128a, 0xe8b818, 0xc8281e];
+const TUDUNG = [0xf8f9fa, 0x111111, 0xe8dcc8, 0xd8c8e8, 0x8fb8d8, 0xc8a8b8, 0x5c4b3a];
+const POLO = [0xe03131, 0x1c7ed6, 0x2b8a3e, 0xf59f00, 0xf06595, 0x15aabf, 0x7048e8, 0xffd43b, 0x0b7285, 0xf8f9fa];
 export function randomLook(seed = 1, variant) {
   const r = mulberry((seed * 2654435761) >>> 0);
   variant = variant || pick(r, VARIANTS);
   const asian = [SKIN.chinese, SKIN.chinese, SKIN.chinese, SKIN.chinese, SKIN.malay, SKIN.malay, SKIN.indian, SKIN.indian, SKIN.tan];
   const L = { variant, seed, colors: { skin: pick(r, asian), top: 0xffffff, bottom: 0x2e3138, hair: HAIR.black, shoes: 0x1a1412, acc: 0x343a40, acc2: pick(r, [0xc92a2a, 0x1c7ed6, 0x2b8a3e, 0xf08c00]) }, hair: 1, sleeve: 1, pants: 1, acc: 0, height: 1.72, girth: 0, fem: 0, pattern: 0, tucked: false };
   const C = L.colors;
-  const brightTops = [0xffffff, 0xffffff, 0x111111, 0x111111, 0x8d99ae, 0x1f2a44, 0x264653, 0xc92a2a, 0x2b8a3e, 0xf2c94c, 0xf4a261, 0x1c7ed6, 0xffc9c9, 0x63e6be, 0xe9ecef, 0x495057, 0xd0bfff, 0x74c0fc];
+  const brightTops = [0xffffff, 0xffffff, 0x111111, 0x8d99ae, 0x1f2a44, 0x264653, 0xc92a2a, 0x2b8a3e, 0xf2c94c, 0xf4a261, 0x1c7ed6, 0xffc9c9, 0x63e6be, 0xe9ecef, 0x495057, 0xd0bfff, 0x74c0fc, 0xff8787, 0x20c997, 0xfab005];
+  // a Malay woman in baju kurung (and tudung), an Indian woman in a saree: the matching fabric reads as one garment
+  const kurung = () => { C.skin = pick(r, [SKIN.malay, SKIN.malay, SKIN.tan]); C.top = C.bottom = pick(r, KURUNG); L.pattern = r() < 0.35 ? PAT.floral : 0; L.sleeve = 2; L.pants = 2; L.tucked = false; L.hair = 2; C.hair = pick(r, TUDUNG); C.shoes = pick(r, [0xd9c2a7, 0x111111, 0xf8f9fa]); };
+  const saree = () => { C.skin = pick(r, [SKIN.indian, SKIN.indian, SKIN.brown]); C.top = C.bottom = pick(r, SAREE); L.sleeve = 1; L.pants = 2; L.tucked = false; L.hair = 4; C.hair = HAIR.black; C.shoes = pick(r, [0xd9a441, 0x3a2e2a]); if (r() < 0.5) { L.acc |= CROWD_ACC.bag; C.acc2 = 0xd9a441; } };
   switch (variant) {
     case 'office_m':
-      C.top = pick(r, [0xffffff, 0xffffff, 0xdbe7f5, 0xcfe0f5, 0xf1f3f5, 0xe7f5ff]); L.pattern = r() < 0.3 ? PAT.stripes : 0; L.sleeve = r() < 0.7 ? 2 : 1; L.tucked = true;
-      C.bottom = pick(r, [0x1f2a44, 0x2e3138, 0x111111, 0x495057]); C.shoes = pick(r, [0x111111, 0x3b2a20]); L.hair = 1; L.height = 1.66 + r() * 0.14; L.girth = (r() - 0.4) * 0.5;
-      if (r() < 0.55) L.acc |= CROWD_ACC.lanyard; if (r() < 0.2) L.acc |= CROWD_ACC.glasses; if (r() < 0.15) L.acc |= CROWD_ACC.backpack; break;
+      C.top = pick(r, [0xffffff, 0xffffff, 0xdbe7f5, 0xcfe0f5, 0xf1f3f5, 0xe7f5ff, 0xf3e8f8, 0xe8f5e9]); L.pattern = r() < 0.3 ? PAT.stripes : 0; L.sleeve = r() < 0.7 ? 2 : 1; L.tucked = true;
+      C.bottom = pick(r, [0x1f2a44, 0x2e3138, 0x111111, 0x495057, 0x5c5f66, 0x8a7a66]); C.shoes = pick(r, [0x111111, 0x3b2a20]); L.hair = 1; L.height = 1.66 + r() * 0.14; L.girth = (r() - 0.4) * 0.5;
+      if (r() < 0.6) { L.acc |= CROWD_ACC.lanyard; C.acc2 = pick(r, [0xc92a2a, 0x1c7ed6, 0x111111, 0x2b8a3e, 0xf08c00]); } if (r() < 0.2) L.acc |= CROWD_ACC.glasses; if (r() < 0.15) L.acc |= CROWD_ACC.backpack; break;
     case 'office_f':
-      L.fem = 1; C.top = pick(r, [0xffffff, 0xf8f0e3, 0xdbe7f5, 0xffc9c9, 0xd0bfff, 0x111111, 0xfff3bf]); L.sleeve = r() < 0.6 ? 1 : 2; L.pants = r() < 0.5 ? 2 : 1; L.tucked = r() < 0.5;
-      C.bottom = pick(r, [0x1f2a44, 0x2e3138, 0x111111, 0x868e96, 0xe9ecef]); C.shoes = pick(r, [0x111111, 0xd9c2a7, 0x7a1f2b]); L.hair = pick(r, [2, 2, 4, 3]); L.height = 1.55 + r() * 0.12; L.girth = (r() - 0.5) * 0.3;
-      C.hair = pick(r, [HAIR.black, HAIR.black, HAIR.darkBrown, HAIR.brown]); if (r() < 0.45) L.acc |= CROWD_ACC.lanyard; if (r() < 0.35) L.acc |= CROWD_ACC.bag; break;
-    case 'auntie':
-      L.fem = 1; L.pattern = r() < 0.6 ? PAT.floral : (r() < 0.5 ? PAT.batik : 0); C.top = L.pattern ? 0xffffff : pick(r, [0xff8787, 0xffd43b, 0x74c0fc, 0xb197fc]); L.sleeve = 1; L.pants = 1;
-      C.bottom = pick(r, [0x343a40, 0x495057, 0x1f2a44, 0x5c4b3a]); C.shoes = pick(r, [0x3a2e2a, 0x111111, 0xd6336c]); L.hair = 3; C.hair = pick(r, [0x2a2220, 0x2a2220, HAIR.grey]);
-      L.height = 1.48 + r() * 0.1; L.girth = 0.35 + r() * 0.4; if (r() < 0.4) L.acc |= CROWD_ACC.visor; if (r() < 0.55) L.acc |= CROWD_ACC.bag; C.acc = 0x2f9e44; C.acc2 = pick(r, [0xf08c00, 0xe03131, 0xffffff]); break;
-    case 'uncle':
-      L.sleeve = r() < 0.6 ? 0 : 1; C.top = L.sleeve === 0 ? 0xf3f1ea : pick(r, [0xffffff, 0x74c0fc, 0xadb5bd, 0xffe066]); L.pants = 0; C.bottom = pick(r, [0x2f3b4c, 0x5c4b3a, 0x495057, 0x1f2a44]);
-      C.shoes = pick(r, [0x2b55a3, 0x3b2a20, 0x111111]); L.hair = pick(r, [5, 5, 1]); C.hair = pick(r, [HAIR.grey, HAIR.white, HAIR.grey, HAIR.black]); L.height = 1.6 + r() * 0.1; L.girth = 0.25 + r() * 0.4; break;
+      L.fem = 1; C.top = pick(r, [0xffffff, 0xf8f0e3, 0xdbe7f5, 0xffc9c9, 0xd0bfff, 0x111111, 0xfff3bf, 0xc3fae8, 0xffd8a8]); L.sleeve = r() < 0.6 ? 1 : 2; L.pants = r() < 0.5 ? 2 : 1; L.tucked = r() < 0.5;
+      C.bottom = pick(r, [0x1f2a44, 0x2e3138, 0x111111, 0x868e96, 0xe9ecef, 0x5c4b3a]); C.shoes = pick(r, [0x111111, 0xd9c2a7, 0x7a1f2b]); L.hair = pick(r, [2, 2, 4, 3]); L.height = 1.55 + r() * 0.12; L.girth = (r() - 0.5) * 0.3;
+      C.hair = pick(r, [HAIR.black, HAIR.black, HAIR.darkBrown, HAIR.brown]); if (r() < 0.5) { L.acc |= CROWD_ACC.lanyard; C.acc2 = pick(r, [0xc92a2a, 0x1c7ed6, 0x111111]); } if (r() < 0.35) L.acc |= CROWD_ACC.bag;
+      if (r() < 0.12) { kurung(); L.pattern = 0; } break;
+    case 'auntie': {
+      L.fem = 1; L.sleeve = 1; L.pants = 1;
+      const k = r();
+      if (k < 0.45) { L.pattern = PAT.floral; C.top = pick(r, TINTS); }
+      else if (k < 0.62) { L.pattern = PAT.batik; C.top = pick(r, TINTS); }
+      else C.top = pick(r, [0xff8787, 0xffd43b, 0x74c0fc, 0xb197fc, 0x63e6be, 0xf783ac, 0xffa94d, 0xe9ecef]);
+      C.bottom = pick(r, [0x343a40, 0x495057, 0x1f2a44, 0x5c4b3a, 0x868e96, 0x111111, 0x8a7a66]); C.shoes = pick(r, [0x3a2e2a, 0x111111, 0xd6336c, 0xf8f9fa]); L.hair = 3; C.hair = pick(r, [0x2a2220, 0x2a2220, HAIR.grey, 0x5a3a22]);
+      L.height = 1.48 + r() * 0.1; L.girth = 0.35 + r() * 0.4; if (r() < 0.4) { L.acc |= CROWD_ACC.visor; C.acc = pick(r, [0x2f9e44, 0xf8f9fa, 0xe64980, 0x1c7ed6]); } if (r() < 0.55) L.acc |= CROWD_ACC.bag; C.acc2 = pick(r, [0xf08c00, 0xe03131, 0xffffff, 0x2b8a3e]);
+      if (k > 0.86) { kurung(); L.acc &= ~CROWD_ACC.visor; } else if (k > 0.8) saree();
+      break;
+    }
+    case 'uncle': // singlet, shorts and slippers; or a short-sleeved shirt over long trousers
+      L.sleeve = r() < 0.55 ? 0 : 1; C.top = L.sleeve === 0 ? pick(r, [0xf3f1ea, 0xf3f1ea, 0xe9ecef]) : pick(r, [0xffffff, 0x74c0fc, 0xadb5bd, 0xffe066, 0xa5d8ff, 0xd3f9d8, 0xffd8a8]);
+      if (L.sleeve && r() < 0.25) { L.pattern = PAT.batik; C.top = pick(r, TINTS); }
+      L.pants = L.sleeve === 0 || r() < 0.4 ? 0 : 1; C.bottom = pick(r, [0x2f3b4c, 0x5c4b3a, 0x495057, 0x1f2a44, 0x8a7a66, 0x6c757d]);
+      C.shoes = L.pants === 0 ? pick(r, [0x2b55a3, 0x111111, 0x3b2a20, 0xc92a2a]) : pick(r, [0x3b2a20, 0x111111]); L.hair = pick(r, [5, 5, 1]); C.hair = pick(r, [HAIR.grey, HAIR.white, HAIR.grey, HAIR.black]); L.height = 1.6 + r() * 0.1; L.girth = 0.25 + r() * 0.4;
+      if (r() < 0.2) L.acc |= CROWD_ACC.cap; break;
     case 'tourist':
       C.skin = pick(r, [SKIN.pale, SKIN.light, SKIN.light, SKIN.tan, SKIN.chinese]); L.pattern = r() < 0.5 ? pick(r, [PAT.tourist, PAT.hawaii]) : 0; C.top = L.pattern ? 0xffffff : pick(r, brightTops);
-      L.pants = r() < 0.75 ? 0 : 1; C.bottom = pick(r, [0xc8b48a, 0x868e96, 0x3d5f93, 0x2f3b4c]); C.shoes = pick(r, [0xffffff, 0x868e96, 0x111111]);
+      L.pants = r() < 0.75 ? 0 : 1; C.bottom = pick(r, [0xc8b48a, 0x868e96, 0x3d5f93, 0x2f3b4c, 0xf8f9fa]); C.shoes = pick(r, [0xffffff, 0x868e96, 0x111111]);
       L.fem = r() < 0.45 ? 1 : 0; L.hair = L.fem ? pick(r, [2, 4]) : 1; C.hair = pick(r, [HAIR.blonde, HAIR.brown, HAIR.auburn, HAIR.black]); L.height = L.fem ? 1.6 + r() * 0.12 : 1.72 + r() * 0.15; L.girth = (r() - 0.3) * 0.7;
       if (r() < 0.5) L.acc |= CROWD_ACC.cap; if (r() < 0.6) L.acc |= CROWD_ACC.backpack; C.acc = pick(r, [0x1c7ed6, 0xe03131, 0x343a40, 0xf8f9fa]); break;
-    case 'student':
-      L.fem = r() < 0.5 ? 1 : 0; C.top = 0xf8f9fa; L.tucked = true; L.pants = L.fem ? 2 : 0; C.bottom = pick(r, [0x24345c, 0x1f2a44, 0x8d6e4a]); C.shoes = 0xffffff;
-      L.hair = L.fem ? pick(r, [2, 4]) : 1; L.height = 1.5 + r() * 0.18; L.girth = -0.15; L.acc |= CROWD_ACC.backpack; C.acc = pick(r, [0x343a40, 0x1c7ed6, 0xe64980, 0x2b8a3e]); break;
-    case 'delivery': { // food-delivery rider in the platform's colours, the insulated box on the back
+    case 'student': { // school uniform: white or pale blue shirt over the school's colour (a pinafore for some girls)
+      L.fem = r() < 0.5 ? 1 : 0; const school = r();
+      C.top = school < 0.25 ? 0xd8e8f8 : 0xf8f9fa; L.tucked = true; L.pants = L.fem ? 2 : (school < 0.5 ? 0 : 1);
+      C.bottom = school < 0.25 ? 0x6a98c8 : pick(r, [0x24345c, 0x1f2a44, 0x8d6e4a, 0x2b5a3a, 0x7a1f2b, 0x5c6a7a]); C.shoes = 0xffffff;
+      L.hair = L.fem ? pick(r, [2, 4, 3]) : 1; L.height = school < 0.25 ? 1.32 + r() * 0.14 : 1.5 + r() * 0.18; L.girth = -0.15; L.acc |= CROWD_ACC.backpack; C.acc = pick(r, [0x343a40, 0x1c7ed6, 0xe64980, 0x2b8a3e, 0xf08c00]);
+      if (L.fem && C.skin === SKIN.malay && r() < 0.5) { L.hair = 2; C.hair = 0xf8f9fa; } break;
+    }
+    case 'worker': // site and road workers in hi-vis, a hard hat or a cap, work boots
+      C.skin = pick(r, [SKIN.indian, SKIN.brown, SKIN.dark, SKIN.tan, SKIN.chinese]); C.top = pick(r, [0xff7a1a, 0xff7a1a, 0xd4f02a, 0xf8e01a]); L.sleeve = r() < 0.6 ? 2 : 1;
+      L.pants = 1; C.bottom = pick(r, [0x2f3b4c, 0x1f2a44, 0x495057, 0x5c4b3a]); C.shoes = pick(r, [0x3b2a20, 0x111111]); L.hair = pick(r, [1, 5]);
+      L.acc |= CROWD_ACC.cap; C.acc = pick(r, [0xf8f9fa, 0xf8e01a, 0xff7a1a, 0x1c7ed6]); L.height = 1.62 + r() * 0.14; L.girth = (r() - 0.5) * 0.3; break;
+    case 'delivery': { // food-delivery rider in the platform's colours: jacket or tee, the insulated box on the back
       const brand = pick(r, [0xd70f64, 0x00b14f, 0x00b14f, 0x00ccbc]);
-      C.top = brand; C.acc = brand; L.acc |= CROWD_ACC.box; L.sleeve = r() < 0.5 ? 2 : 1; L.pants = 1; C.bottom = pick(r, [0x111111, 0x2e3138, 0x1f2a44]);
+      C.top = brand; C.acc = brand; L.acc |= CROWD_ACC.box; L.sleeve = r() < 0.65 ? 2 : 1; L.pants = 1; C.bottom = pick(r, [0x111111, 0x2e3138, 0x1f2a44]);
       C.shoes = pick(r, [0x111111, 0xffffff]); L.hair = r() < 0.3 ? 5 : 1; L.height = 1.64 + r() * 0.14; L.girth = (r() - 0.5) * 0.4;
       if (r() < 0.35) L.acc |= CROWD_ACC.cap; break;
     }
+    case 'hawker': // behind a stall's counter: a singlet or an old tee, an apron's worth of white, a towel round the neck
+      L.fem = r() < 0.35 ? 1 : 0; L.sleeve = L.fem ? 1 : pick(r, [0, 0, 1]); C.top = pick(r, [0xf3f1ea, 0xf3f1ea, 0xe9ecef, 0x74c0fc, 0xffe066]); L.pants = L.fem ? 1 : pick(r, [0, 1]);
+      C.bottom = pick(r, [0x2f3b4c, 0x495057, 0x1f2a44, 0x5c4b3a]); C.shoes = pick(r, [0x2b55a3, 0x111111, 0xf8f9fa]); L.hair = L.fem ? 3 : pick(r, [1, 5, 5]);
+      C.hair = pick(r, [HAIR.black, HAIR.grey, HAIR.grey]); L.height = L.fem ? 1.5 + r() * 0.1 : 1.6 + r() * 0.12; L.girth = 0.2 + r() * 0.4; if (L.fem && r() < 0.5) L.acc |= CROWD_ACC.visor; break;
     case 'jogger':
       L.fem = r() < 0.45 ? 1 : 0; C.top = pick(r, [0xffffff, 0x111111, 0xff6b6b, 0x4dabf7, 0xb2f2bb, 0xffd43b, 0xf783ac, 0x868e96]); L.sleeve = pick(r, [0, 1, 1]); L.pants = 0;
       C.bottom = pick(r, [0x111111, 0x1f2a44, 0x495057]); C.shoes = pick(r, [0xffffff, 0xff8787, 0x74c0fc, 0xc0eb75]); L.tucked = false;
@@ -539,14 +572,17 @@ export function randomLook(seed = 1, variant) {
       if (C.skin === SKIN.chinese && r() < 0.25) C.skin = pick(r, [SKIN.light, SKIN.pale]);
       L.height = L.fem ? 1.56 + r() * 0.12 : 1.68 + r() * 0.14; L.girth = -0.2 + r() * 0.2;
       if (r() < 0.3) L.acc |= L.fem ? CROWD_ACC.visor : CROWD_ACC.cap; C.acc = pick(r, [0xffffff, 0x111111, 0x1c7ed6]); break;
-    case 'female':
-      L.fem = 1; C.top = pick(r, brightTops); L.pattern = r() < 0.15 ? pick(r, [PAT.floral, PAT.batik]) : 0; if (L.pattern) C.top = 0xffffff; L.sleeve = pick(r, [0, 1, 1, 2]);
-      L.pants = pick(r, [0, 1, 2, 2]); C.bottom = pick(r, [0x3d5f93, 0x111111, 0xe9ecef, 0xc8b48a, 0x1f2a44]); C.shoes = pick(r, [0xffffff, 0x111111, 0xd9c2a7]);
+    case 'female': {
+      L.fem = 1; C.top = pick(r, brightTops); L.pattern = r() < 0.18 ? pick(r, [PAT.floral, PAT.batik]) : 0; if (L.pattern) C.top = pick(r, TINTS); L.sleeve = pick(r, [0, 1, 1, 2]);
+      L.pants = pick(r, [0, 1, 2, 2]); C.bottom = pick(r, [0x3d5f93, 0x111111, 0xe9ecef, 0xc8b48a, 0x1f2a44, 0xffc9c9, 0x868e96]); C.shoes = pick(r, [0xffffff, 0x111111, 0xd9c2a7]);
       L.hair = pick(r, [2, 2, 3, 4]); C.hair = pick(r, [HAIR.black, HAIR.darkBrown, HAIR.brown, 0x6b3a1f]); L.height = 1.52 + r() * 0.16; L.girth = (r() - 0.45) * 0.5;
-      if (r() < 0.35) L.acc |= CROWD_ACC.bag; if (r() < 0.12) L.acc |= CROWD_ACC.glasses; break;
-    default: // male
-      C.top = pick(r, brightTops); L.pattern = r() < 0.12 ? pick(r, [PAT.batik, PAT.tourist]) : 0; if (L.pattern) C.top = 0xffffff; L.sleeve = pick(r, [1, 1, 1, 2, 0]);
-      L.pants = pick(r, [0, 1, 1]); C.bottom = pick(r, [0x3d5f93, 0x2b3f66, 0x111111, 0xc8b48a, 0x495057]); C.shoes = pick(r, [0xffffff, 0x111111, 0x868e96, 0x3b2a20]);
+      if (r() < 0.35) L.acc |= CROWD_ACC.bag; if (r() < 0.12) L.acc |= CROWD_ACC.glasses;
+      const k = r(); if (k < 0.16) kurung(); else if (k < 0.22) saree();
+      break;
+    }
+    default: // male: tees and bright polos, now and then a batik shirt
+      C.top = r() < 0.3 ? pick(r, POLO) : pick(r, brightTops); L.pattern = r() < 0.14 ? pick(r, [PAT.batik, PAT.batik, PAT.tourist]) : 0; if (L.pattern) C.top = pick(r, TINTS); L.sleeve = pick(r, [1, 1, 1, 2, 0]);
+      L.pants = pick(r, [0, 1, 1]); C.bottom = pick(r, [0x3d5f93, 0x2b3f66, 0x111111, 0xc8b48a, 0x495057, 0x8a7a66, 0x5c6a7a]); C.shoes = pick(r, [0xffffff, 0x111111, 0x868e96, 0x3b2a20]);
       L.hair = pick(r, [1, 1, 1, 5]); C.hair = pick(r, [HAIR.black, HAIR.black, HAIR.darkBrown]); L.height = 1.64 + r() * 0.17; L.girth = (r() - 0.4) * 0.6;
       if (r() < 0.2) L.acc |= CROWD_ACC.backpack; if (r() < 0.12) L.acc |= CROWD_ACC.cap; if (r() < 0.12) L.acc |= CROWD_ACC.glasses;
   }
