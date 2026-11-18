@@ -193,11 +193,11 @@ const CLOUDS = /* glsl */`
         cloudColor = mix( cloudColor, vec3( dot( cloudColor, vec3( 0.33 ) ) ) * 0.55, clamp( ( cov - 0.6 ) * 2.0, 0.0, 1.0 ) );
         cloudColor *= max( dayFactor, 0.035 );
         // low sun: the cumulus deck catches the light longer than the ground and is brighter than the sky round it —
-        // sunlit flanks peach toward the sun and pink away from it, thin rims hot pink, thick bases a lavender grey
+        // sunlit flanks peach toward the sun and pink away from it, thin rims hot pink, thick bases mauve
         float cGold = smoothstep( 0.4, 0.14, vSunDirection.y ) * smoothstep( -0.1, 0.0, vSunDirection.y );
         if ( cGold > 0.0 ) {
           float skyL = dot( texColor, vec3( 0.3, 0.45, 0.25 ) ), lit = light * ( 1.0 - core * 0.45 );
-          vec3 g = mix( vec3( 0.62, 0.56, 0.8 ), mix( vec3( 1.0, 0.64, 0.48 ), vec3( 1.0, 0.52, 0.64 ), smoothstep( 0.3, -0.6, cosT ) ), lit ) * ( 1.2 + 1.8 * lit );
+          vec3 g = mix( vec3( 0.8, 0.6, 0.8 ), mix( vec3( 1.0, 0.64, 0.48 ), vec3( 1.0, 0.52, 0.64 ), smoothstep( 0.3, -0.6, cosT ) ), lit ) * ( 1.2 + 1.8 * lit );
           g += vec3( 1.0, 0.4, 0.55 ) * ( 1.0 - core ) * ( 0.5 + silver );
           cloudColor = mix( cloudColor, g * skyL, cGold * 0.9 );
         }
