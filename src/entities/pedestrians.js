@@ -70,7 +70,7 @@ export class Pedestrians {
     this.game = game;
     this.walkways = new Walkways(game);
     this.maxWalkers = max;
-    this.max = max + 140; // extra capacity for posed scene crowds and staged street scenes
+    this.max = max + 200; // extra capacity for posed scene crowds, diners (world/scenes.js) and staged street scenes
     // the same people per square metre of view on every preset: the phone's 80 cover a 75 m view, 150 cover ~100 m
     this.view = Math.round(75 * Math.sqrt(max / 80));
     this.keep = this.view * 1.35;   // beyond this anyone not pinned is recycled, seen or not (a few pixels tall)
