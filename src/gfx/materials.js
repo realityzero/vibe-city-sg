@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { U } from './globals.js';
 import { NOISE, AA } from './shaderlib.js';
-import { makeSignAtlas } from './signAtlas.js';
+import { makeSignAtlas, SIGN_ROWS, FOOD_FIRST, FOOD_COUNT } from './signAtlas.js';
 import { makeInteriorAtlas } from './interiorAtlas.js';
 import { HF, HF_GLSL } from './heightfield.js';
 
@@ -202,10 +202,11 @@ export function createFacadeMaterial({ reflection = false } = {}) {
         if (h < 0.75) return vec3(0.22, 0.10, 0.04);
         return vec3(0.55, 0.52, 0.45);
       }
-      // one signboard from the atlas (60 boards, 4 x 15) with trilinear-safe gradients
+      // one signboard from the atlas (4 boards a row, signAtlas.js) with trilinear-safe gradients
+      const vec2 SIGN_GRID = vec2(4.0, ${SIGN_ROWS}.0);
       vec4 signBoard(float idx, vec2 bp, vec2 gx, vec2 gy) {
         vec2 o = vec2(mod(idx, 4.0), floor(idx / 4.0));
-        return textureGrad(uSigns, (o + vec2(bp.x, 1.0 - bp.y)) / vec2(4.0, 16.0), gx / vec2(4.0, 16.0), gy / vec2(4.0, 16.0));
+        return textureGrad(uSigns, (o + vec2(bp.x, 1.0 - bp.y)) / SIGN_GRID, gx / SIGN_GRID, gy / SIGN_GRID);
       }`,
     fragAfterMetal: /* glsl */`
       float fStyle = floor(vF1.x + 0.5);
@@ -243,15 +244,17 @@ ${SHOP_UNIT_SETUP}
         albedo *= 1.0 - uWet * 0.28;
       } else if (fStyle < 12.5) {
         // ---- arcade / void-deck ceiling: plaster with lamps (warm bulbs for shophouses, tubes for HDB and hawker centres)
-        bool hdbS = fFlag > 2.5;
-        float sp = hdbS ? 6.5 : 5.2;
+        // (void decks and hawker halls keep their tubes on all day; a hall's ceiling is a grid of them, u x v)
+        bool hdbS = fFlag > 2.5, hall = fFlag > 5.5;
+        float sp = hall ? 4.2 : hdbS ? 6.5 : 5.2;
         albedo = mix(wallCol, vec3(0.86, 0.85, 0.8), 0.6) * (0.85 + 0.15 * vnoise(vWall * 0.7));
-        vec2 lq = vec2((fract(vWall.x / sp) - 0.5) * sp, vWall.y - (hdbS ? 1.05 : 0.95));
+        vec2 lq = vec2((fract(vWall.x / sp) - 0.5) * sp, hall ? (fract(vWall.y / 3.4) - 0.5) * 3.4 : vWall.y - (hdbS ? 1.05 : 0.95));
         float lampM = hdbS ? (1.0 - smoothstep(0.55, 0.62, abs(lq.x))) * (1.0 - smoothstep(0.035, 0.06, abs(lq.y)))
                            : 1.0 - smoothstep(0.09, 0.14, length(lq));
         vec3 lc = hdbS ? vec3(0.85, 0.95, 1.0) : vec3(1.0, 0.7, 0.38);
-        fEmis += lc * lampM * (0.25 + uNight * 7.0);
-        fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * uNight * 0.45;
+        fEmis += lc * lampM * ((hdbS ? 1.4 : 0.25) + uNight * 7.0);
+        fEmis += lc * albedo * exp(-dot(lq, lq) * 0.9) * (uNight * 0.45 + (hdbS ? 0.08 : 0.0));
+        if (hall) fEmis += albedo * lc * (0.1 + uNight * 0.1);   // (the light the floor and tables throw back up)
         fRough = 0.92;
       } else if (fStyle < 13.5) {
         // ---- columns: shophouse piers wear a Peranakan tile dado, HDB / hawker-centre pillars a painted base band
@@ -273,7 +276,7 @@ ${SHOP_UNIT_SETUP}
           fRough = 0.32;
         } else if (hdbP && y < 1.05) albedo = mix(albedo, hdbAccent(fAccent) * 0.85, 0.9);
         albedo *= mix(0.65, 1.0, smoothstep(-0.2, 0.8, y));
-      } else {
+      } else if (fStyle < 14.5) {
         // ---- five-foot-way / void-deck floor: patterned cement tiles, terrazzo for HDB
         vec2 tq = vWall / (fFlag > 2.5 ? 0.4 : 0.22); vec2 tid = floor(tq), tf = fract(tq);
         float chk = mod(tid.x + tid.y, 2.0);
@@ -283,6 +286,35 @@ ${SHOP_UNIT_SETUP}
         albedo = mix(albedo, albedo * 0.55, grout);
         albedo *= 0.8 + 0.3 * vnoise(vWall * 0.8 + fSeed * 9.0);
         fRough = mix(0.55, 0.2, uWet);
+        // void decks and hawker halls: the tube lights overhead (the soffit's lamps light nothing on their own)
+        if (fFlag > 2.5) fEmis += albedo * vec3(0.85, 0.95, 1.0) * (0.05 + uNight * 0.3);
+      } else {
+        // ---- hawker stall boards (signAtlas.js food pool): vF2.z = atlas cell, vF2.y = kind (0 a stall's lightbox over
+        // its strip of photo menus, 1 the NEA grade sticker, 2 a board such as the tray return); u runs left to right
+        float cellI = floor(vF2.z + 0.5), kind = floor(vF2.y + 0.5);
+        vec2 q = vec2(vWall.x / wallLen, fy0 / fh), dqx = dFdx(q), dqy = dFdy(q);
+        bool menu = kind < 0.5 && q.y < 0.42;
+        vec3 sg;
+        if (kind > 0.5 && kind < 1.5) sg = signBoard(cellI, vec2(q.x * 0.25, q.y), dqx * vec2(0.25, 1.0), dqy * vec2(0.25, 1.0)).rgb;
+        else if (!menu) { vec2 sc = vec2(1.0, kind < 0.5 ? 1.0 / 0.58 : 1.0); sg = signBoard(cellI, vec2(q.x, (q.y - (kind < 0.5 ? 0.42 : 0.0)) * sc.y), dqx * sc, dqy * sc).rgb; }
+        else {
+          // photo menus: four dishes on a white panel (the stall's own dish twice, two from the rest of the pool)
+          float slot = floor(q.x * 4.0);
+          vec2 sq = vec2(fract(q.x * 4.0), q.y / 0.42);
+          float dish = slot < 1.5 ? cellI : ${FOOD_FIRST}.0 + floor(hash12(vec2(slot * 7.1 + cellI, fSeed * 31.0)) * ${FOOD_COUNT}.0);
+          vec2 pq = (sq - vec2(0.12, 0.3)) / vec2(0.76, 0.64);   // the photo, over its price tag
+          sg = vec3(0.93, 0.92, 0.88);
+          if (pq.x > 0.0 && pq.x < 1.0 && pq.y > 0.0 && pq.y < 1.0) {
+            vec2 k = vec2(0.0176 + pq.x * 0.2148, 0.07 + pq.y * 0.86);
+            sg = signBoard(dish, k, dqx * vec2(4.0 * 0.2148 / 0.76, 0.86 / (0.42 * 0.64)), dqy * vec2(4.0 * 0.2148 / 0.76, 0.86 / (0.42 * 0.64))).rgb;
+          } else if (sq.y > 0.08 && sq.y < 0.24 && abs(sq.x - 0.5) < 0.3) sg = vec3(0.75, 0.1, 0.08) * (0.7 + 0.3 * aaPulse(sq.x * 9.0, 0.35));
+          sg *= 1.0 - 0.35 * (1.0 - aaBand(sq.x, 0.03, 0.97));
+        }
+        // lit while the stall trades (hawkers open early: its seed against the share open, as world/scenes.js staffs it)
+        bool open = fSeed < shopOpenFrac(localHour(), 1.0);
+        albedo = sg; fRough = 0.3; fMetal = 0.0;
+        if (kind < 0.5 && open) fEmis += sg * (menu ? 0.25 + uNight * 0.7 : 0.45 + uNight * 1.5);
+        else if (kind > 1.5) fEmis += sg * (0.08 + uNight * 0.4);
       }
 
       bool shop = fStyle > 3.5 && fStyle < 4.5;
@@ -317,8 +349,8 @@ ${SHOP_UNIT_SETUP}
           float di = floor(lx);
           float dig = mod(floor(num / pow(10.0, nd - 1.0 - di) + 1e-3), 10.0);
           // sample the inner 86% of the glyph cell so mips never bleed in the neighbouring cells / board row
-          vec2 g = vec2(lx, -ly) * 0.86 / vec2(10.0, 16.0);
-          float a = textureGrad(uSigns, vec2((dig + 0.07 + fract(lx) * 0.86) / 10.0, (15.07 + (1.0 - ly) * 0.86) / 16.0), dFdx(g), dFdy(g)).a;
+          vec2 g = vec2(lx, -ly) * 0.86 / vec2(10.0, SIGN_GRID.y);
+          float a = textureGrad(uSigns, vec2((dig + 0.07 + fract(lx) * 0.86) / 10.0, (15.07 + (1.0 - ly) * 0.86) / SIGN_GRID.y), dFdx(g), dFdy(g)).a;
           albedo = mix(albedo, hdbAccent(fAccent) * 0.55, a);
         }
       }

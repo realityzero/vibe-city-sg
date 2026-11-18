@@ -22,6 +22,15 @@ export const C = {
   rubber: [0x3f8f55, 0xc4583a, 0x3c6fb4, 0x7b5aa6].map(lin),
   play: [0xe23b2e, 0xf2c230, 0x2f7fd6, 0x3fae49, 0xf07f1e].map(lin),
   produce: [0xc8281e, 0xf08a1c, 0x5aa02c, 0xf2cf2a, 0x7a2a5a, 0xe8e0c8].map(lin), crate: [0x9a6a3a, 0x2f6fb0, 0xc23a2a].map(lin),
+  // hawker centre: fixed tables (one stool colour per centre), stainless counters, tiled stall walls
+  hawkerStool: [0xc8202a, 0x1f56b8, 0x2b8f3e, 0xe8e4da].map(lin), hawkerTop: [0xeeebe3, 0xd9dcd8].map(lin),
+  stainless: lin(0xc2c7ca), tile: lin(0xe9e7e0), tileDark: lin(0xb9b6ad), wok: lin(0x26282a), tissue: [0xf6f4ee, 0xf2a7c3, 0x8fc6ea].map(lin),
+  foodTray: [0xd8a23a, 0xc8462a, 0x6aa040, 0xf2e2b0, 0x8a4a22].map(lin), jar: [0xd23b2a, 0xf0b02a, 0x3a8a3a, 0xe8e2d0, 0x2a5aa8].map(lin),
+  fanBlade: lin(0xe8e6e0), trayCab: [0x1f6a3a, 0x2a5aa8].map(lin),
+  bicycle: [0x222426, 0x2f6fd6, 0xc23a2a, 0xe8e8e0, 0x3a7a3a].map(lin),
+  chessBoard: lin(0xd8b27a), chessLine: lin(0x5a3a1a), chessRed: lin(0xb82a22), chessBlack: lin(0x1e1e1e),
+  tent: [[0x2f5fa8, 0xf2f2ee], [0xd84a7a, 0xf8f0e0]].map(p => p.map(lin)), cloth: lin(0xf4f2ec), chair: [0x1f56b8, 0xc8202a].map(lin),
+  grate: lin(0x3a3c3e), shelterRoof: lin(0x5f7a70),
 };
 
 // ---------------------------------------------------------------- geometry writer
@@ -65,6 +74,13 @@ export class Kit {
     const b = this.g.vc;
     for (let k = 0; k < n; k++) this._v(cx + r1 * Math.cos(k * da), y1, cz + r1 * Math.sin(k * da) * kz, col);
     for (let k = 1; k < n - 1; k++) this.g.tri(b, b + k + 1, b + k);
+  }
+  /** flat n-gon of radius r at height y, facing down (the underside of something hanging) */
+  discDown(cx, cz, y, r, n, col) {
+    this._normal(1, 0, 0, 0, 0, 1);
+    const b = this.g.vc, da = Math.PI * 2 / n;
+    for (let k = 0; k < n; k++) this._v(cx + r * Math.cos(k * da), y, cz + r * Math.sin(k * da), col);
+    for (let k = 1; k < n - 1; k++) this.g.tri(b, b + k, b + k + 1);
   }
   /** cone (apex up), seen from outside; `under` adds the inside, seen from below */
   cone(cx, cz, y0, y1, r, n, colA, colB, under = null) {
@@ -151,11 +167,84 @@ export const PIECE = {
     K.box(1.05, 0, -0.05, 0.22, 0.32, 0.2, cr); K.box(1.05, 0.32, -0.05, 0.2, 0.26, 0.18, P(3));
     K.prism(-1.05, 0, 0, 0.5, 0.2, 0.15, 6, C.canvas);
   },
-  // stone table and four round stools of the void deck
-  stoneTable(K) {
+  // stone table and four round stools of the void deck; on half of them a xiangqi board (the uncles' chess table)
+  stoneTable(K, h) {
     K.prism(0, 0, 0.7, 0.76, 0.45, 0.45, 8, C.terrazzo);
     K.prism(0, 0, 0, 0.7, 0.2, 0.14, 6, C.terrazzo, false);
     for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; K.prism(Math.cos(a) * 0.78, Math.sin(a) * 0.78, 0, 0.42, 0.17, 0.17, 6, C.terrazzo); }
+    if (h < 0.5) return;
+    const y = 0.766, e = 0.24;
+    K.quad(-e, y, e, e, y, e, e, y, -e, -e, y, -e, C.chessBoard);
+    for (let k = 0; k < 5; k++) { const t = -e * 0.8 + k * e * 0.4; K.quad(t - 0.004, y + 0.002, e * 0.85, t + 0.004, y + 0.002, e * 0.85, t + 0.004, y + 0.002, -e * 0.85, t - 0.004, y + 0.002, -e * 0.85, C.chessLine); K.quad(-e * 0.85, y + 0.002, t + 0.004, e * 0.85, y + 0.002, t + 0.004, e * 0.85, y + 0.002, t - 0.004, -e * 0.85, y + 0.002, t - 0.004, C.chessLine); }
+    for (let k = 0; k < 10; k++) K.prism(-0.18 + (k % 5) * 0.09, k < 5 ? -0.17 : 0.17 - (k % 2) * 0.09, y, y + 0.018, 0.026, 0.026, 6, k < 5 ? C.chessRed : C.chessBlack);
+  },
+  // a hawker centre's fixed round table: four stools on arms off one steel frame; some seats are choped with a packet
+  // of tissues (h: stool colour x chope pattern, SEATS / CHOPE below)
+  hawkerTable(K, h) {
+    const v = Math.min(11, Math.floor(h * 12)), st = C.hawkerStool[v % 4], top = C.hawkerTop[v % 2]; // v = colour + 4 x chope
+    K.prism(0, 0, 0.72, 0.76, 0.45, 0.45, 10, top);
+    K.box(0, 0, 0, 0.05, 0.72, 0.05, C.steel);
+    for (let k = 0; k < 4; k++) {
+      const a = Math.PI / 4 + k * Math.PI / 2, c = Math.cos(a), sn = Math.sin(a);
+      K.quad(c * 0.62 - sn * 0.02, 0.07, sn * 0.62 + c * 0.02, c * 0.62 + sn * 0.02, 0.07, sn * 0.62 - c * 0.02, sn * 0.02, 0.07, -c * 0.02, -sn * 0.02, 0.07, c * 0.02, C.steel);
+      K.box(c * 0.66, 0, sn * 0.66, 0.025, 0.42, 0.025, C.steel);
+      K.prism(c * 0.66, sn * 0.66, 0.42, 0.46, 0.17, 0.17, 8, st);
+    }
+    for (const k of CHOPE[Math.floor(v / 4)]) {
+      const a = Math.PI / 4 + k * Math.PI / 2, x = Math.cos(a) * 0.66, z = Math.sin(a) * 0.66, col = C.tissue[(v + k) % 3];
+      K.box(x, 0.46, z, 0.07, 0.03, 0.045, C.tissue[0]); K.box(x, 0.49, z, 0.05, 0.004, 0.03, col);
+    }
+  },
+  // a few residents' bicycles on a rack under the block
+  cycles(K, h) {
+    K.box(0, 0.3, -0.35, 1.3, 0.04, 0.02, C.steel);
+    for (const x of [-1.25, 1.25]) K.box(x, 0, -0.35, 0.025, 0.34, 0.025, C.steel);
+    const n = 2 + (h > 0.4 ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const x = -0.75 + i * 0.75, col = C.bicycle[(Math.floor(h * 7) + i * 2) % C.bicycle.length];
+      K.wheel(x, 0.34, 0.5, 0.34, C.dark); K.wheel(x, 0.34, -0.5, 0.34, C.dark);
+      K.box(x, 0.64, 0, 0.022, 0.04, 0.48, col); K.box(x, 0.3, -0.1, 0.022, 0.34, 0.03, col);
+      K.box(x, 0.88, -0.12, 0.06, 0.03, 0.12, C.dark); K.box(x, 0.98, 0.48, 0.26, 0.025, 0.025, C.dark);
+      K.box(x, 0.34, 0.48, 0.02, 0.64, 0.02, col);
+      if (i === 1) K.box(x, 0.7, 0.62, 0.14, 0.18, 0.1, C.steel); // a basket
+    }
+  },
+  // 9 x 6 m tent beside a block: a wake (blue and white, rows of plastic chairs, a table of offerings) or a wedding
+  // (pink and cream, round tables in white cloth, red chairs)
+  tent(K, h) {
+    const wed = h >= 0.5, [a, b] = C.tent[wed ? 1 : 0], X = 4.5, Z = 3, y0 = 2.6, y1 = 3.4;
+    for (const x of [-X, 0, X]) for (const z of [-Z, Z]) K.box(x, 0, z, 0.04, y0, 0.04, C.steel);
+    // striped pitched canopy (and its underside)
+    for (let k = 0; k < 6; k++) {
+      const xa = -X + k * 1.5, xb = xa + 1.5, col = k % 2 ? a : b, dim = col.map(v => v * 0.6);
+      for (const s of [1, -1]) {
+        K.quad(xa, y0, s * Z, xb, y0, s * Z, xb, y1, 0, xa, y1, 0, col);
+        K.quad(xb, y0 - 0.01, s * Z, xa, y0 - 0.01, s * Z, xa, y1 - 0.01, 0, xb, y1 - 0.01, 0, dim);
+      }
+    }
+    for (const s of [1, -1]) { K.tri(s * X, y0, -Z, s * X, y0, Z, s * X, y1, 0, b); K.tri(s * X, y0, Z, s * X, y0, -Z, s * X, y1, 0, b); }
+    if (wed) for (const [x, z] of TENT_TABLES) {
+      K.prism(x, z, 0, 0.76, 0.62, 0.62, 10, C.cloth);
+      for (let k = 0; k < 6; k++) { const t = k * Math.PI / 3; K.box(x + Math.cos(t) * 0.95, 0, z + Math.sin(t) * 0.95, 0.2, 0.46, 0.2, C.chair[1]); }
+    } else {
+      K.box(0, 0, -Z + 0.6, 1.2, 0.8, 0.4, C.cloth);
+      for (const [x, z] of TENT_CHAIRS) K.box(x, 0, z, 0.21, 0.46, 0.21, C.chair[0]);
+    }
+  },
+  // cast-iron tree grate round a plaza tree's trunk
+  grate(K) {
+    for (let k = 0; k < 4; k++) { const x = -0.6 + k * 0.4; K.quad(x - 0.03, 0.03, 0.7, x + 0.03, 0.03, 0.7, x + 0.03, 0.03, -0.7, x - 0.03, 0.03, -0.7, C.grate); }
+    for (const z of [-0.7, 0.7]) K.box(0, 0, z, 0.7, 0.035, 0.03, C.grate);
+    for (const x of [-0.7, 0.7]) K.box(x, 0, 0, 0.03, 0.035, 0.7, C.grate);
+  },
+  // a hawker centre's stalls, ceiling fans and tray-return stations (below)
+  stall: (K, h) => hawkerStall(K, h), fan: (K, h) => ceilingFan(K, h), trays: (K, h) => trayReturn(K, h),
+  // a small pavilion on a plaza: a slab roof on four posts over two benches
+  shelter(K) {
+    K.box(0, 2.6, 0, 2.2, 0.16, 1.6, C.shelterRoof);
+    K.quad(-2.2, 2.59, -1.6, 2.2, 2.59, -1.6, 2.2, 2.59, 1.6, -2.2, 2.59, 1.6, C.concrete);
+    for (const x of [-1.9, 1.9]) for (const z of [-1.3, 1.3]) K.box(x, 0, z, 0.07, 2.6, 0.07, C.dark);
+    for (const z of [-0.7, 0.7]) { K.box(0, 0.42, z, 1.5, 0.05, 0.22, C.wood); for (const x of [-1.3, 1.3]) K.box(x, 0, z, 0.035, 0.42, 0.2, C.dark); }
   },
   // wall-mounted aircon condenser (local +z out of the wall)
   condenser(K) {
@@ -212,8 +301,22 @@ export const PIECE = {
 };
 
 // colour variants per kind (h = (v + 0.5) / n); the order is the kind's index in the placement records
-export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 1, condenser: 1, playground: 4, fitness: 3, goods: 6 };
+export const VARIANTS = { kopitiam: 10, umbrella: 4, planter: 6, bench: 1, bikes: 3, cart: 3, pot: 6, stoneTable: 2, condenser: 1, playground: 4, fitness: 3, goods: 6,
+  hawkerTable: 12, cycles: 3, tent: 2, grate: 1, shelter: 1, stall: 6, fan: 3, trays: 2 };
 export const KINDS = Object.keys(VARIANTS);
+
+// who sits where (world/scenes.js seats people there): per kind, [x, z] of each seat in the piece's frame (they face
+// the middle of their table). Hawker tables: seats CHOPE[pattern] hold a packet of tissues and stay empty.
+const ring4 = (r, a0) => [0, 1, 2, 3].map(k => [Math.cos(a0 + k * Math.PI / 2) * r, Math.sin(a0 + k * Math.PI / 2) * r]);
+export const CHOPE = [[], [1], [0, 2]];
+const TENT_TABLES = [[-2.6, -1.2], [0, -1.2], [2.6, -1.2], [-1.3, 1.4], [1.3, 1.4]];
+const TENT_CHAIRS = [];
+for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) TENT_CHAIRS.push([-2.6 + c * 1.05, -1.0 + r * 0.95]);
+export const SEATS = {
+  kopitiam: ring4(0.64, Math.PI / 4), hawkerTable: ring4(0.66, Math.PI / 4), stoneTable: ring4(0.78, 0),
+  // per variant, [x, z, and the point they face]: a wake's chairs face the front of the tent, a wedding's tables seat six
+  tent: [TENT_CHAIRS.map(([x, z]) => [x, z, x, -9]), TENT_TABLES.flatMap(([x, z]) => [0, 1, 2, 3, 4, 5].map(k => [x + Math.cos(k * Math.PI / 3) * 0.95, z + Math.sin(k * Math.PI / 3) * 0.95, x, z]))],
+};
 
 // covered linkway along local +z from 0 to L: a slab roof on two rows of posts (under the void-deck soffit, 2.85 m up,
 // where it meets the blocks)
@@ -223,4 +326,54 @@ export function linkway(K, L, roof) {
   K.quad(-1.35, y, 0, 1.35, y, 0, 1.35, y, L, -1.35, y, L, roof.map(v => v * 0.7)); // soffit
   const n = Math.max(1, Math.round(L / 4.5));
   for (let k = 0; k <= n; k++) for (const x of [-1.2, 1.2]) K.box(x, 0, 0.6 + (L - 1.2) * k / n, 0.06, y, 0.06, C.steel);
+}
+
+// ---------------------------------------------------------------- hawker centre fittings
+// a stall seen from its aisle (local +z), its front on z = 0, its back at -D: tiled side walls, a stainless counter with
+// a glass display, the wok range and shelves inside, its own low ceiling; the lightbox and photo menus over the front
+// (PANEL: y range, width) and the NEA sticker on the counter (STICKER: x, y, size) are facade quads the city builder
+// writes (they light up)
+export const STALL = { W: 3.0, D: 2.6, PANEL: [1.72, 2.85], PANEL_W: 2.6, STICKER: [0.95, 0.6, 0.2] };
+export function hawkerStall(K, h) {
+  const { W, D } = STALL, hw = W / 2, [p0, p1] = STALL.PANEL, J = k => C.jar[(Math.floor(h * 17) + k) % C.jar.length];
+  for (const x of [-hw + 0.03, hw - 0.03]) K.box(x, 0, -D / 2, 0.03, 2.55, D / 2, C.tile);
+  K.box(0, 0, -D + 0.03, hw, 2.55, 0.03, C.tile);
+  K.box(0, 2.5, -D / 2, hw, 0.05, D / 2, C.tileDark);                                // the stall's own ceiling
+  K.box(0, p0 - 0.05, -0.07, hw, p1 - p0 + 0.08, 0.07, C.tileDark);                  // lightbox housing over the front
+  // counter: stainless, a darker kick plate, a glass display of the day's food on top, a chopping board
+  K.box(0, 0, -0.32, hw - 0.08, 0.95, 0.32, C.stainless);
+  K.box(0, 0, -0.01, hw - 0.1, 0.12, 0.012, C.wok);
+  K.box(-0.35, 0.95, -0.3, 0.95, 0.42, 0.2, C.glass);
+  for (let k = 0; k < 4; k++) K.box(-1.05 + k * 0.47, 0.96, -0.3, 0.2, 0.06, 0.15, C.foodTray[(Math.floor(h * 11) + k) % C.foodTray.length]);
+  K.box(1.0, 0.95, -0.3, 0.3, 0.05, 0.22, C.wood);
+  // the back: wok range and its hood, shelves of jars and sauce bottles, a stockpot
+  K.box(-0.55, 0, -D + 0.4, 0.8, 0.85, 0.32, C.stainless);
+  K.prism(-0.85, -D + 0.4, 0.85, 0.95, 0.28, 0.34, 8, C.wok, false);
+  K.prism(-0.15, -D + 0.42, 0.85, 1.3, 0.22, 0.22, 8, C.steel);
+  K.box(-0.55, 1.95, -D + 0.38, 0.85, 0.3, 0.36, C.stainless);
+  for (const [y, o] of [[1.25, 0], [1.65, 2]]) {
+    K.box(0.85, y, -D + 0.14, 0.55, 0.03, 0.12, C.steel);
+    for (let k = 0; k < 4; k++) K.box(0.45 + k * 0.27, y + 0.03, -D + 0.14, 0.06, 0.18 + (k % 2) * 0.06, 0.05, J(k + o));
+  }
+}
+// ceiling fan hanging from the hall's ceiling (origin there): drop rod, motor and three blades turned by h
+export function ceilingFan(K, h) {
+  K.box(0, -0.75, 0, 0.02, 0.75, 0.02, C.steel);
+  K.prism(0, 0, -0.85, -0.72, 0.13, 0.11, 8, C.fanBlade, false); K.discDown(0, 0, -0.85, 0.13, 8, C.fanBlade);
+  for (let k = 0; k < 3; k++) {
+    const a = h * 6.283 + k * 2.094, c = Math.cos(a), s = Math.sin(a), r0 = 0.12, r1 = 0.72, w = 0.065, y = -0.79;
+    const P = (r, o) => [c * r - s * o, s * r + c * o];
+    const [ax, az] = P(r0, -w), [bx, bz] = P(r1, -w), [cx, cz] = P(r1, w), [dx, dz] = P(r0, w);
+    K.quad(ax, y, az, dx, y, dz, cx, y, cz, bx, y, bz, C.fanBlade);
+    K.quad(ax, y, az, bx, y, bz, cx, y, cz, dx, y, dz, C.fanBlade.map(v => v * 0.8));
+  }
+}
+// tray-return station at the end of a row of stalls: an open-fronted rack cabinet, its board above (BOARD: y range,
+// width; a facade quad the builder writes)
+export const TRAY = { BOARD: [1.62, 2.02], BOARD_W: 1.6 };
+export function trayReturn(K, h) {
+  const col = C.trayCab[h < 0.5 ? 0 : 1];
+  K.box(0, 0, -0.3, 0.82, 1.5, 0.3, col);
+  for (const y of [0.3, 0.65, 1.0]) K.box(0, y, -0.02, 0.74, 0.25, 0.02, C.dark);   // the rack's slots
+  K.box(0, 1.5, -0.3, 0.82, 0.55, 0.06, col);                                      // the board's backing
 }

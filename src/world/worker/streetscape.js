@@ -11,6 +11,7 @@
 import { Kit, C, KINDS, hash, pick, linkway } from '../streetpieces.js';
 
 const KIND = Object.fromEntries(KINDS.map((k, i) => [k, i]));
+const HALL_FITTINGS = new Set(['stall', 'fan', 'trays']);
 
 // ---------------------------------------------------------------- placement
 /**
@@ -159,7 +160,9 @@ export function buildStreetscape(ctx) {
   }
 
   // ---- HDB estates: void-deck tables, linkways between neighbouring blocks, one playground + fitness corner each
-  for (const [x, z, yaw, kind] of ctx.colonnade) put(kind, x, z, yaw, hash(x, z), 1.0, kind === 'stoneTable');
+  // (the builder's own pieces: void-deck tables, bikes and benches; a hawker hall's fixed tables with their stool colour
+  // and chope, its stalls, fans and tray returns, which have colliders of their own or hang overhead)
+  for (const [x, z, yaw, kind, h, y] of ctx.colonnade) put(kind, x, z, yaw, h ?? hash(x, z), HALL_FITTINGS.has(kind) ? 0 : 1.0, kind !== 'kopitiam', y);
   const B = ctx.hdbBlocks;
   // nothing built or planted in the way and no carriageway crossed (footways are fine: the linkway shelters one)
   const linkClear = (ax, az, bx, bz) => {
