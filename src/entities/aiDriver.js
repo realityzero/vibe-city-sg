@@ -1,12 +1,13 @@
 // AI driver for physics vehicles: follows a polyline route with look-ahead steering, curvature-based speed,
-// raycast obstacle avoidance and stuck recovery. Used by race opponents and chase targets.
+// raycast obstacle avoidance and stuck recovery, and (`follow`: the autopilot) a following gap behind the traffic
+// ahead. Used by race opponents, chase targets and the autopilot.
 import * as THREE from 'three';
 
-const _f = new THREE.Vector3(), _t = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _f = new THREE.Vector3(), _t = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _r = new THREE.Vector2();
 
 export class PathDriver {
-  constructor(game, vehicle, route /* [[x,z]...] */, { loop = false, speed = 1, aggression = 1 } = {}) {
-    this.game = game; this.v = vehicle; this.loop = loop; this.speedMul = speed; this.aggr = aggression;
+  constructor(game, vehicle, route /* [[x,z]...] */, { loop = false, speed = 1, aggression = 1, follow = false } = {}) {
+    this.game = game; this.v = vehicle; this.loop = loop; this.speedMul = speed; this.aggr = aggression; this.follow = follow;
     this.setRoute(route);
     this.stuck = 0; this.reverseT = 0; this.done = false;
   }
@@ -55,7 +56,9 @@ export class PathDriver {
     const a1 = Math.atan2(p1.y - tgt.y, p1.x - tgt.x), a2 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
     let curv = Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1)));
     const vmax = v.spec.maxSpeed * this.speedMul;
-    const target = Math.min(vmax, 8 + (1.2 - Math.min(1.2, curv)) * vmax * 0.8) * (0.85 + 0.15 * this.aggr);
+    let target = Math.min(vmax, 8 + (1.2 - Math.min(1.2, curv)) * vmax * 0.8) * (0.85 + 0.15 * this.aggr);
+    const lead = this.follow ? this.leadSpeed(pos, s, sp) : Infinity;
+    target = Math.min(target, lead);
     // obstacle avoidance
     const P = this.game.physics;
     const o = { x: pos.x, y: pos.y + 0.8, z: pos.z };
@@ -66,11 +69,29 @@ export class PathDriver {
     if (hl) ang -= 0.5 * (1 - hl.toi / L);
     if (hr) ang += 0.5 * (1 - hr.toi / L);
     let steer = THREE.MathUtils.clamp(-ang * 2.0, -1, 1);
-    let thr = sp < target ? 1 : 0, brk = sp > target + 3 ? 1 : 0;
+    let thr = sp < target ? 1 : 0, brk = sp > target + (sp > lead ? 0.3 : 3) ? 1 : 0;
     if (Math.abs(ang) > 1.2) { thr = 0.5; }
     if (thr > 0.5 && sp < 1.0) this.stuck += dt; else this.stuck = Math.max(0, this.stuck - dt * 0.5);
     if (this.stuck > 1.5) { this.reverseT = 1.2; this.stuck = 0; }
     if (this.reverseT > 0) { this.reverseT -= dt; thr = 0; brk = 1; steer = -steer; }
     v.setDriverControls({ throttle: thr, brake: brk, steer, handbrake: false }, dt);
+  }
+
+  /** the fastest we may go and still keep a gap (3 m + 1.2 s) behind the traffic car on the route ahead, braking at
+   * 4 m/s²; Infinity if the road ahead is clear */
+  leadSpeed(pos, s, sp) {
+    const cars = this.game.traffic?.cars; if (!cars) return Infinity;
+    const me = this.v.spec, fx = _f.x, fz = _f.z;
+    let v = Infinity;
+    for (const c of cars) {
+      const dx = c.pos.x - pos.x, dz = c.pos.z - pos.z, ahead = dx * fx + dz * fz;
+      if (ahead <= 0 || ahead > 60 || Math.abs(c.pos.y - pos.y) > 2.5) continue;
+      // on our route there: beside the route point that far along it
+      const q = this.pointAt(s + ahead, _r);
+      if (Math.hypot(c.pos.x - q.x, c.pos.z - q.y) > (me.width + c.spec.width) / 2 + 0.3) continue;
+      const u = c.state === 'drive' ? c.speed : 0, gap = ahead - (me.length + c.spec.length) / 2 - 3 - 1.2 * Math.min(sp, u + 3);
+      v = Math.min(v, Math.sqrt(Math.max(0, u * u + 8 * gap)));
+    }
+    return v;
   }
 }

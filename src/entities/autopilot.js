@@ -19,7 +19,7 @@ export class Autopilot {
     if (!t) { g.ui.toast('Set a waypoint first (M, right-click) — Claudia needs a destination.'); return; }
     const route = g.roadnet.route(v.position.x, v.position.z, t.x, t.z);
     if (!route || route.length < 2) { g.ui.toast('Claudia could not find a route. She blames OpenStreetMap.'); return; }
-    const drv = new PathDriver(g, v, route, { speed: 0.55, aggression: 0.6 });
+    const drv = new PathDriver(g, v, route, { speed: 0.55, aggression: 0.6, follow: true }); // (keeps its distance behind traffic)
     const step = h => { if (p.vehicle !== v) return this.disengage(); drv.update(h); if (drv.done) this.disengage('Arrived. Claudia would like a 5-star rating.'); };
     g.physics.onStep(step);
     this.state = { drv, step, v };

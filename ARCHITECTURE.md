@@ -167,7 +167,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   captured in `onPostStep`), so motion is smooth at any refresh rate; Tommy is seated after the vehicles sync. Vehicle
   controls are *stored* by `setDriverControls()` (player, AI, autopilot) and applied per fixed step in
   `Physics.beforeWorldStep`, after every controller callback has run; AI (`PathDriver`) steers from the simulated body,
-  not the interpolated root.
+  not the interpolated root. With `follow` (Claudia's autopilot) it keeps 3 m + 1.2 s behind the traffic car on its
+  route ahead.
 - `Vehicle`: centre of mass ~0.45 m up, steering lock limited by a lateral-acceleration budget and slower at speed,
   ramped pedals (brake wins over throttle; reverse after a short stop), brakes as impulses (force × h), yaw-rate assist,
   inertia-normalised bike balance, support-faded downforce. Parked cars may sleep; input or impacts wake them.
@@ -178,7 +179,20 @@ for a while, so allocation *churn* during the load matters as well as what stays
   at the body's projection. Speed is planned for the bends ahead (`Path.bends()`: comfortable lateral acceleration,
   gentle braking before the corner), indicators blink before and through turns, bodies roll / dive / squat on a spring
   (`TrafficRenderer.setTransform` tilt: body only, wheels stay down). Junctions: amber commits a car that can't stop
-  smoothly; merges and crossings resolve first come, first through. Beyond 140 / 200 m from the camera a car is driven
+  smoothly; crossings resolve first come, first through (nobody in a junction waits for a car still to come in, so
+  nobody waits in a circle), merges in turn by distance to the merge, like a zip. Cars keep to their lane
+  (`Traffic._keep`): where a road carries on, the lane graph links every lane to every lane, so a car takes the lanes
+  nearest its own place across the carriageway, and where roads split or merge the lanes nearest where its lane ends.
+  Where OSM draws a dual carriageway's two ways closer together than their width (~230 lanes, e.g. the ECP by
+  Sheares), the inner lanes of both run over each other and across the other deck's kerb; traffic keeps off such a
+  lane (`_squeezed`) where its road has another, and nothing appears on it.
+  The leader search (`leaderGap`) follows the car's route through the next two junctions — lanes inside a big junction
+  are a few metres long — and sees cars heading into the same lane (two lanes into one) and, where OSM's ways join or
+  part at a shallow angle so that the lanes of both roads overlap for some metres before / after the junction
+  (`_joins` / `_splits`, found per lane the first time it's needed), the cars on the other road's lane as if on its own.
+  Spawns (`_canSpawn`) count those too, and never come within 25 m of the player. `holdWay(steps)` / `release()` keep a
+  run of road clear (Ah Beng's drag race): nobody appears on it, cars ahead on it are let go out of sight or move over a
+  lane, and traffic whose way crosses or joins it waits at the line. Beyond 140 / 200 m from the camera a car is driven
   every 2nd / 3rd frame. Traffic lives around the **camera** (`Traffic.viewer`, like the crowd) and is spent where it
   looks: the quota (`target` x an hourly curve: rush hours full, a lull after midnight) appears in view beyond 170 m or
   behind a building (one sight test a tick), just off the edges of the view ahead, or near the camera; cars left behind
@@ -190,9 +204,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
   shelters on their lane, indicate in and out, and stand 8-18 s. Parked cars (`world/parking.js`): along one kerb of the
   service roads and reversed into the bays of open car parks, found per 120 m cell and kept; the nearest are Traffic
   cars in state `parked` (no AI, solid near the player, stolen with `take`, knocked loose with `wreck`).
-  `tests/mobile/carcount.mjs` counts the cars (and boats) visible in the gallery's road / water views.
-  `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration, jerk, turn speeds, off-line distance,
-  overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right turn from above);
+  `tests/mobile/carcount.mjs` counts the cars (and boats) visible in the gallery's road / water views, and any cars
+  inside each other (the player's included). `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration,
+  jerk, turn speeds, off-line distance, overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right
+  turn from above); `tests/scratch/overlaps.mjs` classifies every overlapping pair (same lane, merge, roads alongside,
+  junction conflict, fresh spawn...) and lists who long-waiting cars wait for;
   `tests/mobile/trafficcpu.mjs` times `Traffic.update` at phone settings.
 - **Boats** (`world/boats.js`): ten river taxis loop the Singapore River (to starboard of its middle, turning at
   Robertson Quay) and Marina Bay, one more and a DUCKtours amphibious bus circle an inner bay loop, ships lie at anchor
