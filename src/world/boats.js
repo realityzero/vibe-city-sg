@@ -6,6 +6,7 @@
 // traffic renderer's pool (one draw for all of them); the duck, the two kinds of ship and the wakes are one draw each.
 // tests/scratch/boatroutes.mjs checks every loop and anchorage against the water mask.
 import * as THREE from 'three';
+import { markMoving } from '../gfx/taa.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { FILTER } from '../physics/physics.js';
 import { WATER_LEVEL } from '../core/constants.js';
@@ -156,7 +157,8 @@ export class Boats {
     this.main = new Loop([...river, ...BAY, ...back, TURN]);
     this.inner = new Loop(INNER);
     this.list = [];
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.3 }); // as the bus shelters: one program
+    // as the bus shelters: one program; marked as moving so temporal AA doesn't trail them (gfx/taa.js)
+    const mat = markMoving(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.3 }));
     this.duckMesh = new THREE.InstancedMesh(duckGeometry(), mat, 1);
     this.duckMesh.castShadow = this.duckMesh.receiveShadow = true; this.duckMesh.name = 'duckTour';
     this.ships = [0, 1].map(kind => {
