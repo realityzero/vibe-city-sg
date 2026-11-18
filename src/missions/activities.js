@@ -1,7 +1,10 @@
-// Free-roam side activities with green markers: Singapore Flyer ride, Kopi Uncle stall shifts, Chope Rampage.
+// Free-roam side activities with green markers: Singapore Flyer ride, Kopi Uncle stall shifts, Chope Rampage, and the
+// side jobs that run as missions (Go Viral, Fine City Getaway).
 import * as THREE from 'three';
 import { Marker, Checkpoint } from '../world/markers.js';
 import { Aircraft } from '../entities/aircraft.js';
+import { GO_VIRAL } from './goviral.js';
+import { GETAWAY } from './getaway.js';
 
 export class Activities {
   constructor(game) {
@@ -17,6 +20,8 @@ export class Activities {
     this.add('drone', 'DurianDash drone deliveries — WeHustle', this.spot(-600, 905), () => this.droneDeliveries());
     this.add('ship', 'Ship a feature — WeHustle hot desk', this.spot(-660, 870), () => this.shipFeature());
     this.add('courier', 'Pitch-deck courier — Raffles Place', this.spot(10, 330), () => this.courier());
+    this.add('viral', 'Go Viral — Chad\'s content challenge, One Fullerton', this.spot(533, 129), () => game.missions.start(GO_VIRAL));
+    this.add('getaway', 'Fine City Getaway — Uncle Ah Seng\'s cab, Raffles Quay', this.spot(240, 770), () => game.missions.start(GETAWAY));
   }
   spot(x, z) { const s = this.game.roadnet.nearestSidewalk(x, z, 160); return s ? s.pos.clone() : new THREE.Vector3(x, 0, z); }
   add(id, label, pos, run) {
@@ -29,11 +34,11 @@ export class Activities {
     const g = this.game;
     const hide = !!g.missions.active || this.busy;
     for (const a of this.list) {
-      a.m.group.visible = !hide;
+      const d = Math.hypot(g.player.position.x - a.pos.x, g.player.position.z - a.pos.z);
+      a.m.group.visible = !hide && d < 350; // (beyond, a 2 m beacon is a pixel: three draws for nothing; the radar has it)
       a.cool -= dt;
       if (hide) continue;
       a.m.update(dt);
-      const d = Math.hypot(g.player.position.x - a.pos.x, g.player.position.z - a.pos.z);
       if (d < 1.6 && !g.player.vehicle && a.cool <= 0 && g.player.state === 'foot') {
         a.cool = 8; this.busy = true;
         Promise.resolve(a.run()).catch(e => console.warn(e)).finally(() => { this.busy = false; });
