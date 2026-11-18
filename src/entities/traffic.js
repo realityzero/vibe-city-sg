@@ -97,6 +97,7 @@ export class Traffic {
     // per lane id: other roads' lanes alongside it at its end / its start (see _joins / _splits)
     this._jn = new Array(this.net.lanes.length); this._sp = new Array(this.net.lanes.length);
     this._kp = new Array(this.net.lanes.length); // per lane id: the connectors out of it that keep to the lane (_keep)
+    this._sq = new Array(this.net.lanes.length); this._sqNear = []; // per lane id: squeezed against the other carriageway?
     game.physics.onStep(h => this.fixedStep(h));
   }
 
@@ -135,7 +136,33 @@ export class Traffic {
       const min = Math.min(...straight.map(lat));
       k = l.next.filter(o => Math.abs(o.turn) >= 0.5 || lat(o) < min + 1);
     } else k = l.next.filter(o => !l.next.some(p => p.lane.edge === o.lane.edge && laneShift(l, p.lane) < laneShift(l, o.lane) - 0.25));
+    // off a lane squeezed against the other carriageway, into the nearest one of the same road that isn't (if any)
+    k = [...new Set(k.map(o => !this._squeezed(o.lane) ? o : l.next.filter(p => p.lane.edge === o.lane.edge && Math.abs(p.turn - o.turn) < 0.5 && !this._squeezed(p.lane))
+      .sort((a, b) => laneShift(o.lane, a.lane) - laneShift(o.lane, b.lane))[0] || o))];
     return (this._kp[l.id] = k);
+  }
+
+  /** does lane l run, somewhere between its ends, within SIDE of a lane of another road going the other way? Where OSM
+   * draws a dual carriageway's two ways closer together than their width, the inner lanes of both run over each other
+   * and across the other's kerb: traffic keeps off them where the road has another lane (worked out once per lane) */
+  _squeezed(l) {
+    let q = this._sq[l.id];
+    if (q !== undefined) return q;
+    q = false;
+    for (let s = l.s0; s <= l.s1 && !q; s += 5) {
+      l.path.sample(s, _a, _d);
+      for (const o of this.net.lanesNear(_a.x, _a.z, 8, this._sqNear)) {
+        if (o.edge === l.edge) continue;
+        const P = o.path;
+        for (let i = 0; i < P.n - 1 && !q; i++) {
+          const ax = P.x(i), az = P.z(i), dx = P.x(i + 1) - ax, dz = P.z(i + 1) - az, L2 = dx * dx + dz * dz || 1, t = clamp(((_a.x - ax) * dx + (_a.z - az) * dz) / L2, 0, 1);
+          const ex = ax + dx * t - _a.x, ez = az + dz * t - _a.z;
+          q = ex * ex + ez * ez < SIDE * SIDE && Math.abs(P.y(i) + (P.y(i + 1) - P.y(i)) * t - _a.y) < 2.5 && (dx * _d.x + dz * _d.z) < -0.7 * Math.sqrt(L2);
+        }
+        if (q) break;
+      }
+    }
+    return (this._sq[l.id] = q);
   }
 
   /** the connector a car (optional: a bus keeps to kerb lanes) takes at the end of `lane` */
@@ -631,7 +658,7 @@ export class Traffic {
   /** may a car doing v appear at s on lane l? Not on a road kept clear for a race, never within 25 m of the player
    * (nor of their car: a queue or a platoon reaches back from where it was placed), and with room there */
   _canSpawn(l, s, v) {
-    if (this.way?.lanes.has(l)) return false;
+    if (this.way?.lanes.has(l) || (l.nLanes > 1 && this._squeezed(l))) return false;
     const P = this.game.player, pp = P?.vehicle?.position || P?.position;
     if (pp) { l.path.sample(s, _a); if (Math.hypot(_a.x - pp.x, _a.z - pp.z) < 25) return false; }
     return this._room(l, s, v);

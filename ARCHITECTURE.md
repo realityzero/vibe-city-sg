@@ -173,6 +173,9 @@ for a while, so allocation *churn* during the load matters as well as what stays
   nobody waits in a circle), merges in turn by distance to the merge, like a zip. Cars keep to their lane
   (`Traffic._keep`): where a road carries on, the lane graph links every lane to every lane, so a car takes the lanes
   nearest its own place across the carriageway, and where roads split or merge the lanes nearest where its lane ends.
+  Where OSM draws a dual carriageway's two ways closer together than their width (~230 lanes, e.g. the ECP by
+  Sheares), the inner lanes of both run over each other and across the other deck's kerb; traffic keeps off such a
+  lane (`_squeezed`) where its road has another, and nothing appears on it.
   The leader search (`leaderGap`) follows the car's route through the next two junctions — lanes inside a big junction
   are a few metres long — and sees cars heading into the same lane (two lanes into one) and, where OSM's ways join or
   part at a shallow angle so that the lanes of both roads overlap for some metres before / after the junction
