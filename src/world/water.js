@@ -121,8 +121,10 @@ vec2 waveGrad(vec2 p, float t) {
             float F = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
             if (uUseRefl > 0.5 && uCheap > 0.5) {
               // lite (phones): the quarter-res mirror is smeared along the vertical — the night harbour look, every lit
-              // window and lamp a streak (each ripple facet tilts toward or away from the viewer), and no texel crawl
-              vec2 ruv = vRC.xy / vRC.w + wn.xz * 0.03;
+              // window and lamp a streak (each ripple facet tilts toward or away from the viewer), and no texel crawl.
+              // The swells only nudge it: displaced further, their regular crests cut a bright reflection (MBS at
+              // golden hour) into horizontal bands
+              vec2 ruv = vRC.xy / vRC.w + wn.xz * 0.014;
               float sv = 0.018 * (1.0 + uRain);
               vec3 acc = vec3(0.0), peak = vec3(0.0);
               for (int i = -2; i <= 2; i++) {
