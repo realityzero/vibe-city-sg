@@ -302,11 +302,11 @@ export class Player {
       v = new Vehicle(this.game, st.type, { position: st.position, yaw, color: st.color, velocity: { x: -Math.sin(yaw) * st.speed * 0.3, y: 0, z: -Math.cos(yaw) * st.speed * 0.3 } });
       v.transient = true; // abandoned stolen cars get cleaned up once far away
       this.game.vehicles.push(v);
-      // evicted driver flees
-      this.game.peds?.spawnFleeing?.(v.doorPosition(new THREE.Vector3()), this.position);
+      // evicted driver flees (a parked car has nobody in it)
+      if (!st.parked) this.game.peds?.spawnFleeing?.(v.doorPosition(new THREE.Vector3()), this.position);
       this.game.events.emit('carjack', v);
-      if (st.type === 'police') this.game.wanted?.add(2, 'Stole a police car'); // the officer you threw out saw you
-      else this.game.wanted?.crime(1, 'Carjacking', st.position);
+      if (st.type === 'police' && !st.parked) this.game.wanted?.add(2, 'Stole a police car'); // the officer you threw out saw you
+      else this.game.wanted?.crime(1, st.parked ? 'Car theft' : 'Carjacking', st.position);
     } else v = n.v;
     this.state = 'entering'; this.swimming = false;
     this.enterT = 0;

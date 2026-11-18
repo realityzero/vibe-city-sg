@@ -49,7 +49,7 @@ export class Juice {
     const hw = v.spec.width * 0.5, hl = v.spec.length * 0.5, cx = v.position.x, cz = v.position.z;
     const vx = ax * v.forwardSpeed, vz = az * v.forwardSpeed;
     for (const c of g.traffic.cars) {
-      if (c.state === 'wreck') continue;
+      if (c.state !== 'drive') continue; // wrecks and parked cars are no near miss
       const dx = c.pos.x - cx, dz = c.pos.z - cz;
       if (dx * dx + dz * dz > 144) continue;
       const bx = -Math.sin(c.yaw), bz = -Math.cos(c.yaw), kv = c.kv;

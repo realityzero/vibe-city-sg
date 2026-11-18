@@ -31,6 +31,7 @@ import { UI, districtAt } from './ui/index.js';
 import { Missions } from './missions/manager.js';
 import { Extras } from './missions/extras.js';
 import { Spawns } from './world/spawns.js';
+import { Boats } from './world/boats.js';
 import { FX } from './world/fx.js';
 import { Juice } from './world/juice.js';
 import { Cheats, CHEATS } from './missions/cheats.js';
@@ -375,7 +376,7 @@ export class Game {
     this.player = new Player(this, { position: SAFEHOUSE.pos.clone(), facing: SAFEHOUSE.facing });
     this.player.teleport(SAFEHOUSE.pos, SAFEHOUSE.facing);
     await brk();
-    this.traffic = new Traffic(this, { target: this.R.q === QUALITY.low ? 50 : 100, radius: 270 });
+    this.traffic = new Traffic(this, this.R.q === QUALITY.low ? { target: 90, radius: 270, farFrom: 110, parked: { max: 24, radius: 130 } } : { target: 160, radius: 270, farFrom: 220, parked: { max: 60, radius: 200 } });
     await brk();
     this.peds = new Pedestrians(this, { max: this.R.q === QUALITY.low ? 80 : 150 });
     this.wanted = new Wanted(this);
@@ -396,7 +397,8 @@ export class Game {
     await brk();
     this.spawns = new Spawns(this);
     await this.spawns.spawnAll(brk);
-    await this.mark('spawns');
+    this.boats = new Boats(this);
+    await this.mark('spawns, boats');
     await brk();
     this.cheats = new Cheats(this);
     this.stunts = new Stunts(this);
@@ -792,6 +794,7 @@ export class Game {
       this.extras.update(simDt);
       this.weather.update(simDt);
       this.spawns.update(simDt);
+      this.boats.update(simDt);
       this.cheats.update(simDt);
       this.stunts.update(simDt);
       this.taxi.update(simDt);
@@ -974,7 +977,7 @@ export class Game {
     // interaction prompt
     let prompt = null;
     this._nearVehicle = !p.vehicle && p.state === 'foot' && p.controlsEnabled ? p.nearestEnterable(4) : null;
-    if (this._nearVehicle) { const k = this.touch?.on ? `Tap <kbd>${p.swimming ? 'BOARD' : 'ENTER'}</kbd>` : 'Press F'; prompt = this._nearVehicle.kind === 'traffic' ? `${k} to jack this car` : `${k} to ${p.swimming ? 'climb aboard' : 'enter vehicle'}`; }
+    if (this._nearVehicle) { const k = this.touch?.on ? `Tap <kbd>${p.swimming ? 'BOARD' : 'ENTER'}</kbd>` : 'Press F'; prompt = this._nearVehicle.kind === 'traffic' ? `${k} to ${this._nearVehicle.car.state === 'parked' ? 'steal' : 'jack'} this car` : `${k} to ${p.swimming ? 'climb aboard' : 'enter vehicle'}`; }
     if (this.missions.prompt) prompt = this.missions.prompt;
     if (prompt !== this._prompt) { this._prompt = prompt; this.ui.interactPrompt(prompt); }
   }

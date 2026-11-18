@@ -169,11 +169,26 @@ for a while, so allocation *churn* during the load matters as well as what stays
   gentle braking before the corner), indicators blink before and through turns, bodies roll / dive / squat on a spring
   (`TrafficRenderer.setTransform` tilt: body only, wheels stay down). Junctions: amber commits a car that can't stop
   smoothly; merges and crossings resolve first come, first through. Beyond 140 / 200 m from the camera a car is driven
-  every 2nd / 3rd frame. Spawns favour what the camera faces: within 180 m in view only where a building hides the spot
-  (one sight test a tick), and with the quota full a car far behind the camera is let go every 1.5 s.
+  every 2nd / 3rd frame. Traffic lives around the **camera** (`Traffic.viewer`, like the crowd) and is spent where it
+  looks: the quota (`target` x an hourly curve: rush hours full, a lull after midnight) appears in view beyond 170 m or
+  behind a building (one sight test a tick), just off the edges of the view ahead, or near the camera; cars left behind
+  it out of sight are let go first. A camera cut or `Game.relocate` fills the new view at once, with queues at red lights
+  and buses standing at their stops. Big roads get more of it (per-class spawn chance); expressways flow in platoons.
+  Past `farFrom` (110 m on Low, 220 m on High) from the camera and 100 m from the player a car is a **far stand-in**: no
+  physics body, drawn as a painted box with a glasshouse and lamps scaled to its type (two instanced draws for all of
+  them, sharing the wheels' material); it still drives the lane graph. Buses (kerb lanes) pull up at the StreetProps
+  shelters on their lane, indicate in and out, and stand 8-18 s. Parked cars (`world/parking.js`): along one kerb of the
+  service roads and reversed into the bays of open car parks, found per 120 m cell and kept; the nearest are Traffic
+  cars in state `parked` (no AI, solid near the player, stolen with `take`, knocked loose with `wreck`).
+  `tests/mobile/carcount.mjs` counts the cars (and boats) visible in the gallery's road / water views.
   `tests/mobile/turns.mjs` measures it (yaw rate, lateral acceleration, jerk, turn speeds, off-line distance,
   overlapping cars, red-light runs, stuck cars; `--strip` films a left and a right turn from above);
   `tests/mobile/trafficcpu.mjs` times `Traffic.update` at phone settings.
+- **Boats** (`world/boats.js`): ten river taxis loop the Singapore River (to starboard of its middle, turning at
+  Robertson Quay) and Marina Bay, one more and a DUCKtours amphibious bus circle an inner bay loop, ships lie at anchor
+  in the strait. Loops are Catmull-Rom through the channel middle with bend speeds; boats keep their distance, stop for
+  the player's craft or a swimmer (and nudge it aside after 5 s), are kinematic bodies, and push an additive wake.
+  `tests/scratch/boatroutes.mjs` checks every loop sample and anchorage against the water mask and sails the fleet.
 - The follow camera uses frame-rate independent smoothing, a softer vertical follow and a fast-but-not-instant pull-in.
   Thin occluders between it and Tommy (trunks, lamp posts, traffic-light poles: `core/occluders.js`, from the tree /
   lamp grids) are cut by pushing the near plane just past them — never into the subject or the ground at the screen's
