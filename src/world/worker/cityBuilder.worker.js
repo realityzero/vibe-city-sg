@@ -3,6 +3,7 @@
 // Output buffers are transferred back to the main thread.
 import earcut from 'earcut';
 import { buildStreetscape } from './streetscape.js';
+import { loadGroundMask } from '../groundmask.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -227,24 +228,12 @@ const ROOF_DEFAULT = { flat: 0x9b9891, terracotta: 0xa4553a, dark: 0x5b5d60, gre
 const ROOF_CLAY = [0x9c5b36, 0x8f5a3a, 0xa86a42, 0x7f523a, 0x936147, 0x8a5a40, 0xa07050, 0x6f5548, 0xb06a40, 0x80604e, 0x94603c, 0x7a4e34];
 const pick = (arr, s) => arr[Math.floor(s * arr.length) % arr.length];
 
-// ---------- mask ----------
-async function loadMask(url) {
-  const blob = await (await fetch(url)).blob();
-  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-  const w = bmp.width, h = bmp.height, cv = new OffscreenCanvas(w, h);
-  const ctx = cv.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bmp, 0, 0); bmp.close();
-  const data = ctx.getImageData(0, 0, w, h).data;
-  cv.width = cv.height = 1; // the decoded bitmap and the canvas (25 MB each) go now rather than at some later GC
-  return { w, h, data };
-}
-
 async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
   progress(0.02, 'Downloading OpenStreetMap Singapore');
-  const [city, mask] = await Promise.all([fetch(cityUrl).then(r => r.json()), loadMask(groundUrl)]);
+  const [city, mask] = await Promise.all([fetch(cityUrl).then(r => r.json()), loadGroundMask(groundUrl)]);
   const M = city.meta;
   const res = M.res;
   const maskAt = (x, z, ch = 0) => {

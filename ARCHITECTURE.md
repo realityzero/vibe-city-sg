@@ -33,6 +33,11 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
     crests. The build fails (`validateBridges`) on a deck that dips to the ground between raised spans, steps where two
     meet, or climbs steeper than its grade.
 - `ground.png` — 2 m/px RGBA mask over the bbox. R: 255 land / 128 pond / 0 water. G: vegetation (255 park/grass, 180 woods, 100 pitch). B: paving (255 plaza, 220 sidewalk, 200 parking, 150 building apron).
+  A: signed distance (+-3 m) from the texel's centre to the edge of its ground class, measured on the vector geometry the
+  raster came from (`tools/ground-sdf.mjs`): the ground shader interpolates it into crisp sub-texel class edges, with
+  kerbs, edging courses and the quays' granite coping along them; seawalls follow the same contour. Read it with
+  `world/groundmask.js` (a canvas premultiplies colour by alpha: the class codes would come back rounded);
+  `City.waterEdge(x, z)` is the drawn waterline as a distance (shore shelf, landmark sites).
 
 ## Shared runtime contracts
 - `src/gfx/globals.js` exports shared uniform objects (`U.time`, `U.night` 0..1, `U.rain` 0..1, `U.wet`, `U.sunDir`, `U.wind`) — any custom shader may reference them; the engine updates them every frame.

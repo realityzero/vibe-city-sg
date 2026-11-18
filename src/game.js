@@ -387,8 +387,7 @@ export class Game {
     if (params.get('rain')) this.weather.force(parseFloat(params.get('rain')));
     prog(0.93, 'Writing pitch decks');
     await brk();
-    await this.ui.radar.setMapAsync(data, this.city.maskImg, { data: this.city.mask, w: this.city.maskW, h: this.city.maskH });
-    this.city.maskImg = null; // the ground texture and the radar have their own copies now
+    await this.ui.radar.setMapAsync(data, null, { data: this.city.mask, w: this.city.maskW, h: this.city.maskH });
     await this.mark('radar map');
     await brk();
     this.missions = new Missions(this);

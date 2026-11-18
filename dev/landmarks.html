@@ -20,6 +20,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createLandmarks } from '/src/world/landmarks/index.js';
 import { U } from '/src/gfx/globals.js';
+import { loadGroundMask } from '/src/world/groundmask.js';
 
 const params = new URLSearchParams(location.search);
 const quality = params.get('q') || 'high';
@@ -80,11 +81,8 @@ const meta = city.meta;
 
 // ground from mask
 {
-  const blob = await (await fetch('/data/ground.png')).blob();
-  const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-  const cv = new OffscreenCanvas(bmp.width, bmp.height); const cx2 = cv.getContext('2d'); cx2.drawImage(bmp, 0, 0);
-  const px = cx2.getImageData(0, 0, bmp.width, bmp.height).data;
-  const tex = new THREE.DataTexture(new Uint8Array(px.buffer), bmp.width, bmp.height, THREE.RGBAFormat);
+  const gm = await loadGroundMask('/data/ground.png');
+  const tex = new THREE.DataTexture(gm.data, gm.w, gm.h, THREE.RGBAFormat);
   tex.colorSpace = THREE.NoColorSpace; tex.flipY = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
   const w = meta.xmax - meta.xmin, h = meta.zmax - meta.zmin;
   const g = new THREE.PlaneGeometry(w, h, 1, 1); g.rotateX(-Math.PI / 2); g.translate((meta.xmax + meta.xmin) / 2, 0, (meta.zmax + meta.zmin) / 2);

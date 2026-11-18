@@ -22,6 +22,7 @@
 <div id="perf"></div>
 <script type="module">
 import { UI, districtAt, LANDMARKS } from '/src/ui/index.js';
+import { loadGroundMask } from '/src/world/groundmask.js';
 
 const qs = new URLSearchParams(location.search);
 const demo = qs.get('demo');
@@ -32,12 +33,11 @@ if (!qs.has('perf')) document.getElementById('perf').style.display = 'none';
 const ui = new UI(document.body);
 window.ui = ui;
 
-const [city, ground] = await Promise.all([
-  fetch('/data/city.json').then(r => r.json()),
-  new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = '/data/ground.png'; }),
-]);
+const [city, ground] = await Promise.all([fetch('/data/city.json').then(r => r.json()), loadGroundMask('/data/ground.png')]);
 const t0 = performance.now();
-ui.radar.setMap(city, ground);
+// (the map wants the mask's R, G, B planes, as the game's CPU copy)
+const rgb = new Uint8Array(ground.w * ground.h * 3); for (let i = 0; i < ground.w * ground.h; i++) rgb.set(ground.data.subarray(i * 4, i * 4 + 3), i * 3);
+ui.radar.setMap(city, null, { data: rgb, w: ground.w, h: ground.h });
 console.log(`map prerender ${(performance.now() - t0).toFixed(0)} ms`);
 
 // --- fake player: random walk along the traffic graph
