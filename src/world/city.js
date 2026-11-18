@@ -51,22 +51,23 @@ export class City {
     // the RGBA pixels become the ground texture (and go once uploaded); the CPU copy for queries (water / vegetation /
     // paving) keeps the RGB planes, and the class-edge distances (alpha) only in the tiles a waterline runs through
     this.groundPixels = ground;
-    const rgba = ground.data, W = ground.w, H = ground.h, n = W * H, m = new Uint8Array(n * 3);
-    for (let i = 0, j = 0; i < n; i++, j += 4) { m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2]; }
+    const rgba = ground.data, W = ground.w, H = ground.h, m = new Uint8Array(W * H * 3);
+    const T = SHORE_TILE, tw = Math.ceil(W / T), th = Math.ceil(H / T), shore = new Uint8Array(tw * th);
+    for (let y = 0, i = 0, j = 0; y < H; y++) for (let x = 0; x < W; x++, i++, j += 4) {
+      m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2];
+      // a waterline texel: its tile and any its land-side neighbours may be in
+      if (rgba[j] < 160 && rgba[j + 3] < 255) {
+        for (let ty = Math.max(0, (y - 1) / T | 0); ty <= Math.min(th - 1, (y + 1) / T | 0); ty++) for (let tx = Math.max(0, (x - 1) / T | 0); tx <= Math.min(tw - 1, (x + 1) / T | 0); tx++) shore[ty * tw + tx] = 1;
+      }
+    }
     this.mask = m;
     this.maskW = W; this.maskH = H;
-    const T = SHORE_TILE, tw = Math.ceil(W / T);
     this.shoreTiles = new Map();
-    for (let ty = 0; ty < Math.ceil(H / T); ty++) for (let tx = 0; tx < tw; tx++) {
-      // (a waterline texel within a texel of the tile: its land-side neighbours may be in this one)
-      let shore = false;
-      for (let y = Math.max(0, ty * T - 1); y < Math.min(H, ty * T + T + 1) && !shore; y++) {
-        for (let x = Math.max(0, tx * T - 1), o = (y * W + x) * 4; x < Math.min(W, tx * T + T + 1); x++, o += 4) if (rgba[o] < 160 && rgba[o + 3] < 255) { shore = true; break; }
-      }
-      if (!shore) continue;
-      const a = new Uint8Array(T * T).fill(255);
+    for (let k = 0; k < shore.length; k++) {
+      if (!shore[k]) continue;
+      const tx = k % tw, ty = (k / tw) | 0, a = new Uint8Array(T * T).fill(255);
       for (let y = 0; y < T && ty * T + y < H; y++) for (let x = 0; x < T && tx * T + x < W; x++) a[y * T + x] = rgba[((ty * T + y) * W + tx * T + x) * 4 + 3];
-      this.shoreTiles.set(ty * tw + tx, a);
+      this.shoreTiles.set(k, a);
     }
     onProgress?.(0.05, 'Map data loaded');
     return data;
