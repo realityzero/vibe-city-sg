@@ -245,13 +245,13 @@ class Seating {
       const chope = kind === 'hawkerTable' ? CHOPE[Math.floor(Math.min(11, h * 12) / 4)] : [];
       SEATS[kind].forEach(([lx, lz], k) => { if (!chope.includes(k) && Math.random() < busy) seat(lx, lz, 0, 0, Math.random() < 0.8 ? 'sit_eat' : 'sit'); });
     } else if (kind === 'stoneTable') {
-      if (h >= 0.5 && t > 8 && t < 21.5 && Math.random() < 0.6) {
+      if (h >= 0.5 && t > 8 && t < 21.5 && Math.random() < 0.8) {
         // a game of xiangqi: two uncles at the board, a few more standing over them with opinions
         const S4 = SEATS.stoneTable;
         seat(S4[0][0], S4[0][1], 0, 0, 'sit_eat', 'uncle'); seat(S4[2][0], S4[2][1], 0, 0, 'sit', 'uncle');
         const n = 1 + Math.floor(Math.random() * 3);
         for (let k = 0; k < n; k++) { const a = Math.PI / 2 + (k - (n - 1) / 2) * 0.7 + (k % 2) * Math.PI, r = 1.25 + Math.random() * 0.3; stand(Math.cos(a) * r, Math.sin(a) * r, ['argue', 'talk', 'idle'][k % 3], 'uncle'); }
-      } else if (Math.random() < 0.25 * (1 - late)) SEATS.stoneTable.forEach(([lx, lz], k) => { if (k % 2 === 0 && Math.random() < 0.5) seat(lx, lz, 0, 0, 'sit'); });
+      } else if (Math.random() < 0.45 * (1 - late)) SEATS.stoneTable.forEach(([lx, lz], k) => { if (k % 2 === 0 && Math.random() < 0.6) seat(lx, lz, 0, 0, Math.random() < 0.5 ? 'sit' : 'sit_eat'); });
     } else if (kind === 'tent') {
       // a wake gathers in the evening, a wedding over lunch and dinner
       const wed = h >= 0.5, busy = wed ? 0.65 * Math.max(bump(t, 11.5, 15), bump(t, 18.5, 22)) : 0.15 + 0.35 * bump(t, 17, 23.5);
