@@ -141,7 +141,9 @@ export class Traffic {
   /** the connector a car (optional: a bus keeps to kerb lanes) takes at the end of `lane` */
   pickNext(lane, car) {
     let opts = this._keep(lane); if (!opts.length) return null;
-    const open = opts.filter(o => !o.lane.closed); if (open.length) opts = open;
+    // (a closed street — the satay night — is avoided even if that means leaving one's lane)
+    const open = opts.filter(o => !o.lane.closed), other = open.length ? open : lane.next.filter(o => !o.lane.closed);
+    if (other.length) opts = other;
     // prefer going straight on bigger roads; hairpins (tighter than most cars' lock) only when there is nothing else
     const kerb = car?.stops ? 4 : 1;
     let tot = 0; const w = opts.map(o => { const a = Math.abs(o.turn), s = a < 0.5 ? 3 : a > 2.4 ? 0.02 : 1; const c = o.lane.cls <= lane.cls ? 1.5 : 1; const v = s * c * (o.lane.idx ? 1 : kerb); tot += v; return v; });
