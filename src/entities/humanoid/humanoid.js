@@ -5,12 +5,13 @@ import { resolveSpec } from './presets.js';
 import { ANIMS, samplePose, POSE_LEN, NB } from './anims.js';
 import { getAtlas } from './atlas.js';
 import { withLampField } from '../../gfx/lampfield.js';
+import { markMoving } from '../../gfx/taa.js';
 
 let heroMat = null;
 /** One shared material for every hero humanoid: vertex colours × atlas, per-vertex roughness/metalness/sss. */
 export function getHeroMaterial() {
   if (heroMat) return heroMat;
-  heroMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: getAtlas(), roughness: 1, metalness: 0 });
+  heroMat = markMoving(new THREE.MeshStandardMaterial({ vertexColors: true, map: getAtlas(), roughness: 1, metalness: 0 }));
   heroMat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec3 rm;\nattribute vec4 gar;\nattribute vec4 gar2;\nvarying vec3 vRM;\nvarying vec4 vGar;\nflat varying vec4 vGar2;')

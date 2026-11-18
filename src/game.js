@@ -844,6 +844,7 @@ export class Game {
     // minigames cover the screen: keep the GPU idle except for an occasional refresh
     if (this.mgPaused) { this._mgT = (this._mgT || 0) + dt; if (this._mgT < 0.5) return; this._mgT = 0; }
     this.R.renderer.info.reset(); // counts include the reflection pass
+    this.R.taa.carry(this.player.vehicle?.root ?? null); // (temporal AA reprojects it through its own two poses)
     // one scene-graph matrix update per frame (each renderer.render() would otherwise walk the whole city again)
     this.scene.updateMatrixWorld();
     this.scene.matrixWorldAutoUpdate = false;
