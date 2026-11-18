@@ -52,7 +52,8 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
 - `Game.loop()` paces ticks to a 60 Hz deadline: on 120/144 Hz displays the in-between rAF callbacks are skipped (an
   M1/M2 can't draw the city at 120; steady 60 beats uneven 70-90). Each 60 Hz slot that passes without a tick counts as
   *missed*; `Renderer.trackFrame()` steps resolution down after two one-second windows with >2% missed slots (unless the
-  CPU is the limit) and probes back up with backoff. `gpuBegin/gpuEnd` time reflection + render with
+  CPU is the limit) and probes back up with backoff — down to 0.75 of the preset's pixel ratio, then the water's
+  mirror of the city goes (`onShed`), and only then lower. `gpuBegin/gpuEnd` time reflection + render with
   `EXT_disjoint_timer_query_webgl2` (a headroom hint; it includes CPU-submission gaps).
 - Base M1 / M2 GPUs (`Renderer.detectGpu()`) start with a lower pixel ratio cap (1.0 / 1.15); the user's resolution
   scale (`setResolutionPreference`) multiplies it.
@@ -143,10 +144,25 @@ for a while, so allocation *churn* during the load matters as well as what stays
   emits for what nothing collides with (pitched roofs, gables, arcade / void-deck ceilings, covered walkways):
   `FILTER.sightRay` sees them, driving and walking don't.
 - Radar tiles: 12 cached during play, 40 while the full-screen map is open (trimmed when it closes).
-- Image on a phone: Low renders at 0.8 x CSS pixels (iPhone 12 landscape ~675x312) and the browser stretches it
-  ~3.75x. The FXAA output pass sharpens what FXAA leaves alone (FSR 1's RCAS, `SHARPEN_GLSL` in renderer.js). Wide
-  phones see no more across than a 16:9 screen (`camera.zoom` from `CameraRig`; FOVs stay vertical — read
-  `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels. Geometry thinner than a pixel is
+- Image on a phone: Low renders at 0.8 x CSS pixels (iPhone 12 landscape ~675x312). `gfx/taa.js` resolves it
+  temporally at that resolution, ahead of bloom and tone mapping: the projection is jittered (Halton 2,3), last
+  frame's result reprojected from depth and the two camera poses, clipped to the new 3x3 neighbourhood (variance box,
+  YCoCg, on reversibly tone-mapped colour) and blended at 1/10 (up to 3/10, with a tighter box, the faster the view
+  sweeps: a history resampled every frame softens). Cars and people have no motion vectors: their materials write a
+  stencil mark (`markMoving`: vehicles/material.js, humanoid.js, crowd.js; render state, no new program) and the
+  resolve runs once per mark — moving things take only last frame's same pixel, weighted lightly, and only if a
+  moving thing was there; the static world refuses history where one stood (the history's alpha remembers), so
+  nothing leaves a trail or fades in like a ghost; the player's vehicle (`taa.carry`) is one rigid body with two
+  known poses, reprojected exactly through them. `gfx/upscale.js` then sharpens (FSR 1 RCAS) and analyses edges at
+  the internal resolution and draws the canvas at 1.5 x CSS pixels with FSR 1's EASU (edge-adaptive, no ringing)
+  instead of the browser's bilinear ~3.75x stretch (2 x looked hardly better and cost the A14 ~0.7 ms more); the
+  canvas has no depth buffer. `?notaa` (FXAA instead) and `?noupscale` switch them off for A/B;
+  `tests/scratch/phoneimgshots.mjs` (stills of variants on the same frame),
+  `taamotion.mjs` (consecutive frames stepped at 1/60 s: crawl and ghosting), `passcost.mjs` / `phoneimgab.mjs`
+  (cost). Wide phones see no more across than a 16:9 screen while playing (`camera.zoom` from `CameraRig`; FOVs stay
+  vertical — read `camera.getEffectiveFOV()`), which frees the draws that pay for the extra pixels; shots that frame a
+  subject (`cameraRig.override`: cutscenes, photo mode, test views) keep the vertical FOV they were framed with and
+  see wider instead, easing back into the cap as play resumes. Geometry thinner than a pixel is
   pre-filtered rather than left to alias: a ribbon at least a pixel wide with opacity = true coverage (Flyer spokes),
   coverage-anti-aliased lines (MBS lasers), alpha blending to the mip-averaged coverage (Supertree lattice), an average
   normal + wider roughness once facets are a few pixels big (Esplanade shades).

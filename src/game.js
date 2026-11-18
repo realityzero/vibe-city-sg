@@ -284,6 +284,7 @@ export class Game {
     this.water = new Water({ reflections: this.R.q.reflections });
     this.scene.add(this.water.mesh);
     this.R.onResize = (w, h) => this.water.resize(w, h);
+    this.R.onShed = shed => this.water.setReflections(shed ? false : this.R.q.reflections); // (dynamic resolution's last resort)
     this.R.resize();
     await brk(); // (the city's materials paint their sign and interior atlases)
     this.city = new City(this.scene);
@@ -844,6 +845,7 @@ export class Game {
     // minigames cover the screen: keep the GPU idle except for an occasional refresh
     if (this.mgPaused) { this._mgT = (this._mgT || 0) + dt; if (this._mgT < 0.5) return; this._mgT = 0; }
     this.R.renderer.info.reset(); // counts include the reflection pass
+    this.R.taa.carry(this.player.vehicle?.root ?? null); // (temporal AA reprojects it through its own two poses)
     // one scene-graph matrix update per frame (each renderer.render() would otherwise walk the whole city again)
     this.scene.updateMatrixWorld();
     this.scene.matrixWorldAutoUpdate = false;

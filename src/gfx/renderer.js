@@ -1,4 +1,5 @@
-// WebGL2 renderer + pmndrs post-processing (bloom, AgX tone mapping, SMAA, vignette) + dynamic resolution.
+// WebGL2 renderer + pmndrs post-processing (bloom, AgX tone mapping, SMAA, vignette) + dynamic resolution; on phones
+// temporal anti-aliasing and an in-engine upscale (FSR 1) to the canvas.
 import * as THREE from 'three';
 import { setPrimaryRenderer } from './texrelease.js';
 import './heightfog.js'; // altitude-aware haze for every material (patches three's fog chunks)
@@ -7,6 +8,8 @@ import { N8AOPostPass } from 'n8ao';
 import { AutoExposurePass, ExposureEffect } from './autoexposure.js';
 import { FilmGradeEffect } from './filmgrade.js';
 import { U } from './globals.js';
+import { TAAPass } from './taa.js';
+import { UpscalePass } from './upscale.js';
 import { EffectComposer, RenderPass, EffectPass, GodRaysEffect, BlendFunction, BloomEffect, ToneMappingEffect, ToneMappingMode, SMAAEffect, SMAAPreset, FXAAEffect, VignetteEffect, BrightnessContrastEffect, HueSaturationEffect } from 'postprocessing';
 
 // Contrast-adaptive sharpening (the RCAS kernel of AMD FSR 1): a negative-lobe cross filter whose lobe is limited
@@ -35,18 +38,25 @@ vec4 sharpen(const in vec4 c) {
 
 export const QUALITY = {
   // low (every phone): 0.8 x CSS pixels (iPhone 12 landscape: ~675x312), paid for by the narrower horizontal FOV on
-  // wide phones (CameraRig) and refined by dynamic resolution; sharpened on output against the browser's ~3.75x
-  // upscale; lite water reflections (quarter-res, amortised); no film grain (at that upscale it reads as noise, not film)
-  low: { pixelRatio: 0.8, shadows: 1024, shadowRadius: 110, reflections: 'lite', bloom: true, smaa: false, sharpen: 0.9, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
+  // wide phones (CameraRig) and refined by dynamic resolution; temporal anti-aliasing at that resolution, then
+  // sharpened and upscaled in the engine to a canvas of 1.5 x CSS pixels (upscale.js: FSR 1 RCAS + EASU; 2 x looks
+  // hardly better side by side and costs the A14 ~0.7 ms more) instead of the browser's blurry ~3.75x stretch; lite
+  // water reflections (quarter-res, amortised); no film grain (at that magnification it reads as noise, not film)
+  low: { pixelRatio: 0.8, upscale: 1.5, taa: true, shadows: 1024, shadowRadius: 110, reflections: 'lite', bloom: true, smaa: false, sharpen: 0.8, grain: false, ao: false, treeDist: 600, treeNear: 90, drawDist: 2600 },
   medium: { pixelRatio: 1.0, shadows: 2048, shadowRadius: 150, reflections: true, bloom: true, smaa: true, ao: false, treeDist: 900, treeNear: 170, drawDist: 3500 },
   high: { pixelRatio: 1.25, shadows: 2048, shadowRadius: 170, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1300, treeNear: 230, drawDist: 5000 },
   ultra: { pixelRatio: 2.0, shadows: 4096, shadowRadius: 220, reflections: true, bloom: true, smaa: true, ao: true, godrays: true, treeDist: 1800, treeNear: 320, drawDist: 7000 },
 };
 
+// dynamic resolution steps down to this fraction of the preset's pixel ratio before anything else is given up
+const DYN_FLOOR = 0.75;
+
 export class Renderer {
   constructor(canvas, quality = 'high') {
     this.canvas = canvas;
-    const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true, logarithmicDepthBuffer: false });
+    // (no depth buffer on the canvas: the scene renders into the composer's targets, the canvas only gets full-screen
+    // passes — at 1.5 x CSS pixels on a phone that buffer alone would be ~3 MB)
+    const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: false, logarithmicDepthBuffer: false });
     setPrimaryRenderer(r); // texture sources are freed once this renderer has them (gfx/texrelease.js)
     r.outputColorSpace = THREE.SRGBColorSpace;
     // shader info-log reads force synchronous driver waits; keep them for development only
@@ -55,6 +65,9 @@ export class Renderer {
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap; // r186 swaps PCFSoft for PCF on the first shadow render (recompiling every program) — set it up front
     r.info.autoReset = false;
+    // A/B switches for the phone image (tests): ?notaa (FXAA instead), ?noupscale (the browser stretches the canvas)
+    const params = new URLSearchParams(location.search);
+    this.allow = { taa: !params.has('notaa'), upscale: !params.has('noupscale') };
     this.setQuality(quality);
     this.composer = null;
     this.dynScale = 1;
@@ -64,7 +77,7 @@ export class Renderer {
   setQuality(name) {
     this.qualityName = name;
     this.q = QUALITY[name] || QUALITY.high;
-    this.dynScale = 1;
+    this.dynScale = 1; this.shed = false;
     this.setResolutionPreference(this.resPref ?? 1);
   }
   /** user resolution scale x quality pixel ratio x a per-GPU cap (base M1/M2 GPUs start with fewer pixels so the
@@ -85,9 +98,20 @@ export class Renderer {
 
   setupPost(scene, camera) {
     this.scene = scene; this.camera = camera;
-    const c = this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType });
+    // a preset with temporal AA starts the composer with a stencil buffer: moving things mark themselves in it (taa.js)
+    const stencil = !!this.q.taa;
+    const c = this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType, stencilBuffer: stencil });
     this.renderPass = new RenderPass(scene, camera);
+    this.renderPass.clearPass.setClearFlags(true, true, true);
     c.addPass(this.renderPass);
+    // temporal AA: the scene is drawn with this frame's sub-pixel jitter, every later pass sees the plain projection
+    this.taa = new TAAPass(camera);
+    { const rp = this.renderPass, draw = rp.render.bind(rp);
+      rp.render = (...a) => { const j = this.taa.enabled && this.taa.jitter(); try { draw(...a); } finally { if (j) this.taa.unjitter(); } }; }
+    c.addPass(this.taa);
+    // (the composer pairs stencil with 24-bit depth; keep the 32-bit float depth it uses otherwise)
+    if (stencil) for (const t of [c.inputBuffer.depthTexture, c.outputBuffer.depthTexture, c.depthRenderTarget.depthTexture]) t.type = THREE.FloatType;
+    this.taaReady = stencil;
     this.autoExposure = new AutoExposurePass();
     this.exposureFx = new ExposureEffect();
     this.autoExposure.onTexture = t => { this.exposureFx.uniforms.get('tExposure').value = t; };
@@ -140,29 +164,48 @@ export class Renderer {
     fxaa.uniforms.set('uSharpen', this.sharpenU = new THREE.Uniform(0));
     this.outPass = new EffectPass(camera, fxaa);
     c.addPass(this.outPass);
+    // phones: the canvas is drawn by the upscaler (upscale.js) from whichever of the above ran last
+    this.upPass = new UpscalePass();
+    c.addPass(this.upPass);
     this.applyQualityToPost();
     this.resize();
   }
 
   applyQualityToPost() {
     if (!this.composer) return;
-    this.smaaPass.enabled = this.q.smaa; this.outPass.enabled = !this.q.smaa;
-    if (this.smaaPass.renderToScreen !== this.q.smaa) { this.smaaPass.renderToScreen = this.q.smaa; this.outPass.renderToScreen = !this.q.smaa; }
+    const up = this.upscaling, taa = !!this.q.taa && this.taaReady && this.allow.taa;
+    // anti-aliasing: TAA, else SMAA, else FXAA; the last pass that runs draws the canvas
+    this.taa.enabled = taa;
+    this.smaaPass.enabled = !!this.q.smaa; this.outPass.enabled = !this.q.smaa && (!taa || !up); this.upPass.enabled = up;
+    const last = up ? this.upPass : this.q.smaa ? this.smaaPass : this.outPass;
+    for (const p of [this.smaaPass, this.outPass, this.upPass]) if (p.renderToScreen !== (p === last)) p.renderToScreen = p === last;
     if (this.ao) this.ao.enabled = !!this.q.ao && this.aoAllowed !== false;
     this.film.uniforms.get('uGrain').value = this.q.grain === false ? 0 : this.film.grain;
-    this.sharpenU.value = this.q.sharpen ?? 0;
+    // sharpening: in the upscaler when there is one, else in the FXAA output pass
+    this.upPass.sharpen = this.q.sharpen ?? 0;
+    this.sharpenU.value = up ? 0 : this.q.sharpen ?? 0;
     this.bloom.blendMode.opacity.value = this.q.bloom && !new URLSearchParams(location.search).has('nobloom') ? 1 : 0;
   }
+
+  /** the frame is upscaled in the engine (phones): the canvas holds the upscaler's output, not the internal frame */
+  get upscaling() { return !!this.q.upscale && this.allow.upscale; }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     const pr = this.basePixelRatio * this.dynScale;
-    this.renderer.setPixelRatio(pr);
+    this.width = Math.floor(w * pr); this.height = Math.floor(h * pr);
+    // the canvas: at the internal resolution, or at the upscaler's output resolution (never above the screen's)
+    this.renderer.setPixelRatio(this.upscaling ? Math.max(pr, Math.min(window.devicePixelRatio || 1, this.q.upscale)) : pr);
     this.renderer.setSize(w, h, false);
     this.canvas.style.width = w + 'px'; this.canvas.style.height = h + 'px';
-    if (this.composer) this.composer.setSize(w, h, false);
+    // the composer's buffers and passes at the internal resolution (its own setSize would follow the canvas)
+    const c = this.composer;
+    if (c) {
+      c.inputBuffer.setSize(this.width, this.height); c.outputBuffer.setSize(this.width, this.height);
+      c.depthRenderTarget?.setSize(this.width, this.height);
+      for (const p of c.passes) p.setSize(this.width, this.height);
+    }
     if (this.camera) { this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); }
-    this.width = Math.floor(w * pr); this.height = Math.floor(h * pr);
     this.onResize?.(this.width, this.height);
   }
 
@@ -189,11 +232,13 @@ export class Renderer {
   // so the game loop reports how many 60 Hz slots each tick missed. Per one-second window: >5% missed slots twice in a
   // row (and not CPU-bound — fewer pixels wouldn't help) steps resolution down; a clean run with GPU headroom probes
   // back up, with exponential backoff if the probe fails. Every resize reallocates all post targets (a 30-40 ms
-  // hitch), hence the cooldowns.
+  // hitch), hence the cooldowns. The ladder: resolution down to DYN_FLOOR, then the extras go (onShed: the water's
+  // mirror of the city), and only then resolution below the floor — the phone image is what suffers most from fewer
+  // pixels, even upscaled.
   trackFrame({ missed = 0, cpuMs = 0, eligible = true } = {}) {
     const now = performance.now();
     if (!eligible) { if (this._dyn) this._dyn.start = now; return; }
-    const D = this._dyn || (this._dyn = { start: now, slots: 0, missed: 0, cpu: [], bad: 0, good: 0, changed: -1e9, lastUp: -1e9, beforeUp: 1, backoff: 6 });
+    const D = this._dyn || (this._dyn = { start: now, slots: 0, missed: 0, cpu: [], bad: 0, good: 0, changed: -1e9, lastUp: -1e9, beforeUp: null, backoff: 6 });
     if (now < D.start) return; // settling after a resize: its own reallocation hitch must not count as overload
     // a frame that lost 3+ slots is a one-off hitch (GC, a load, another app), not a GPU that's too slow: skip it
     if (missed < 3) { D.slots += 1 + missed; D.missed += missed; D.cpu.push(cpuMs); }
@@ -208,24 +253,38 @@ export class Renderer {
     const overloaded = ratio > 0.05, cpuBound = cpu90 > 15;
     D.bad = overloaded && !cpuBound ? D.bad + 1 : 0;
     D.good = ratio === 0 && (gpu90 === null || gpu90 < 12.5) ? D.good + 1 : 0;
-    let scale = this.dynScale;
+    let step = { scale: this.dynScale, shed: !!this.shed };
     // iOS Low Power Mode caps rAF at 30 Hz: every other 60 Hz slot is "missed" whatever the resolution. Signature: a
     // drop in resolution that left the miss ratio at ~1/2 with callbacks ~33 ms apart -> undo the drop and pace the
     // loop to 30 Hz slots (the game loop goes back to 60 once callbacks arrive at 60 Hz again)
     if (D.preDrop && now - D.changed > 1500) {
       const half = r => Math.abs(r - 0.5) < 0.08;
       if (half(ratio) && half(D.preDrop.ratio) && this.rafMs > 28) {
-        this.slotMs = 1000 / 30; scale = D.preDrop.scale; D.bad = D.good = 0; D.preDrop = null;
-        if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.start = now + 1000; }
+        this.slotMs = 1000 / 30; step = D.preDrop.step; D.bad = D.good = 0; D.preDrop = null;
+        if (this.setDynStep(step)) { D.changed = now; D.start = now + 1000; }
         return;
       }
       D.preDrop = null;
     }
+    const { scale, shed } = step, d = ratio > 0.2 ? 0.14 : 0.08;
     if (D.bad >= 2 && now - D.changed > 3000) {
-      if (now - D.lastUp < 6000) { scale = D.beforeUp; D.backoff = Math.min(64, D.backoff * 2); D.lastUp = -1e9; } // the probe up failed
-      else { D.preDrop = { scale, ratio }; scale = Math.max(0.55, scale - (ratio > 0.2 ? 0.14 : 0.08)); }
-    } else if (scale < 1 && D.good >= D.backoff && now - D.changed > 6000) { D.beforeUp = scale; D.lastUp = now; scale = Math.min(1, scale + 0.05); }
-    if (Math.abs(scale - this.dynScale) > 0.01) { this.setDynScale(scale); D.changed = now; D.bad = D.good = 0; D.start = now + 1000; D.slots = D.missed = 0; D.cpu.length = 0; }
+      if (now - D.lastUp < 6000) { step = D.beforeUp; D.backoff = Math.min(64, D.backoff * 2); D.lastUp = -1e9; } // the probe up failed
+      else {
+        D.preDrop = { step, ratio };
+        step = scale > DYN_FLOOR + 0.01 ? { scale: Math.max(DYN_FLOOR, scale - d), shed } : !shed && this.onShed ? { scale, shed: true } : { scale: Math.max(0.55, scale - d), shed };
+      }
+    } else if ((scale < 1 || shed) && D.good >= D.backoff && now - D.changed > 6000) {
+      D.beforeUp = step; D.lastUp = now;
+      step = scale < DYN_FLOOR - 0.01 ? { scale: Math.min(DYN_FLOOR, scale + 0.05), shed } : shed ? { scale, shed: false } : { scale: Math.min(1, scale + 0.05), shed };
+    }
+    if (this.setDynStep(step)) { D.changed = now; D.bad = D.good = 0; D.start = now + 1000; D.slots = D.missed = 0; D.cpu.length = 0; }
+  }
+  /** applies a step of the dynamic-resolution ladder; returns true if anything changed */
+  setDynStep({ scale, shed }) {
+    const changed = Math.abs(scale - this.dynScale) > 0.01 || shed !== !!this.shed;
+    if (shed !== !!this.shed) { this.shed = shed; this.onShed?.(shed); }
+    this.setDynScale(scale);
+    return changed;
   }
   setDynScale(s) { if (Math.abs(s - this.dynScale) > 0.01) { this.dynScale = s; this.resize(); } }
 

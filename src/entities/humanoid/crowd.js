@@ -3,6 +3,7 @@
 // hair style and accessories vary per instance. Built on MeshStandardMaterial so lighting/shadows/fog match.
 import * as THREE from 'three';
 import { withLampField } from '../../gfx/lampfield.js';
+import { markMoving } from '../../gfx/taa.js';
 import { MeshBuilder } from './builder.js';
 import { makeRest, makeShape, headRadius, headPoint, HEAD_C, HAIR_STYLES, hairShellRadius, EYE_DIR } from './body.js';
 import { getAtlas, cellRect, PATTERN_LIST } from './atlas.js';
@@ -425,7 +426,7 @@ export class Crowd {
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
     this.geometry = g;
     this.uniforms = { uCrowdTime: { value: 0 }, uCrowdAtlas: { value: getAtlas() }, uPatRect: { value: PATTERN_LIST.map(c => cellRect(c)) }, uNight: U.night };
-    this.material = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
+    this.material = markMoving(new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 }));
     patchMaterial(this.material, false, this.uniforms);
     withLampField(this.material); // pedestrians under a street lamp are lit by it
     this.depthMaterial = new THREE.MeshDepthMaterial();
