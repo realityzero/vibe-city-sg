@@ -1,7 +1,8 @@
 // Everyday Singapore at street level, placed while the city is built: kopitiam tables, beer-brand umbrellas, planters,
 // benches, shared bikes and pushcarts on open paving; potted plants along the five-foot-ways and aircon condensers on
-// shophouse back walls; HDB estates get stone tables in their void decks, covered linkways between blocks, a playground
-// and a fitness corner; hawker centres get tables all round their colonnade.
+// shophouse back walls; HDB estates get covered linkways between blocks, a playground, a fitness corner and now and then
+// a wake's or a wedding's tent (the builder dresses void decks and hawker halls itself); big paved squares get trees in
+// grates, benches, planters and shelters.
 // The pieces are instanced on the main thread (world/streetfurniture.js: one draw call, near the camera only); this
 // returns where they go. Linkways, one of a kind each, are written straight into the chunk's near-detail structure
 // geometry. Placement is hash-seeded (the builder's sequential rand() would move every tree placed after it) and keeps
@@ -17,7 +18,7 @@ const HALL_FITTINGS = new Set(['stall', 'fan', 'trays']);
 /**
  * ctx (from the city builder): city, M (meta), maskAt, occAt, occMark(x, z, r), roadGrid + RG, chunk(x, z) -> chunk,
  * exclusions (landmark footprints: rings of [x, z]), clearings (landmark plazas: {x, z, r}), pip(x, z, ring),
- * setTag(name), and what the building loop collected: shopFronts, piers,
+ * setTag(name), plant(x, z, type, scale, rot) (a tree), and what the building loop collected: shopFronts, piers,
  * shopGoods, shopBacks, hdbBlocks, colonnade. Returns { pieces: Float32Array of (kind, x, y, z, yaw, h), obstacles: Float32Array
  * of (x, z, radius, solid), counts }.
  */
@@ -233,6 +234,61 @@ export function buildStreetscape(ctx) {
     if (fc) {
       put('fitness', fc[0], fc[1], yaw, hash(cz, cx), 0, false); occMark(fc[0], fc[1], 4.5);
       obstacle(fc[0], fc[1], yaw, -2.3, -1.2, 0.9, false); obstacle(fc[0], fc[1], yaw, 0.1, 0.5, 1.0, false); obstacle(fc[0], fc[1], yaw, 2.4, -0.4, 1.0, false);
+    }
+    // now and then a tent beside a block: a wake (most evenings somewhere in the heartland) or a void-deck wedding
+    const ht = hash(cx * 0.7, cz * 1.3);
+    const tt = ht < 0.4 ? spot(fc ? fc[0] : cx, fc ? fc[1] : cz, yaw, 4.8, 3.4) : null;
+    if (tt) { put('tent', tt[0], tt[1], yaw, ht < 0.26 ? 0.25 : 0.75, 0, false); occMark(tt[0], tt[1], 5.5); obstacle(tt[0], tt[1], yaw, 0, 0, 3.4, false); }
+  }
+
+  // ---- big squares (~400 m² and more of plaza or forecourt paving, sidewalks apart): trees in grates on a grid,
+  // benches under some of them, planters between, a shelter in the larger ones. The squares are the paving pass's
+  // cells, flood-filled.
+  {
+    const sq = new Uint8Array(NI * NJ), cells = [], DI = [1, -1, 0, 0], DJ = [0, 0, 1, -1];
+    const cx0 = i => M.xmin + (i + 0.5) * S, cz0 = j => M.zmin + (j + 0.5) * S;
+    for (let j = 0; j < NJ; j++) for (let i = 0; i < NI; i++) {
+      const x = cx0(i), z = cz0(j), b = maskAt(x, z, 2);
+      // (1 forecourt, 5 plaza; | 2 once visited)
+      if ((b >= 250 || (b >= 140 && b < 190)) && maskAt(x, z) >= 200 && occAt(x, z) < 110) sq[j * NI + i] = b >= 250 ? 5 : 1;
+    }
+    const inSq = (i, j) => i >= 0 && j >= 0 && i < NI && j < NJ && sq[j * NI + i] > 0;
+    for (let c0 = 0; c0 < sq.length; c0++) {
+      if (!sq[c0] || sq[c0] & 2) continue;
+      cells.length = 0; sq[c0] |= 2; cells.push(c0);
+      let plaza = 0;
+      for (let k = 0; k < cells.length; k++) {
+        const i = cells[k] % NI, j = (cells[k] - i) / NI;
+        if (sq[cells[k]] & 4) plaza++;
+        for (let d = 0; d < 4; d++) { const ni = i + DI[d], nj = j + DJ[d], n = nj * NI + ni; if (ni >= 0 && nj >= 0 && ni < NI && nj < NJ && sq[n] && !(sq[n] & 2)) { sq[n] |= 2; cells.push(n); } }
+      }
+      if (cells.length < 10) continue;
+      // one species and one grid phase per square, a tree every 13 m on a plaza (20 m on a forecourt); trees only
+      // where the square goes on all round them
+      const i0 = cells[0] % NI, j0 = (cells[0] - i0) / NI, hs = cellHash(i0, j0, 7), G = plaza * 2 > cells.length ? 2 : 3;
+      const oi = Math.floor(hs * G), oj = Math.floor(hash(i0, j0) * G), type = hs < 0.35 ? 1 : 4;
+      let mx = 0, mz = 0;
+      for (const c of cells) {
+        const i = c % NI, j = (c - i) / NI, x = cx0(i), z = cz0(j), hc = cellHash(i, j, 9);
+        mx += x / cells.length; mz += z / cells.length;
+        if (!inSq(i + 1, j) || !inSq(i - 1, j) || !inSq(i, j + 1) || !inSq(i, j - 1)) continue;
+        if ((i + oi) % G === 0 && (j + oj) % G === 0) {
+          if (!offWalls(x, z, 3) || !free(x, z, 1.8)) continue;
+          ctx.plant(x, z, type, 0.62 + hc * 0.2, hc * 6.283);
+          put('grate', x, z, 0, 0, 0, false);
+          if (hc < 0.45) { const a = Math.floor(hc * 40) * Math.PI / 2, bx = x + Math.sin(a) * 1.9, bz = z + Math.cos(a) * 1.9; if (free(bx, bz, 0.9)) put('bench', bx, bz, a, 0, 0.8, true); }
+        } else if ((i + oi) % G === 1 && (j + oj) % G === 1 && hc < 0.3 && offWalls(x, z, 2.5) && free(x, z, 1.3)) put('planter', x, z, Math.round(hc * 13) * Math.PI / 2, hash(x + 5, z), 0.85, true);
+      }
+      if (cells.length < 36) continue;
+      // a shelter near the middle of the square (the cells nearest it tried first)
+      const near = cells.map(c => { const i = c % NI, j = (c - i) / NI; return [Math.hypot(cx0(i) - mx, cz0(j) - mz), cx0(i), cz0(j)]; }).sort((a, b) => a[0] - b[0]);
+      for (let k = 0; k < Math.min(24, near.length); k++) {
+        const [, x, z] = near[k];
+        if (!rectFree(x, z, 0, 2.4, 1.8)) continue;
+        put('shelter', x, z, 0, 0, 0, false); occMark(x, z, 3);
+        for (const sx of [-1.9, 1.9]) for (const sz of [-1.3, 1.3]) obstacle(x, z, 0, sx, sz, 0.3, true);
+        break;
+      }
     }
   }
   return { pieces: new Float32Array(pieces), obstacles: new Float32Array(out), counts };

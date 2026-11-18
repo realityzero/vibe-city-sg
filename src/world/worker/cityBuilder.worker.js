@@ -1230,6 +1230,7 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const furniture = buildStreetscape({
     city, M, maskAt, occAt, roadGrid, RG, pip, exclusions: excl, clearings, shopFronts, piers, shopGoods, shopBacks, hdbBlocks, colonnade,
     chunk: (x, z) => chunk(chunkKey(x, z)), occMark: (x, z, r) => occDisc(x, z, r, 115), setTag: t => { TAG = t; },
+    plant: (x, z, type, scale, rot) => { trees.push(x, z, type, scale, rot); occStroke([[x, z], [x, z]], 2.5, 120); },
   });
   furniture.counts.ms = Math.round(performance.now() - tFurn);
 
