@@ -5,6 +5,7 @@ import { Fireworks } from '../world/fireworks.js';
 import { clearLine, spotFree } from '../core/visibility.js';
 import { tanDealLines } from './vodyn.js';
 import { coldOpen } from './coldopen.js';
+import { firstDrive } from './firstdrive.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const fmt = n => 'S$' + Math.round(n).toLocaleString('en-SG');
@@ -113,6 +114,7 @@ function tips(c, list) {
 // the cold open hands Tommy the wheel on Esplanade Drive, with Lau Pa Sat's marker and route already up
 async function lionCityDrive(c, meet) {
   await coldOpen(c, meet);
+  firstDrive(c, meet); // (the staged beats on the way: runs beside the call and the tips)
   const arrive = c.reach(meet, { radius: 3.5, onFoot: true });
   arrive.catch(() => { }); // (awaited below: an abort during the call rejects both)
   await c.say([{ speaker: 'Tommy', text: 'Thirty-one degrees at sunset. Even the air here has a <i>KPI</i>.' }]);
