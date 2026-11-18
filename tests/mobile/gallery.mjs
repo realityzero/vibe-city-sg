@@ -36,7 +36,7 @@ export const VIEWS = [
   // (hdb-estate above looks at River Valley's condos; these are Bukit Merah's HDB blocks, playground and hawker centre)
   ['hdb-blocks', 9, [-1745, 30, -13], [-1885, 10, -103]],
   ['hdb-voiddeck', 11, [-1866, 1.7, -74], [-1882, 1.4, -94]],
-  ['playground', 11, [-1915, 6, -100], [-1897, 0, -72]],
+  ['playground', 11, [-1914, 4.5, 1], [-1896, 0.8, 22]],   // (the estate's playground, fitness corner and courtyard)
   ['hawker-centre', 11, [-2580, 3, 814], [-2559, 2.5, 790]],
   ['hawker-maxwell', 11, [-422, 3, 722], [-462, 2.5, 742]],
   ['aerial-city', 15, [-200, 420, 900], [200, 0, 100]],

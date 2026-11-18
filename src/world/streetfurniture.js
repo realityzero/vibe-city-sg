@@ -1,5 +1,6 @@
 // Street furniture around the camera: kopitiam tables and umbrellas, planters, benches, shared bikes, pushcarts, potted
-// plants, void-deck stone tables, aircon condensers, playgrounds and fitness corners. The city builder places them
+// plants, void-deck stone tables and bicycles, aircon condensers, playgrounds and fitness corners, tents, tree grates and
+// shelters on the squares, and the hawker centres' stalls, tables, fans and tray returns. The city builder places them
 // (world/worker/streetscape.js); each piece's geometry (world/streetpieces.js, a few colour variants per kind) lives
 // once in a BatchedMesh drawn with the city's structure material, so all of it is one multi-draw call (and its shadow).
 // Only the pieces near the camera are instances, refilled as it moves (like StreetDetail's near pools); playgrounds
@@ -7,8 +8,9 @@
 import * as THREE from 'three';
 import { Kit, PIECE, VARIANTS, KINDS } from './streetpieces.js';
 
-const CELL = 64, NEAR = 150, FAR = 420, CAP = 1000;
-const BIG = new Set([KINDS.indexOf('playground'), KINDS.indexOf('fitness')]);
+const CELL = 64, NEAR = 150, FAR = 420, CAP = 1500;
+// (seen from further off: playgrounds, fitness corners, tents and hawker stalls, whose lit boards hang from afar)
+const BIG = new Set(['playground', 'fitness', 'tent', 'stall'].map(k => KINDS.indexOf(k)));
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), UP = new THREE.Vector3(0, 1, 0);
 
 /** a SIMPLE_LAYOUT writer (sv / tri / vc, like the city builder's Geo) collecting one piece */

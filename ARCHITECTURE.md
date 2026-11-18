@@ -268,14 +268,20 @@ for a while, so allocation *churn* during the load matters as well as what stays
 ## Streetscape (furniture, HDB estates, hawker centres)
 - The city builder places street furniture (`world/worker/streetscape.js`, hash-seeded, after the trees): kopitiam
   tables and umbrellas near food and shopfronts, planters, benches, shared bikes, pushcarts, potted plants by
-  five-foot-way piers, condensers on shophouse back walls, stone tables in HDB void decks, a playground and fitness
-  corner per estate. It keeps clear of buildings, carriageways and their sidewalk lines (hw + 4 m), footway lines
-  (2.4 m), trees and landmark clearings. The pieces (`world/streetpieces.js`) are one `BatchedMesh` with the city's
-  structure material, instanced within 150 m of the camera (420 m for playgrounds): one draw call plus its shadow.
-  Linkways between HDB blocks are chunk `structNear` geometry.
+  five-foot-way piers and wares in front of the shops, condensers on shophouse back walls, stone (xiangqi) tables,
+  bicycles and benches in HDB void decks, a playground and fitness corner per estate and now and then a wake's or a
+  wedding's tent, trees in grates (planted for it), benches, planters and shelters on squares of ~400 m² and more. It
+  keeps clear of buildings, carriageways and their sidewalk lines (hw + 4 m), footway lines (2.4 m), trees and landmark
+  clearings. The pieces (`world/streetpieces.js`) are one `BatchedMesh` with the city's structure material, instanced
+  within 150 m of the camera (420 m for playgrounds, tents and hawker stalls): one draw call plus its shadow. Linkways
+  between HDB blocks are chunk `structNear` geometry.
 - `TreeColliders.trunkNear` also answers for furniture (people walk round it); sturdy pieces get low colliders.
-- Low halls holding a food centre (OSM name or POI) are built as hawker centres: a 3.4 m colonnade with tables round
-  the stalls (facade flag 6) under a hipped roof. Long shophouse walls are rows of ~5.5 m units in their own pastels.
+- Low halls holding a food centre (OSM name or POI) are built as hawker centres: open halls under a hipped roof
+  (columns round the outline, a ceiling of tube lights, a tiled floor: facade flag 6) with back-to-back rows of stalls,
+  fixed tables (some choped with tissue packets), fans and tray returns inside (`worker/hawkerhall.js` lays them out;
+  they're street furniture). Each stall's lightbox, photo menus and NEA sticker are near-detail facade quads (style 15)
+  sampling the sign atlas's food pool (`gfx/signAtlas.js`), lit while it trades. Long shophouse walls are rows of
+  ~5.5 m units in their own pastels; shophouses let as hotels or offices still trade at street level.
 - Chinatown's lantern strings (`world/streetprops.js`) are strung only where rays from the street find a facade on
   both sides, and never through a street tree's crown. Every building outline (and each landmark footprint) is stamped
   into the builder's occupancy grid before trees are planted, so no crown grows through a roof.
@@ -300,6 +306,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
 - `world/streetlife.js`: the director stages one small scene every 20-40 s in view 25-60 m ahead (otters on a
   promenade, junglefowl crossing — traffic waits —, a jaywalking delivery rider, two uncles arguing with onlookers
   filming), recruiting people already there; critters are two instanced draws per species, only while out.
+- Seating (`world/scenes.js`): posed members of the crowd at the builder's tables around the camera (diners at hawker
+  centres and kopitiams by the hour, uncles over the void-deck xiangqi boards, wakes and weddings), the hawker behind
+  each trading stall and a queue at each centre's famous one; within a budget (70 people on the phone), filled out of
+  sight ahead of the camera and let go once behind it. Looks are never repeated within 30 m (same variant, print and
+  colours) and a footpath gets at most a walker per 15 m of it at spawn, so sparse estates send out no processions.
 - `node tests/scratch/pedcount.mjs --url ...` counts visible people per gallery view and the crowd's CPU per frame.
 
 ## Voice-over
