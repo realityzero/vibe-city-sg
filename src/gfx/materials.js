@@ -997,7 +997,7 @@ void pavers(vec2 p, float style, out vec3 col, out float joint, out float pid) {
 export function createRoadMaterial() {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
   return patch(mat, {
-    key: 'road-v9',
+    key: 'road-v10',
     uniforms: { ...COMMON_U(), ...STREET_U(), uRefl: REFL.tex, uReflMat: REFL.mat, uReflOn: REFL.on, uReflRoad: REFL.road },
     vertexHead: COMMON_VHEAD + `attribute vec4 aRoad; attribute vec4 aLanes; attribute vec4 aJunc; varying vec4 vRoad; varying vec4 vLanes; varying vec4 vJunc; uniform mat4 uReflMat; uniform float uReflRoad; varying vec4 vRC;`,
     // street-plane capture (no water on screen): project the actual road point; water-level capture: the old trick
@@ -1074,17 +1074,19 @@ export function createRoadMaterial() {
         albedo = mix(albedo, vec3(0.018, 0.018, 0.02), sealed * 0.85);
         rgh -= sealed * 0.45; bh += sealed * 0.0015;
         albedo *= 1.0 - 0.45 * hair * far2;
-        // lane-wide reinstatement patches (rectangular, newer or older than the road around them)
+        // lane-wide reinstatement patches: fresh black asphalt, or an older patch a shade off the road round it (its
+        // grain kept), cut a little out of true and edged with a glossy band of tar sealant
         float pc = floor(along / 27.0), la = along - pc * 27.0;
         float hp = hash12(vec2(pc, laneI + w * 3.17));
         if (hp > 0.8) {
           float a0 = 1.5 + fract(hp * 31.7) * 9.0, a1 = a0 + 2.5 + fract(hp * 17.3) * 13.0;
           float l0 = fract(hp * 5.1) * 0.25, l1 = 0.7 + fract(hp * 9.7) * 0.32;
-          float inP = aaBand(la, a0, a1) * aaBand(lanePos, l0, l1);
-          float seam = inP * (1.0 - aaBand(la, a0 + 0.07, a1 - 0.07) * aaBand(lanePos, l0 + 0.02, l1 - 0.02));
-          vec3 pcol = fract(hp * 3.3) > 0.4 ? vec3(0.034, 0.034, 0.037) : vec3(0.1, 0.097, 0.09);
-          albedo = mix(albedo, pcol * (0.9 + 0.2 * n2), inP * 0.92);
-          albedo *= 1.0 - 0.35 * seam;
+          float pa = la + (vnoise(vec2(lanePos * 7.0, pc)) - 0.5) * 0.12, pl = lanePos + (vnoise(vec2(along * 0.9, laneI + 3.0)) - 0.5) * 0.03;
+          float inP = aaBand(pa, a0, a1) * aaBand(pl, l0, l1);
+          float seam = inP * (1.0 - aaBand(pa, a0 + 0.06, a1 - 0.06) * aaBand(pl, l0 + 0.018, l1 - 0.018));
+          vec3 pcol = fract(hp * 3.3) > 0.45 ? vec3(0.03, 0.03, 0.033) * (0.9 + 0.2 * n2) : albedo * vec3(0.84, 0.85, 0.88);
+          albedo = mix(albedo, pcol, inP * 0.92);
+          albedo = mix(albedo, vec3(0.012), seam * 0.75); rgh -= seam * 0.3;
           bh += inP * 0.003;
         }
         // long utility-trench reinstatement
@@ -1177,6 +1179,24 @@ export function createRoadMaterial() {
             float h1 = aaBand(fract((wp.x + wp.y) / 2.4), 0.0, 0.06), h2 = aaBand(fract((wp.x - wp.y) / 2.4), 0.0, 0.06);
             float border = aaBand(edge, 0.25, 0.4);
             ym = max(ym, max(max(h1, h2), border) * inJ * step(0.5, edge));
+          }
+        } else if (cls < 7.5) {
+          // estate and service roads: a precast kerb along each edge (where the ground's verge meets the road), its
+          // face's shadow on the asphalt, a white edge line inside it, and every so often, clear of the junctions, a
+          // road hump painted in black and yellow stripes
+          float kerb = (1.0 - aaStep(0.15, edge)) * jOK;
+          albedo = mix(albedo, vec3(0.34, 0.33, 0.31) * (0.85 + 0.3 * n2), kerb);
+          albedo *= 1.0 - 0.5 * aaBand(edge, 0.15, 0.21) * jOK;
+          bh += kerb * 0.01; rgh = mix(rgh, 0.8, kerb);
+          wm = aaBand(edge, 0.38, 0.48) * jOK;
+          float hc = floor(along / 48.0), hh = hash12(vec2(hc, w * 2.3 + 1.0));
+          float ha = along - hc * 48.0 - 14.0 - fract(hh * 7.1) * 20.0;
+          if (hh > 0.45 && abs(ha) < 0.8 && min(vJunc.x - vJunc.z, vJunc.y - vJunc.w) > 12.0) {
+            float hump = aaBand(ha, -0.7, 0.7) * step(0.15, edge);
+            float yel = aaPulse((s * 0.8 + ha) / 0.6, 0.5);
+            albedo = mix(albedo, mix(vec3(0.015), vec3(0.6, 0.43, 0.03), yel) * (0.75 + 0.35 * vnoise(wp * 2.3)), hump * 0.9);
+            bh += cos(clamp(ha / 0.7, -1.0, 1.0) * 1.5708) * 0.035 * step(0.15, edge);
+            rgh = mix(rgh, 0.55, hump);
           }
         }
       } else if (kind > 3.5) {
