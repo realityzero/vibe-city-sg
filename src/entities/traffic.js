@@ -28,6 +28,10 @@ const MERGE = 12; // m: a car merging into one's lane counts as in front once th
 const LOOK0 = 1, LOOKV = 0.35; // pure-pursuit distance from the rear axle: wheelbase + LOOK0 + LOOKV * speed (m)
 // indicator for a connector: + right, - left (U-turns go right: left-hand traffic)
 const turnSide = conn => (!conn || Math.abs(conn.turn) < 0.5 ? 0 : conn.turn > 0 ? 1 : -1);
+// lanes moved across going from lane a into lane b, each placed from the middle of its carriageway (lanes added or
+// dropped share out about the middle)
+const laneShift = (a, b) => Math.abs(a.idx - (a.nLanes - 1) / 2 - b.idx + (b.nLanes - 1) / 2);
+const _a = new THREE.Vector3();
 
 let carIds = 0;
 export class Traffic {
@@ -55,12 +59,32 @@ export class Traffic {
     this.parking = new Parking(game, parked);
     // the route ahead of the car being driven: up to 6 (path, from s, to s, speed limit or 0) segments, see _route()
     this._rp = new Array(6).fill(null); this._ra = new Float64Array(6); this._rb = new Float64Array(6); this._rv = new Float64Array(6); this._rn = 0;
+    this._kp = new Array(this.net.lanes.length); // per lane id: the connectors out of it that keep to the lane (_keep)
     game.physics.onStep(h => this.fixedStep(h));
+  }
+
+  /** the connectors out of lane l a driver keeps to its lane by (where a road just carries on, or splits, every lane links
+   * to every lane: hopping across them cuts through the cars alongside, and across the gore where a road splits). Into
+   * a road that carries on, the lanes nearest this one's place across the carriageway; where roads split or merge, the
+   * lanes nearest where this one ends (the far branch is for the lanes on its side) */
+  _keep(l) {
+    let k = this._kp[l.id];
+    if (k) return k;
+    const node = this.net.nodes[l.to], straight = l.next.filter(o => Math.abs(o.turn) < 0.5);
+    const split = straight.some(o => o.lane.edge !== straight[0].lane.edge);
+    const merge = !split && straight.length && node.inc.some(m => m.edge !== l.edge && m.next.some(o => o.lane.edge === straight[0].lane.edge && Math.abs(o.turn) < 0.5));
+    if (split || merge) {
+      l.path.sample(l.s1, _a, _d);
+      const ax = _a.x, az = _a.z, dx = _d.x, dz = _d.z, lat = o => { o.lane.path.sample(o.lane.s0, _a); return Math.abs(dx * (_a.z - az) - dz * (_a.x - ax)); };
+      const min = Math.min(...straight.map(lat));
+      k = l.next.filter(o => Math.abs(o.turn) >= 0.5 || lat(o) < min + 1);
+    } else k = l.next.filter(o => !l.next.some(p => p.lane.edge === o.lane.edge && laneShift(l, p.lane) < laneShift(l, o.lane) - 0.25));
+    return (this._kp[l.id] = k);
   }
 
   /** the connector a car (optional: a bus keeps to kerb lanes) takes at the end of `lane` */
   pickNext(lane, car) {
-    let opts = lane.next; if (!opts.length) return null;
+    let opts = this._keep(lane); if (!opts.length) return null;
     const open = opts.filter(o => !o.lane.closed); if (open.length) opts = open;
     // prefer going straight on bigger roads; hairpins (tighter than most cars' lock) only when there is nothing else
     const kerb = car?.stops ? 4 : 1;
