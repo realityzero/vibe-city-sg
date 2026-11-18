@@ -155,11 +155,14 @@ export class Pedestrians {
     return false;
   }
 
-  /** a walker already within a stride, or four within 10 m: people set off spaced out, in ones and twos, not in files */
-  crowded(x, z) {
-    let n = 0;
+  /** a walker already within a stride, four within 10 m, or a path that already has one walker per 15 m of it (at
+   * most six): people set off spaced out, in ones and twos, and a sparse estate's one footpath gets no procession */
+  crowded(x, z, w) {
+    const cap = Math.max(2, Math.min(6, Math.floor(w.path.length / 15)));
+    let n = 0, on = 0;
     for (const p of this.peds) {
       if (p.state !== 'walk' || p.pose || p.script) continue;
+      if (p.sw === w && ++on >= cap) return true;
       const d = Math.abs(p.pos.x - x) + Math.abs(p.pos.z - z);
       if (d < 2.5 || (d < 10 && ++n >= 4)) return true;
     }
@@ -178,7 +181,7 @@ export class Pedestrians {
     const w = sn.w, s = Math.min(w.path.length, Math.max(0, sn.s + (Math.random() - 0.5) * 20));
     w.path.sample(s, _p);
     const dist = Math.hypot(_p.x - V.x, _p.z - V.z);
-    if (dist > this.view || (dist < 6 && !this.seeding) || this.crowded(_p.x, _p.z) || !this.unseen(_p.x, _p.z, dist)) return null;
+    if (dist > this.view || (dist < 6 && !this.seeding) || this.crowded(_p.x, _p.z, w) || !this.unseen(_p.x, _p.z, dist)) return null;
     const t = this.game.sky.time, park = w.foot && (this.game.city.maskAt(_p.x, _p.z, 1) > 150 || this.nearWater(_p.x, _p.z));
     const variant = park && (inHours(t, 6, 9.5) || inHours(t, 17, 20.5)) && Math.random() < 0.4 ? 'jogger' : this.pickVariant(_p.x, _p.z, t);
     const p = this.makePed(variant, _p, { sw: w, s, dir: Math.random() < 0.5 ? 1 : -1 });
