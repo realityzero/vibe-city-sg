@@ -80,14 +80,18 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
   colour is the haze: `SkySystem.captureHaze()` renders the sky at 6.5° in 8 directions into an 8x1 target with each
   env refresh and reads it back asynchronously; the sky shader blends its lowest band into the same colour, so the
   sea plane and the farthest towers dissolve into the horizon at every time of day.
-- Golden hour / dusk live in the sky shader (warm dome, apricot low-sky haze, sun-side glow and glare, Belt of Venus,
-  twilight dome after sunset; the environment capture adds a copper flare toward the low sun, so glass facing it
-  glints), `SkySystem.update` (sun colour temperature, peach fill and warm bounce, a little more haze) and
-  `FilmGradeEffect` (`uGolden` warms the white balance of lit tones, `uNight` the teal/magenta neon grade).
-  Night light is emissive only, no lights: `world/nightglow.js` (shop light pools on the pavements and neon on the shop
-  fronts — framed signboards, blade signs, eave lines — instanced near the camera, thick in the nightlife quarters),
-  street-lamp coronas (`Props`), and the baked street-light map, which lights roads, pavements, people, cars and the
-  facades' lower floors.
+- The grade aims at a pastel postcard by day and magenta/violet at night. Day: a cyan-leaning dome over a turquoise
+  haze (`skyGain` dims Preetham's white-paper horizon). Golden hour (~17:30-19:15) and dusk live in the sky shader (a
+  coral-to-lilac dome held bright until sunset, pink-lit cumulus, sun-side glow and glare, Belt of Venus, a violet
+  twilight dome after sunset; the environment capture adds a gold flare toward the low sun, so glass facing it
+  glows), `SkySystem.update` (sun colour temperature, peach fill and warm bounce, a little more haze) and
+  `FilmGradeEffect` (`uGolden` warms the white balance of sunlit warm tones, `uNight` the violet/magenta neon grade).
+  Night: the urban sky glow (a mauve band over the skyline, violet zenith, city-lit cloud bases) is also the haze
+  colour, so towers stand in it. Night light is emissive only, no lights: `world/nightglow.js` (shop light pools on
+  the pavements and neon on the shop fronts — framed signboards, blade signs, eave lines — instanced near the camera,
+  thick in the nightlife quarters), street-lamp coronas (`Props`), and the baked street-light map (street lamps, lane
+  and plaza lights), which lights roads, pavements, people, cars and the facades' lower floors; facades also take the
+  shop light from under their five-foot-ways, fading up the wall, while the upper storeys see only the sky glow.
 - Budget at High, 1800x1125 on an M2: ~5-8 ms GPU for reflection + main render, 450-580 draw calls (incl. shadow and
   reflection passes), 2.5-3.3M triangles. `node tests/perf.mjs` drives Claudia's autopilot route Tanjong Pagar -> Marina
   Bay; `tests/gpuframe.mjs` measures per-feature render cost (interleaved A/B), `tests/gpuprof.mjs` per-draw GPU time,
