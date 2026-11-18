@@ -89,8 +89,20 @@ if (!LOSE) await page.evaluate(() => {
 });
 // how near any traffic car came to either racer during the race (and what traffic was told to keep clear)
 await page.evaluate(() => {
-  const g = __game, W = g.traffic.way, R = window.__near = { min: 1e9, held: W ? W.held.size : 0, lanes: W ? W.lanes.size : 0 };
-  const tick = () => { if (g.dragRace.state !== 'race') return; for (const v of [g.player.vehicle, g.dragRace.beng]) if (v) for (const c of g.traffic.cars) if (c.state === 'drive') R.min = Math.min(R.min, c.pos.distanceTo(v.position)); requestAnimationFrame(tick); };
+  const g = __game, W = g.traffic.way, R = window.__near = { min: 1e9, held: W ? W.held.size : 0, lanes: W ? W.lanes.size : 0, car: null };
+  // the nearest one, and where it was: on a kept-clear lane or connector, coming through a held one, or elsewhere
+  const where = c => c.mode === 'lane' ? `lane ${c.lane.id}${W.lanes.has(c.lane) ? ' (kept clear)' : ''} s ${(c.s - c.lane.s0).toFixed(1)}/${(c.lane.s1 - c.lane.s0).toFixed(1)}`
+    : `conn ${c.fromLane.id}>${c.conn.lane.id}${W.conns.has(c.conn) ? ' (the way)' : W.held.has(c.conn) ? ' (held)' : ''} cs ${c.cs.toFixed(1)}`;
+  const tick = () => {
+    if (g.dragRace.state !== 'race') return;
+    for (const v of [g.player.vehicle, g.dragRace.beng]) if (v) for (const c of g.traffic.cars) if (c.state === 'drive') {
+      const d = c.pos.distanceTo(v.position);
+      if (d >= R.min) continue;
+      const under = g.roadnet.nearestLane(v.position.x, v.position.z, 6)?.lane;
+      R.min = d; R.car = `${c.type} ${where(c)} v ${c.speed.toFixed(1)} wait ${c.wait.toFixed(1)}; near ${v === g.player.vehicle ? 'the player' : 'Beng'} on lane ${under?.id}${W.lanes.has(under) ? ' (kept clear)' : ''}`;
+    }
+    requestAnimationFrame(tick);
+  };
   tick();
 });
 await page.waitForTimeout(250); await shot('5-go');

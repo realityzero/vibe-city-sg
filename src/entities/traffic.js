@@ -298,7 +298,8 @@ export class Traffic {
    * lane (from arc length `from` on, out through connector `conn`). Nobody appears on it; cars on it ahead are let go
    * while out of sight, or move over a lane; at the junctions it passes through, traffic whose way crosses or joins it
    * waits at the line as if the junction were full — at the first one too if `start` (the racers' own light holds the
-   * cross traffic there until they go). */
+   * cross traffic there until they go) — and traffic along it goes on through a red (racers run them: a queue at the
+   * light would stand in their way). */
   holdWay(steps, start) {
     const lanes = new Map(), conns = new Set(), held = new Set(), first = steps[0]?.lane.to;
     for (const { lane, from, conn } of steps) {
@@ -311,14 +312,19 @@ export class Traffic {
   }
   release() { this.way = null; }
 
-  /** cars ahead on a held way: out of sight they are let go; in sight they move over a lane if there is room */
+  /** cars ahead on a held way: out of sight they are let go; in sight, under way and with room to finish (a car only
+   * moves across as it rolls: one that stopped half over would stand in the racers' way), they move over to the nearest
+   * lane of the road that is not kept clear, where there is a gap beside them — the rest drive on through */
   _clearWay() {
     const W = this.way;
     for (const [l, from] of W.lanes) for (let i = l.cars.length - 1; i >= 0; i--) {
       const c = l.cars[i];
       if (c.keep || c.s < from - 3) continue; // (behind the racers)
       if (!this.seen(c.pos)) { this.despawn(c); continue; }
-      for (const o of this.net.nodes[l.from].out) if (o.edge === l.edge && Math.abs(o.idx - l.idx) === 1 && !W.lanes.has(o) && this._room(o, c.s, c.speed)) { this._moveOver(c, o); break; }
+      if (c.speed < 4 || l.s1 - c.s < 25) continue;
+      let to = null;
+      for (const o of this.net.nodes[l.from].out) if (o.edge === l.edge && !W.lanes.has(o) && this._clear(o, c.s, 10, 10) && (!to || Math.abs(o.idx - l.idx) < Math.abs(to.idx - l.idx))) to = o;
+      if (to) this._moveOver(c, to);
     }
     for (const x of W.conns) for (const c of this.net.nodes[x.lane.from].occ) if (c.conn === x && !c.keep && !this.seen(c.pos)) this.despawn(c);
   }
@@ -404,7 +410,8 @@ export class Traffic {
         if (sig === 'amber' || sig === 'red') {
           if (sig === 'amber' && !canStop) car.committed = car.lane;
           else if (car.speed < 2) car.committed = null; // held up short of the line after all: wait for the next green
-          if (car.committed !== car.lane) this._stop(remain - half - 1);
+          // (on a race's way through a junction it holds, the way is clear: on through the red, out of the racers' way)
+          if (car.committed !== car.lane && !this.way?.conns.has(car.nextConn)) this._stop(remain - half - 1);
         }
         const node = this.net.nodes[car.lane.to];
         if ((canStop || car.speed < 1) && car.wait < 8) {
