@@ -6,7 +6,7 @@ import { buildStreetscape } from './streetscape.js';
 import { Kit, lin, STALL, TRAY } from '../streetpieces.js';
 import { hallLayout } from './hawkerhall.js';
 import { FOOD_FIRST, FOOD_COUNT } from '../../gfx/signAtlas.js';
-import { loadGroundMask, groundEdgeDistance } from '../groundmask.js';
+import { loadGroundMask, groundEdgeDistance, GROUND_SMAX } from '../groundmask.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -1180,7 +1180,8 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const waterField = (i, j) => { const o = (j * mask.w + i) * 4, s = groundEdgeDistance(mask.data[o + 3]); return mask.data[o] < TH ? s : -s; };
   const waterAt = (x, z) => { // the field, bilinear (> 0: water)
     const tx = Math.min(mask.w - 1.001, Math.max(0, (x - M.xmin) / res - 0.5)), tz = Math.min(mask.h - 1.001, Math.max(0, (z - M.zmin) / res - 0.5));
-    const i = Math.floor(tx), j = Math.floor(tz), fx = tx - i, fz = tz - j;
+    const i = Math.floor(tx), j = Math.floor(tz), fx = tx - i, fz = tz - j, D = mask.data, o = (j * mask.w + i) * 4;
+    if (D[o] >= TH && D[o + 4] >= TH && D[o + mask.w * 4] >= TH && D[o + mask.w * 4 + 4] >= TH) return -GROUND_SMAX;
     return (waterField(i, j) * (1 - fx) + waterField(i + 1, j) * fx) * (1 - fz) + (waterField(i, j + 1) * (1 - fx) + waterField(i + 1, j + 1) * fx) * fz;
   };
   const faceCol = srgbToLin(c3(0xaaa498)), copeCol = srgbToLin(c3(0xbfbaaf));
@@ -1188,7 +1189,11 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   const segs = [];
   for (let j = 0; j < mask.h - 1; j++) {
     for (let i = 0; i < mask.w - 1; i++) {
-      if (mask.data[(j * mask.w + i) * 4 + 3] === 255 && mask.data[(j * mask.w + i + 1) * 4 + 3] === 255 && mask.data[((j + 1) * mask.w + i) * 4 + 3] === 255 && mask.data[((j + 1) * mask.w + i + 1) * 4 + 3] === 255) continue; // one class all round
+      // (the shader weighs the water class only where a water texel is one of the four: elsewhere a land texel's
+      // negative distance, its class edge off the raster's, says nothing about water)
+      const o00 = (j * mask.w + i) * 4, o10 = o00 + 4, o01 = o00 + mask.w * 4, o11 = o01 + 4, D = mask.data;
+      if (D[o00] >= TH && D[o10] >= TH && D[o01] >= TH && D[o11] >= TH) continue;
+      if (D[o00 + 3] === 255 && D[o10 + 3] === 255 && D[o01 + 3] === 255 && D[o11 + 3] === 255) continue; // one class all round
       const v00 = waterField(i, j), v10 = waterField(i + 1, j), v01 = waterField(i, j + 1), v11 = waterField(i + 1, j + 1);
       const c = (v00 < 0 ? 1 : 0) | (v10 < 0 ? 2 : 0) | (v11 < 0 ? 4 : 0) | (v01 < 0 ? 8 : 0);
       if (c === 0 || c === 15) continue;

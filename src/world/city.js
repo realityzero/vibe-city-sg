@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createFacadeMaterial, createRoofMaterial, createRoadMaterial, createStructMaterial, createGroundMaterial, FACADE_REC, FACADE_REC_W } from '../gfx/materials.js';
 import { REFLECT_LAYER } from './water.js';
 import { nextTask } from '../core/nextTask.js';
-import { loadGroundMask, groundEdgeDistance } from './groundmask.js';
+import { loadGroundMask, groundEdgeDistance, GROUND_SMAX } from './groundmask.js';
 
 const SHORE_TILE = 32; // texels a side of a tile of the waterline's edge distances kept on the CPU (see waterEdge)
 
@@ -86,7 +86,9 @@ export class City {
   waterEdge(x, z) {
     const M = this.meta, W = this.maskW, H = this.maskH, T = SHORE_TILE, tw = Math.ceil(W / T);
     const fx = Math.min(W - 1.001, Math.max(0, (x - M.xmin) / M.res - 0.5)), fz = Math.min(H - 1.001, Math.max(0, (z - M.zmin) / M.res - 0.5));
-    const i0 = Math.floor(fx), j0 = Math.floor(fz), u = fx - i0, v = fz - j0;
+    const i0 = Math.floor(fx), j0 = Math.floor(fz), u = fx - i0, v = fz - j0, m = this.mask;
+    // (no water texel among the four: land, whatever a land texel's own class edge says)
+    if (m[(j0 * W + i0) * 3] >= 160 && m[(j0 * W + i0 + 1) * 3] >= 160 && m[((j0 + 1) * W + i0) * 3] >= 160 && m[((j0 + 1) * W + i0 + 1) * 3] >= 160) return -GROUND_SMAX;
     const at = (i, j) => {
       const tile = this.shoreTiles.get(Math.floor(j / T) * tw + Math.floor(i / T));
       const s = groundEdgeDistance(tile ? tile[(j % T) * T + (i % T)] : 255);
