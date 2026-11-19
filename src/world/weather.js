@@ -1,4 +1,7 @@
-// Tropical weather: afternoon thunderstorms, GPU rain streaks around the camera, lightning + thunder.
+// Tropical weather: afternoon thunderstorms, GPU rain streaks around the camera, lightning + thunder. The 4 pm storm:
+// most afternoons between 15:30 and 16:30 (in free roam) the sky opens in seconds rather than a minute, pours for a
+// minute or so and clears as fast — event 'downpour', which sends people running for the five-foot ways and floods a
+// kerb (world/streetlife.js).
 import * as THREE from 'three';
 import { U } from '../gfx/globals.js';
 
@@ -11,6 +14,8 @@ export class Weather {
     this.nextChange = 90;
     this.flash = 0;
     this.thunderT = 0;
+    this.burst = -99;         // s of downpour left (counts on below 0: the quick clearing after it)
+    this.burstDone = false;   // this afternoon's has been (or was skipped)
     // rain streaks: instanced quads, positions wrapped in a box around the camera in the vertex shader
     const N = 16000;
     const base = new THREE.PlaneGeometry(0.008, 0.7);
@@ -57,10 +62,23 @@ export class Weather {
 
   force(v) { this.forced = v; this.rain = v; this.target = v; }
 
+  /** the sky opens now, for `seconds` */
+  downpour(seconds = 50 + Math.random() * 30) {
+    this.burst = seconds; this.target = 1; this.nextChange = seconds + 150 + Math.random() * 200;
+    setTimeout(() => this.game.audio?.sfx?.('thunder', { volume: 0.9 }), 700); // (it opens with a crack)
+    this.game.events.emit('downpour');
+  }
+
   update(dt) {
     const game = this.game;
     const hour = game.sky.time;
-    if (this.forced == null && !game.missions?.weatherLocked) {
+    if (hour < 12) this.burstDone = false;
+    if (!this.burstDone && hour >= 15.5 && hour < 16.5 && this.forced == null && !game.missions?.weatherLocked && !game.missions?.active && this.rain < 0.1) {
+      this.burstDone = true;
+      if (Math.random() < 0.7) this.downpour();
+    }
+    if (this.burst > -12) { this.burst -= dt; if (this.burst <= 0 && this.target > 0 && this.forced == null) this.target = 0; }
+    if (this.forced == null && !game.missions?.weatherLocked && this.burst <= -12) {
       this.nextChange -= dt;
       if (this.nextChange <= 0) {
         // Singapore: afternoon/evening thunderstorms are common
@@ -70,7 +88,7 @@ export class Weather {
       }
     } else if (this.forced != null) this.target = this.forced;
     if (game.missions?.weatherLocked) this.target = game.missions.weatherTarget ?? 0;
-    this.rain += (this.target - this.rain) * Math.min(1, dt * 0.08);
+    this.rain += (this.target - this.rain) * Math.min(1, dt * (this.burst > -12 ? 0.45 : 0.08));
     if (Math.abs(this.target - this.rain) < 0.002) this.rain = this.target;
     this.mat.uniforms.uRain.value = this.rain;
     this.mat.uniforms.uCam.value.copy(game.camera.position);

@@ -1,11 +1,12 @@
 // "Spice" overlays: the Fine City ticket (speed / red-light cameras, small fines) with its camera flash, money floaters
-// under the cash counter (ERP, fines, payouts), the "people are filming you" view counter, the always-on one-line
-// objective, and the drag-race light. Each is one pooled DOM node re-armed with restartClass: nothing is created per
-// event, and the full-screen flash only has a layer while it plays.
+// under the cash counter (ERP, fines, payouts), the "people are filming you" view counter (also a job's objective bar),
+// a bystander's clip as a phone video, the always-on one-line objective, and the drag-race light. Each is one pooled
+// DOM node re-armed with restartClass: nothing is created per event, and the full-screen flash and the clip card only
+// have a layer while they play.
 import './spice.css';
 import { el, fmtMoney, restartClass } from './util.js';
 
-const fmtViews = n => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n));
+const fmtViews = n => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n));
 
 /** Notice of offence, stamped FINE CITY: { what, amount, detail, flash } (flash: a camera saw it) */
 export function makeTicket(ui) {
@@ -32,26 +33,64 @@ export function makeFloater(hud) {
   return (text, tone = 'loss') => { f.textContent = text; f.dataset.tone = tone; restartClass(f, 'go'); };
 }
 
-/** "people are filming you": a REC pill under the HUD that counts the views up; repeat calls add to the running clip */
+/** "people are filming you": a REC pill under the HUD that counts the views up; repeat calls add to the running clip.
+ *  views.goal(n) makes it a job's objective bar ("412K / 1M views", a fill along its foot, up until goal(0));
+ *  views.boost(x) shows the algorithm's multiplier on it */
 export function makeViews(parent) {
-  const p = el('div', 'vc-views vc-outline-thin', '<i class="rec"></i><b>0</b><span>views</span><em></em>');
+  const p = el('div', 'vc-views vc-outline-thin', '<i class="rec"></i><b>0</b><span class="of"></span><span>views</span><strong></strong><em></em><i class="fill"></i>');
   parent.appendChild(p);
-  const num = p.querySelector('b'), tag = p.querySelector('em');
-  let shown = 0, target = 0, raf = 0, hideT = 0, last = '';
+  const num = p.querySelector('b'), of = p.querySelector('.of'), boost = p.querySelector('strong'), tag = p.querySelector('em'), fill = p.querySelector('.fill');
+  let shown = 0, target = 0, goal = 0, raf = 0, hideT = 0, last = '';
   const step = () => {
     shown += Math.max(1, (target - shown) * 0.12);
     if (shown >= target) shown = target;
     const s = fmtViews(shown); if (s !== last) { num.textContent = s; last = s; }
+    if (goal) fill.style.transform = `scaleX(${Math.min(1, shown / goal)})`;
     raf = shown < target ? requestAnimationFrame(step) : 0;
   };
-  return (views, label = '') => {
-    if (!p.classList.contains('on')) { shown = 0; target = 0; }
-    target += views;
+  const views = (n, label = '') => {
+    if (!goal && !p.classList.contains('on')) { shown = 0; target = 0; }
+    target += n;
     tag.textContent = label;
     p.classList.add('on');
+    if (goal && target >= goal) p.classList.add('hit');
     if (!raf) raf = requestAnimationFrame(step);
-    clearTimeout(hideT); hideT = setTimeout(() => p.classList.remove('on'), 4200);
+    clearTimeout(hideT); if (!goal) hideT = setTimeout(() => p.classList.remove('on'), 4200);
   };
+  views.goal = n => {
+    goal = n; shown = target = 0; last = '0'; num.textContent = '0'; tag.textContent = ''; boost.textContent = '';
+    fill.style.transform = 'scaleX(0)';
+    of.textContent = n ? `/ ${fmtViews(n)}` : '';
+    p.classList.toggle('goal', !!n); p.classList.remove('hit');
+    clearTimeout(hideT); p.classList.toggle('on', !!n);
+  };
+  views.boost = x => { const s = x > 1.01 ? `×${+x.toFixed(2)}` : ''; if (boost.textContent !== s) { boost.textContent = s; if (s) restartClass(boost, 'pop'); } };
+  views.total = () => target;
+  return views;
+}
+
+/** A bystander's clip of the player as a vertical phone video: the still they caught (world/bystander.js paints
+ *  `canvas`), REC and a running time, the poster's handle, the hashtag and place, Singlish comments rising and a like
+ *  burst. One node, re-armed per clip (restartClass restarts every CSS animation in it); 5.5 s on screen.
+ *  show({ handle, tag, where, views, likes, comments: [3 strings] }) */
+export function makeClipCard(ui, w, h) {
+  const c = el('div', 'vc-clip', `<div class="scr"><canvas width="${w}" height="${h}"></canvas><div class="top"><i class="rec"></i><span class="t">0:00</span></div>
+    <div class="side"><span class="like"><i>♥</i><b></b></span><span class="share"><i>➦</i><b>Share</b></span><i class="h">♥</i><i class="h">♥</i><i class="h">♥</i></div>
+    <ul class="cm"><li></li><li></li><li></li></ul><div class="cap"><b class="who"></b><span class="tag"></span><span class="views"></span></div></div>`);
+  ui._fx.appendChild(c);
+  const q = s => c.querySelector(s), t = q('.t'), likes = q('.like b'), who = q('.who'), tag = q('.tag'), views = q('.views'), cms = [...c.querySelectorAll('.cm li')];
+  let hideT = 0, tick = 0;
+  c.addEventListener('animationend', e => { if (e.animationName === 'vc-clip-out') c.classList.remove('on', 'out'); });
+  const show = o => {
+    who.textContent = o.handle; tag.textContent = `${o.tag} · ${o.where}`; views.textContent = `${fmtViews(o.views)} views`;
+    likes.textContent = fmtViews(o.likes); o.comments.forEach((s, i) => { cms[i].textContent = s; });
+    let s = 0; t.textContent = '0:00';
+    clearInterval(tick); tick = setInterval(() => { t.textContent = `0:0${Math.min(9, ++s)}`; }, 1000);
+    c.classList.remove('out'); restartClass(c, 'on');
+    clearTimeout(hideT); hideT = setTimeout(() => { clearInterval(tick); c.classList.add('out'); }, 5500);
+  };
+  show.canvas = q('canvas');
+  return show;
 }
 
 /** the always-on one-line objective at the top of the screen (html; empty hides it). quiet: no glow (a distance tick) */
