@@ -48,25 +48,25 @@ export class City {
     const [data, ground] = await Promise.all([fetch('/data/city.json').then(r => r.json()), loadGroundMask('/data/ground.png')]);
     this.data = data;
     this.meta = data.meta;
-    // the RGBA pixels become the ground texture (and go once uploaded); the CPU copy for queries (water / vegetation /
-    // paving) keeps the RGB planes, and the class-edge distances (alpha) only in the tiles a waterline runs through
-    this.groundPixels = ground;
-    const rgba = ground.data, W = ground.w, H = ground.h, m = new Uint8Array(W * H * 3);
+    // the CPU copy for queries (water / vegetation / paving) keeps the RGB planes, and the class-edge distances only
+    // in the tiles a waterline runs through. The ground texture is put back together from those planes and the alpha
+    // plane, kept until then (6 MB, not the decoded 25 MB, through the city build)
+    const rgba = ground.data, W = ground.w, H = ground.h, m = new Uint8Array(W * H * 3), alpha = new Uint8Array(W * H);
     const T = SHORE_TILE, tw = Math.ceil(W / T), th = Math.ceil(H / T), shore = new Uint8Array(tw * th);
     for (let y = 0, i = 0, j = 0; y < H; y++) for (let x = 0; x < W; x++, i++, j += 4) {
-      m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2];
+      m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2]; alpha[i] = rgba[j + 3];
       // a waterline texel: its tile and any its land-side neighbours may be in
       if (rgba[j] < 160 && rgba[j + 3] < 255) {
         for (let ty = Math.max(0, (y - 1) / T | 0); ty <= Math.min(th - 1, (y + 1) / T | 0); ty++) for (let tx = Math.max(0, (x - 1) / T | 0); tx <= Math.min(tw - 1, (x + 1) / T | 0); tx++) shore[ty * tw + tx] = 1;
       }
     }
-    this.mask = m;
+    this.mask = m; this.groundAlpha = alpha;
     this.maskW = W; this.maskH = H;
     this.shoreTiles = new Map();
     for (let k = 0; k < shore.length; k++) {
       if (!shore[k]) continue;
       const tx = k % tw, ty = (k / tw) | 0, a = new Uint8Array(T * T).fill(255);
-      for (let y = 0; y < T && ty * T + y < H; y++) for (let x = 0; x < T && tx * T + x < W; x++) a[y * T + x] = rgba[((ty * T + y) * W + tx * T + x) * 4 + 3];
+      for (let y = 0; y < T && ty * T + y < H; y++) for (let x = 0; x < T && tx * T + x < W; x++) a[y * T + x] = alpha[(ty * T + y) * W + tx * T + x];
       this.shoreTiles.set(k, a);
     }
     onProgress?.(0.05, 'Map data loaded');
@@ -221,8 +221,10 @@ export class City {
 
   _createGround() {
     const M = this.meta;
-    const G = this.groundPixels; this.groundPixels = null;
-    const tex = new THREE.DataTexture(G.data, G.w, G.h, THREE.RGBAFormat, THREE.UnsignedByteType);
+    const W = this.maskW, H = this.maskH, m = this.mask, a = this.groundAlpha, px = new Uint8Array(W * H * 4);
+    for (let i = 0, j = 0; i < W * H; i++, j += 4) { px[j] = m[i * 3]; px[j + 1] = m[i * 3 + 1]; px[j + 2] = m[i * 3 + 2]; px[j + 3] = a[i]; }
+    this.groundAlpha = null;
+    const tex = new THREE.DataTexture(px, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
     tex.flipY = false; tex.colorSpace = THREE.NoColorSpace; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
     tex.generateMipmaps = true; tex.anisotropy = 8; tex.needsUpdate = true; tex.userData.releaseSource = true; tex.name = 'groundMask';
     this.groundTex = tex;

@@ -1,7 +1,8 @@
 // public/data/ground.png, decoded by hand. Its alpha channel holds each texel's distance to the edge of its ground class
 // (tools/ground-sdf.mjs), and a 2D canvas (drawImage + getImageData) stores colour premultiplied by alpha: the R, G, B
-// class codes the game queries would come back rounded. The PNG is inflated by the browser's DecompressionStream and
-// unfiltered in place in that one buffer.
+// class codes the game queries would come back rounded. The PNG is inflated by the browser's DecompressionStream
+// straight into one buffer of the image's size (no copy of the compressed data, no list of chunks to join: the phone
+// loads this on two threads at once) and unfiltered in place there.
 
 // alpha: signed distance (m) from a texel's centre to the edge of its own ground class, over +-GROUND_SMAX (written by
 // tools/ground-sdf.mjs, SMAX there; the ground shader's GSMAX is the same)
@@ -19,9 +20,15 @@ export async function loadGroundMask(url) {
     else if (type === 'IEND') break;
     o += 12 + len;
   }
-  const raw = new Uint8Array(await new Response(new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
-  const S = w * 4, stride = S + 1;
-  if (raw.length < stride * h) throw new Error('ground.png: truncated image data');
+  const S = w * 4, stride = S + 1, raw = new Uint8Array(stride * h), ds = new DecompressionStream('deflate');
+  const reading = (async () => {
+    const r = ds.readable.getReader(); let n = 0;
+    for (let c = await r.read(); !c.done; c = await r.read()) { if (n + c.value.length > raw.length) throw new Error('ground.png: too much image data'); raw.set(c.value, n); n += c.value.length; }
+    return n;
+  })();
+  const wr = ds.writable.getWriter();
+  await Promise.all([...idat.map(c => wr.write(c)), wr.close(), reading]);
+  if (await reading < raw.length) throw new Error('ground.png: truncated image data');
   for (let j = 0; j < h; j++) {
     const o = j * stride + 1, p = o - stride, f = raw[o - 1];
     if (f === 1) for (let i = 4; i < S; i++) raw[o + i] += raw[o + i - 4];
