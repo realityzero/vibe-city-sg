@@ -6,6 +6,7 @@ import { buildStreetscape } from './streetscape.js';
 import { Kit, lin, STALL, TRAY } from '../streetpieces.js';
 import { hallLayout } from './hawkerhall.js';
 import { FOOD_FIRST, FOOD_COUNT } from '../../gfx/signAtlas.js';
+import { loadGroundMask, groundEdgeDistance, GROUND_SMAX } from '../groundmask.js';
 
 const STYLE = { glass: 0, office: 1, resi: 2, hdb: 3, shophouse: 4, lowrise: 5, civic: 6, parking: 7, canopy: 8, industrial: 9, station: 10, plain: 11 };
 const LANE_W = 3.3;
@@ -230,25 +231,14 @@ const PAL = {
 const ROOF_DEFAULT = { flat: 0x9b9891, terracotta: 0xa4553a, dark: 0x5b5d60, green: 0x5e8a6e };
 const ROOF_CLAY = [0x9c5b36, 0x8f5a3a, 0xa86a42, 0x7f523a, 0x936147, 0x8a5a40, 0xa07050, 0x6f5548, 0xb06a40, 0x80604e, 0x94603c, 0x7a4e34];
 const pick = (arr, s) => arr[Math.floor(s * arr.length) % arr.length];
-
-// ---------- mask ----------
-async function loadMask(url) {
-  const blob = await (await fetch(url)).blob();
-  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-  const w = bmp.width, h = bmp.height, cv = new OffscreenCanvas(w, h);
-  const ctx = cv.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bmp, 0, 0); bmp.close();
-  const data = ctx.getImageData(0, 0, w, h).data;
-  cv.width = cv.height = 1; // the decoded bitmap and the canvas (25 MB each) go now rather than at some later GC
-  return { w, h, data };
-}
+const ROOF_CLAY_LIN = ROOF_CLAY.map(h => srgbToLin(c3(h))), FIREWALL_LIN = srgbToLin(c3(0xd6d0c3)); // (terrace roofs)
 
 async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], paint = [], placed = [], chunkSize = 300, quality = 'high' }) {
   const painted = new Map(paint); // [building id, wall colour]: landmarks that know a building's real colours
   const t0 = performance.now();
   const progress = (p, label) => self.postMessage({ type: 'progress', p, label });
   progress(0.02, 'Downloading OpenStreetMap Singapore');
-  const [city, mask] = await Promise.all([fetch(cityUrl).then(r => r.json()), loadMask(groundUrl)]);
+  const [city, mask] = await Promise.all([fetch(cityUrl).then(r => r.json()), loadGroundMask(groundUrl)]);
   const M = city.meta;
   const res = M.res;
   const maskAt = (x, z, ch = 0) => {
@@ -754,18 +744,18 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
         roofTris++;
       }
     };
-    const roofTri = (a, bb, c, colour = roofCol) => {
+    const roofTri = (a, bb, c, colour = roofCol, attr = roofAttr, sight = true) => {
       // computes face normal, ensures it points up/outward
       let ux = bb[0] - a[0], uy = bb[1] - a[1], uz = bb[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
       let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
       const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
       let A = a, B = bb, C = c;
       if (ny < 0) { B = c; C = bb; nx = -nx; ny = -ny; nz = -nz; }
-      const i0 = ch.roofs.rv(A[0], A[1], A[2], nx, ny, nz, colour, roofAttr);
-      const i1 = ch.roofs.rv(B[0], B[1], B[2], nx, ny, nz, colour, roofAttr);
-      const i2 = ch.roofs.rv(C[0], C[1], C[2], nx, ny, nz, colour, roofAttr);
+      const i0 = ch.roofs.rv(A[0], A[1], A[2], nx, ny, nz, colour, attr);
+      const i1 = ch.roofs.rv(B[0], B[1], B[2], nx, ny, nz, colour, attr);
+      const i2 = ch.roofs.rv(C[0], C[1], C[2], nx, ny, nz, colour, attr);
       ch.roofs.tri(i0, i1, i2); roofTris++;
-      if (!b.noPhys) occlTri(ch, A, B, C);
+      if (sight && !b.noPhys) occlTri(ch, A, B, C);
     };
     const gableEnd = (a, bb, c) => {
       // vertical triangle in wall material (plain)
@@ -793,18 +783,59 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
       }
       // (only on near-rectangular plans: on an L or a wedge the box's roof hangs metres past the facades)
       if (o && o.area > 0 && area / o.area > 0.9 && o.Wd > 2) {
-        const ov = 0.35; // eave overhang
-        const L = o.L / 2 + ov, Wh = o.Wd / 2 + ov;
+        // a shophouse is a unit of a terrace (OSM maps some terraces unit by unit, some as one outline): its gable roof
+        // stops at the party walls, no overhang there, and a plastered firewall, a ridge of triangular section with its
+        // crest hf above the tiles, stands up each one. Each unit adds the one at its end furthest along a fixed world
+        // direction, so a row of separately mapped units gets one per party wall
+        const shopGable = roofShape === 1 && style === STYLE.shophouse && !hawker; // (a hawker hall keeps its own roof)
+        if (shopGable && (o.ux < 0 || (o.ux === 0 && o.uz < 0))) { o.ux = -o.ux; o.uz = -o.uz; }
+        const ov = 0.35, ovU = shopGable ? 0 : ov; // eave overhang
+        const L = o.L / 2 + ovU, Wh = o.Wd / 2 + ov;
         const ux = o.ux, uz = o.uz, vx = -uz, vz = ux;
         const P = (a, bq, y) => [o.cx + ux * a + vx * bq, y, o.cz + uz * a + vz * bq];
         const ridgeIn = roofShape === 2 ? Math.min(Wh, L * 0.9) : 0;
         const e = wallTop, r = topAdj;
         const c1 = P(-L, -Wh, e), c2 = P(L, -Wh, e), c3 = P(L, Wh, e), c4 = P(-L, Wh, e);
         const r1 = P(-L + ridgeIn, 0, r), r2 = P(L - ridgeIn, 0, r);
-        roofTri(c1, c2, r2); roofTri(c1, r2, r1);
-        roofTri(c3, c4, r1); roofTri(c3, r1, r2);
+        // and a terrace mapped as one outline is still a row of houses, not one long shed: a roof per unit on the
+        // facade's ~5.5 m unit grid (materials.js SHOP_UNIT_SETUP, along the five-foot-way front), each re-tiled in its
+        // own time
+        const cuts = [];
+        const fi = shopGable ? eFlag.indexOf(1) : -1;
+        if (fi >= 0) {
+          const p = outer[fi], q = outer[(fi + 1) % nE], fl = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          const unitN = fl > 8 ? Math.max(1, Math.floor(fl / 5.5 + 0.5)) : 1;
+          for (let k = 1; k < unitN; k++) {
+            const a = (p[0] + (q[0] - p[0]) * k / unitN - o.cx) * ux + (p[1] + (q[1] - p[1]) * k / unitN - o.cz) * uz;
+            if (Math.abs(a) < L - 1.5) cuts.push(a);
+          }
+          cuts.sort((x, y) => x - y);
+        }
+        if (shopGable) {
+          TAG = OT + 'r.terrace';
+          const fwAttr = [style, seed, 2, 0], hb = 0.14, hf = 0.38;
+          const at = [-L, ...cuts, L];
+          for (let k = 0; k + 1 < at.length; k++) {
+            const a0 = at[k], a1 = at[k + 1], hu = hash1(b.id * 13.7 + k * 3.1);
+            const col = cuts.length ? (hu < 0.25 ? pick(ROOF_CLAY_LIN, hash1(b.id + k * 7.9)) : roofCol).map(v => v * (0.86 + 0.28 * hash1(hu * 91.3))) : roofCol;
+            const u1 = P(a0, -Wh, e), u2 = P(a1, -Wh, e), u3 = P(a1, Wh, e), u4 = P(a0, Wh, e), s1 = P(a0, 0, r), s2 = P(a1, 0, r);
+            roofTri(u1, u2, s2, col); roofTri(u1, s2, s1, col);
+            roofTri(u3, u4, s1, col); roofTri(u3, s1, s2, col);
+          }
+          for (const a of [...cuts, L]) for (const [v0, v1] of [[-Wh, 0], [0, Wh]]) {
+            const y0 = v0 ? e : r, y1 = v1 ? e : r;
+            for (const sd of [-1, 1]) {
+              const f0 = P(a + sd * hb, v0, y0), f1 = P(a + sd * hb, v1, y1), t0 = P(a, v0, y0 + hf), t1 = P(a, v1, y1 + hf);
+              roofTri(f0, f1, t1, FIREWALL_LIN, fwAttr, false); roofTri(f0, t1, t0, FIREWALL_LIN, fwAttr, false);
+            }
+          }
+          TAG = OT + 'r.main';
+        } else {
+          roofTri(c1, c2, r2); roofTri(c1, r2, r1);
+          roofTri(c3, c4, r1); roofTri(c3, r1, r2);
+        }
         if (roofShape === 2) { roofTri(c2, c3, r2); roofTri(c4, c1, r1); }
-        else { gableEnd(P(L - ov, -Wh + ov, e), P(L - ov, Wh - ov, e), P(L - ov, 0, r)); gableEnd(P(-L + ov, Wh - ov, e), P(-L + ov, -Wh + ov, e), P(-L + ov, 0, r)); }
+        else { gableEnd(P(L - ovU, -Wh + ov, e), P(L - ovU, Wh - ov, e), P(L - ovU, 0, r)); gableEnd(P(-L + ovU, Wh - ov, e), P(-L + ovU, -Wh + ov, e), P(-L + ovU, 0, r)); }
         addFlat(outer, holes, e - 0.01, false);
         roofDone = true;
       } else roofShape = outer.length <= 12 ? 3 : 0;
@@ -1140,26 +1171,42 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     }
   }
 
-  // ================= SEAWALLS (marching squares on land mask) =================
+  // ================= SEAWALLS (marching squares on the drawn waterline) =================
+  // The ground shader draws the water's edge where the water class's edge distance (the mask's alpha, see
+  // groundmask.js), interpolated over each texel quad, crosses zero: walls follow the same contour, so they stand
+  // exactly at the edge of the drawn land, along the quay lines of the map rather than the raster's 2 m steps.
   progress(0.7, 'Filling Marina Bay');
   const TH = 160;
-  const wallCol = srgbToLin(c3(0xa49d90));
+  const waterField = (i, j) => { const o = (j * mask.w + i) * 4, s = groundEdgeDistance(mask.data[o + 3]); return mask.data[o] < TH ? s : -s; };
+  const waterAt = (x, z) => { // the field, bilinear (> 0: water)
+    const tx = Math.min(mask.w - 1.001, Math.max(0, (x - M.xmin) / res - 0.5)), tz = Math.min(mask.h - 1.001, Math.max(0, (z - M.zmin) / res - 0.5));
+    const i = Math.floor(tx), j = Math.floor(tz), fx = tx - i, fz = tz - j, D = mask.data, o = (j * mask.w + i) * 4;
+    if (D[o] >= TH && D[o + 4] >= TH && D[o + mask.w * 4] >= TH && D[o + mask.w * 4 + 4] >= TH) return -GROUND_SMAX;
+    return (waterField(i, j) * (1 - fx) + waterField(i + 1, j) * fx) * (1 - fz) + (waterField(i, j + 1) * (1 - fx) + waterField(i + 1, j + 1) * fx) * fz;
+  };
+  const faceCol = srgbToLin(c3(0xaaa498)), copeCol = srgbToLin(c3(0xbfbaaf));
+  const railBays = new Buf(4096); // quay railing: x, z, yaw, length per bay (drawn near the camera by StreetDetail)
   const segs = [];
   for (let j = 0; j < mask.h - 1; j++) {
     for (let i = 0; i < mask.w - 1; i++) {
-      const v00 = mask.data[(j * mask.w + i) * 4], v10 = mask.data[(j * mask.w + i + 1) * 4], v01 = mask.data[((j + 1) * mask.w + i) * 4], v11 = mask.data[((j + 1) * mask.w + i + 1) * 4];
-      const c = (v00 > TH ? 1 : 0) | (v10 > TH ? 2 : 0) | (v11 > TH ? 4 : 0) | (v01 > TH ? 8 : 0);
+      // (the shader weighs the water class only where a water texel is one of the four: elsewhere a land texel's
+      // negative distance, its class edge off the raster's, says nothing about water)
+      const o00 = (j * mask.w + i) * 4, o10 = o00 + 4, o01 = o00 + mask.w * 4, o11 = o01 + 4, D = mask.data;
+      if (D[o00] >= TH && D[o10] >= TH && D[o01] >= TH && D[o11] >= TH) continue;
+      if (D[o00 + 3] === 255 && D[o10 + 3] === 255 && D[o01 + 3] === 255 && D[o11 + 3] === 255) continue; // one class all round
+      const v00 = waterField(i, j), v10 = waterField(i + 1, j), v01 = waterField(i, j + 1), v11 = waterField(i + 1, j + 1);
+      const c = (v00 < 0 ? 1 : 0) | (v10 < 0 ? 2 : 0) | (v11 < 0 ? 4 : 0) | (v01 < 0 ? 8 : 0);
       if (c === 0 || c === 15) continue;
       const X = k => M.xmin + (k + 0.5) * res, Z = k => M.zmin + (k + 0.5) * res;
-      const lerp = (a, b) => (TH - a) / (b - a);
+      const lerp = (a, b) => a / (a - b);
       const top = [X(i + lerp(v00, v10)), Z(j)], right = [X(i + 1), Z(j + lerp(v10, v11))], bottom = [X(i + lerp(v01, v11)), Z(j + 1)], left = [X(i), Z(j + lerp(v00, v01))];
       const L = { 1: [[left, top]], 2: [[top, right]], 3: [[left, right]], 4: [[right, bottom]], 5: [[left, top], [right, bottom]], 6: [[top, bottom]], 7: [[left, bottom]], 8: [[bottom, left]], 9: [[bottom, top]], 10: [[top, right], [bottom, left]], 11: [[bottom, right]], 12: [[right, left]], 13: [[right, top]], 14: [[top, left]] }[c];
       for (const s of L) segs.push(s);
     }
   }
   TAG = 's.seawall';
-  // chain the 2 m marching-squares segments into polylines and simplify them (Douglas-Peucker, 0.5 m): straight
-  // quays become a few long quads instead of hundreds; one face, towards the water (the land side is buried)
+  // chain the 2 m marching-squares segments into polylines and simplify them (Douglas-Peucker, 0.12 m): straight
+  // quays become a few long quads instead of hundreds; faces towards the water only (the land side is buried)
   const sk = p => p[0].toFixed(3) + ',' + p[1].toFixed(3);
   const ends = new Map(); const usedS = new Uint8Array(segs.length);
   segs.forEach(([a, b], i) => { for (const p of [a, b]) { const k = sk(p); let l = ends.get(k); if (!l) ends.set(k, l = []); l.push(i); } });
@@ -1183,15 +1230,25 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
     // extend forwards from the tail, then backwards from the head
     for (let cur = s0, tail = segs[s0][1]; ;) { const n = nextSeg(tail, cur); if (n < 0) break; usedS[n] = 1; const [a, b] = segs[n]; tail = sk(a) === sk(tail) ? b : a; line.push(tail); cur = n; }
     for (let cur = s0, head = segs[s0][0]; ;) { const n = nextSeg(head, cur); if (n < 0) break; usedS[n] = 1; const [a, b] = segs[n]; head = sk(a) === sk(head) ? b : a; line.unshift(head); cur = n; }
-    const pts = simplify(line, 0.5);
+    const pts = simplify(line, 0.12);
     for (let i = 0; i + 1 < pts.length; i++) {
       const a = pts[i], b = pts[i + 1];
       const ch = chunk(chunkKey((a[0] + b[0]) / 2, (a[1] + b[1]) / 2));
       const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz); if (l < 0.01) continue;
       let nx = dz / l, nz = -dx / l;
-      const mx = (a[0] + b[0]) / 2 + nx * 1.5, mz = (a[1] + b[1]) / 2 + nz * 1.5;
-      if (maskAt(mx, mz) > TH) { nx = -nx; nz = -nz; }
-      quadGeo(ch.struct, [a[0], -4, a[1]], [b[0], -4, b[1]], [b[0], 0.02, b[1]], [a[0], 0.02, a[1]], [nx, 0, nz], wallCol);
+      const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+      if (waterAt(mx + nx * 0.6, mz + nz * 0.6) < 0) { nx = -nx; nz = -nz; }
+      // the wall face, then the coping (the ground's pale granite band) lipping 5 cm over it, its top and front
+      const o = 0.05, ax = a[0] + nx * o, az = a[1] + nz * o, bx = b[0] + nx * o, bz = b[1] + nz * o;
+      quadGeo(ch.struct, [a[0], -4, a[1]], [b[0], -4, b[1]], [b[0], -0.24, b[1]], [a[0], -0.24, a[1]], [nx, 0, nz], faceCol);
+      quadGeo(ch.struct, [ax, -0.26, az], [bx, -0.26, bz], [bx, 0.02, bz], [ax, 0.02, az], [nx, 0, nz], copeCol);
+      quadGeo(ch.struct, [a[0], 0.02, a[1]], [b[0], 0.02, b[1]], [bx, 0.02, bz], [ax, 0.02, az], N_UP, copeCol);
+      // a slim steel railing along the promenades of the bay, the river and the canals (not round park ponds, not
+      // where a building stands on the quay): bays of ~2.4 m (posts, a handrail, a mid rail) set 0.3 m in on the coping
+      if (l > 1.2 && maskAt(mx + nx * 1.2, mz + nz * 1.2) < 64 && occAt(mx - nx * 1.5, mz - nz * 1.5) < 255) {
+        const n = Math.max(1, Math.round(l / 2.4)), yaw = Math.atan2(dx, dz), ox = -nx * 0.3, oz = -nz * 0.3;
+        for (let k = 0; k < n; k++) railBays.p4(a[0] + dx * k / n + ox, a[1] + dz * k / n + oz, yaw, l / n);
+      }
     }
   }
 
@@ -1280,10 +1337,10 @@ async function build({ cityUrl, groundUrl, exclusions = [], clearings = [], pain
   }
   const treeArr = new Float32Array(trees); transfer.push(treeArr.buffer);
   const binfo = new Float32Array(buildingInfo); transfer.push(binfo.buffer);
-  const stallArr = new Float32Array(hawkerStalls);
-  transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer, stallArr.buffer);
+  const stallArr = new Float32Array(hawkerStalls), railings = railBays.out();
+  transfer.push(furniture.pieces.buffer, furniture.obstacles.buffer, stallArr.buffer, railings.buffer);
   const recs = REC.data.out(); transfer.push(recs.buffer); REC.f64.free(); REC.tab = null;
-  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, stalls: stallArr }, rebuilt, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
+  self.postMessage({ type: 'done', chunks: outChunks, trees: treeArr, buildingInfo: binfo, furniture: { pieces: furniture.pieces, obstacles: furniture.obstacles, stalls: stallArr }, rebuilt, railings, facadeRecords: recs, stats: { mem, buildings: nb, wallTris, roofTris, kerbPushed, tc: TC, trees: trees.length / 5, furniture: furniture.counts, ms: Math.round(performance.now() - t0) }, nCx, nCz }, transfer);
 }
 
 function quadGeo(g, a, b, c, d, n, col, doubleSided = false) {

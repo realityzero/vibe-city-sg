@@ -1,6 +1,7 @@
 // Converts the cached Overpass JSON into compact game data:
 //   public/data/city.json   buildings, roads, traffic graph, trees, POIs (local metres, x = east, z = south)
-//   public/data/ground.png  2 m/px mask: R land(255)/pond(128)/water(0), G vegetation, B paving
+//   public/data/ground.png  2 m/px mask: R land(255)/pond(128)/water(0), G vegetation, B paving, A signed distance to
+//                           the edge of the texel's ground class (tools/ground-sdf.mjs)
 // Data © OpenStreetMap contributors, ODbL.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -8,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { elevateBridges, validateBridges } from './bridge-decks.mjs';
+import { bakeGroundSdf } from './ground-sdf.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cache = join(here, 'cache');
@@ -98,6 +100,9 @@ const mask = new Uint8Array(W * H * 4);
 const R = 0, G = 1, B = 2;
 for (let i = 0; i < W * H; i++) { mask[i * 4] = 255; mask[i * 4 + 3] = 255; }
 const toPx = (x, z) => [(x - XMIN) / RES - 0.5, (z - ZMIN) / RES - 0.5];
+// the vector geometry behind the raster, for the class-edge distances in its alpha channel (tools/ground-sdf.mjs)
+const ground = { polys: [], strokes: [], aprons: [], coast: [], sea: null };
+const COAST_R = 1.6;
 
 function fillRings(rings, cb) {
   // even-odd scanline fill; cb(index) per pixel
@@ -149,7 +154,8 @@ const waterEls = await load('water');
   for (const el of waterEls) {
     if (el.tags?.natural !== 'coastline' || !el.geometry) continue;
     const pts = el.geometry.map(g => proj(g.lat, g.lon));
-    strokeLine(pts, 1.6, i => { barrier[i] = 1; });
+    strokeLine(pts, COAST_R, i => { barrier[i] = 1; });
+    ground.coast.push(pts);
     for (let s = 0; s + 1 < pts.length; s++) {
       const [ax, az] = pts[s], [bx, bz] = pts[s + 1];
       const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz);
@@ -171,6 +177,7 @@ const waterEls = await load('water');
   }
   let seaCount = 0;
   for (let i = 0; i < W * H; i++) if (sea[i]) { mask[i * 4 + R] = 0; seaCount++; }
+  ground.sea = sea;
   console.log(`sea pixels ${(seaCount / (W * H) * 100).toFixed(1)}%`);
 
   for (const el of waterEls) {
@@ -182,6 +189,7 @@ const waterEls = await load('water');
       const area = Math.abs(ringArea(poly.outer));
       const small = area < 15000 && !['river', 'reservoir', 'canal'].includes(t.water) && !t.waterway;
       fillRings([poly.outer, ...poly.holes], i => { mask[i * 4 + R] = small ? Math.min(mask[i * 4 + R], 128) : 0; });
+      ground.polys.push({ rings: [poly.outer, ...poly.holes], water: 1 });
     }
   }
 }
@@ -204,6 +212,7 @@ for (const el of greenEls) {
   else continue;
   for (const poly of polygonsOf(el)) {
     if (poly.outer.length < 3) continue;
+    ground.polys.push({ rings: [poly.outer, ...poly.holes], g, b, land });
     fillRings([poly.outer, ...poly.holes], i => {
       if (land) mask[i * 4 + R] = 255;
       if (g) { mask[i * 4 + G] = Math.max(mask[i * 4 + G], g === 100 ? (mask[i * 4 + G] || 100) : g); }
@@ -211,7 +220,9 @@ for (const el of greenEls) {
     });
   }
   if ((t.man_made === 'pier') && el.type === 'way' && el.geometry && key(el.geometry[0]) !== key(el.geometry[el.geometry.length - 1])) {
-    strokeLine(el.geometry.map(g => proj(g.lat, g.lon)), 2, i => { mask[i * 4 + R] = 255; mask[i * 4 + B] = 230; });
+    const pts = el.geometry.map(g => proj(g.lat, g.lon));
+    strokeLine(pts, 2, i => { mask[i * 4 + R] = 255; mask[i * 4 + B] = 230; });
+    ground.strokes.push({ pts, r: 2, b: 230, land: 1 });
   }
 }
 
@@ -344,7 +355,7 @@ for (const b of order) {
   if (b.isPart) o.pt = 1;
   buildings.push(o);
   // building apron paving in the mask
-  if (!b.isPart && height > 3 && minH < 3) fillRings([b.outer], i => { mask[i * 4 + B] = Math.max(mask[i * 4 + B], 1); });
+  if (!b.isPart && height > 3 && minH < 3) { fillRings([b.outer], i => { mask[i * 4 + B] = Math.max(mask[i * 4 + B], 1); }); ground.aprons.push({ ring: b.outer }); }
 }
 console.timeEnd('buildings');
 console.log('buildings', buildings.length);
@@ -354,6 +365,10 @@ console.log('buildings', buildings.length);
   const src = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) src[i] = mask[i * 4 + B] === 1 ? 1 : 0;
   const tmp = new Uint8Array(W * H), r = 3;
+  // (a footprint already paved by something else, a car park say, grows no apron: only those that mostly do keep one;
+  // the dilated outline runs ~r - 0.25 px out from the true one: the pixel centres inside sit a little in from it)
+  ground.aprons = ground.aprons.filter(a => { let n = 0, s = 0; fillRings([a.ring], i => { n++; s += src[i]; }); return n > 0 && s * 2 >= n; });
+  for (const a of ground.aprons) a.r = (r - 0.25) * RES;
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     let v = 0; for (let k = -r; k <= r && !v; k++) { const ii = i + k; if (ii >= 0 && ii < W && src[j * W + ii]) v = 1; }
     tmp[j * W + i] = v;
@@ -394,7 +409,7 @@ for (const el of roadEls) {
   const layer = parseNum(t.layer) || 0;
   if (layer < 0) continue;
   if (t.area === 'yes') {
-    if (hw === 'pedestrian' || hw === 'footway') fillRings([dropClosing(el.geometry.map(g => proj(g.lat, g.lon)))], i => { mask[i * 4 + B] = 255; });
+    if (hw === 'pedestrian' || hw === 'footway') { const ring = dropClosing(el.geometry.map(g => proj(g.lat, g.lon))); fillRings([ring], i => { mask[i * 4 + B] = 255; }); ground.polys.push({ rings: [ring], b: 255 }); }
     continue;
   }
   const pts = el.geometry.map(g => proj(g.lat, g.lon));
@@ -428,10 +443,12 @@ for (const el of roadEls) {
 // sidewalk paving in the ground mask along drivable roads (not on bridges)
 for (const r of roadsRaw) {
   if (r.bridge) continue;
-  if (r.drive && r.hw !== 'service') strokeLine(r.pts, r.width / 2 + 3.2, i => { if (mask[i * 4] > 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 220); });
-  else if (r.drive) strokeLine(r.pts, r.width / 2 + 0.8, i => { if (mask[i * 4] > 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 200); });
-  else if (r.foot && (r.hw === 'pedestrian' || r.width >= 4)) strokeLine(r.pts, r.width / 2 + 2.5, i => { if (mask[i * 4] > 200 && mask[i * 4 + G] < 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 255); });
-  else if (r.foot) strokeLine(r.pts, r.width / 2 + 0.6, i => { if (mask[i * 4] > 200 && mask[i * 4 + G] < 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 220); });
+  if (r.drive && r.hw !== 'service') { strokeLine(r.pts, r.width / 2 + 3.2, i => { if (mask[i * 4] > 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 220); }); ground.strokes.push({ pts: r.pts, r: r.width / 2 + 3.2, b: 220 }); }
+  // (service roads: the raster's asphalt runs 0.8 m past the carriageway; the class edge is the road's own edge, just
+  // under the ribbon, so verges meet its kerb and the asphalt only fills the gaps where ribbons join)
+  else if (r.drive) { strokeLine(r.pts, r.width / 2 + 0.8, i => { if (mask[i * 4] > 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 200); }); ground.strokes.push({ pts: r.pts, r: r.width / 2 - 0.1, b: 200 }); }
+  else if (r.foot && (r.hw === 'pedestrian' || r.width >= 4)) { strokeLine(r.pts, r.width / 2 + 2.5, i => { if (mask[i * 4] > 200 && mask[i * 4 + G] < 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 255); }); ground.strokes.push({ pts: r.pts, r: r.width / 2 + 2.5, b: 255 }); }
+  else if (r.foot) { strokeLine(r.pts, r.width / 2 + 0.6, i => { if (mask[i * 4] > 200 && mask[i * 4 + G] < 200) mask[i * 4 + B] = Math.max(mask[i * 4 + B], 220); }); ground.strokes.push({ pts: r.pts, r: r.width / 2 + 0.6, b: 220 }); }
 }
 
 const roads = roadsRaw.map(r => {
@@ -549,6 +566,8 @@ const city = {
 const json = JSON.stringify(city);
 await writeFile(join(outDir, 'city.json'), json);
 console.log(`city.json ${(json.length / 1e6).toFixed(2)} MB; roads ${roads.length}, trees ${trees.length / 2}, rail ${rail.length}, pois ${pois.length}`);
+
+bakeGroundSdf({ mask, sea: ground.sea, W, H, RES, XMIN, ZMIN, polys: ground.polys, strokes: ground.strokes, aprons: ground.aprons, coast: ground.coast, coastR: COAST_R });
 
 // PNG writer (RGBA8, filter 0)
 function crc32(buf) { let c, crc = 0xffffffff; for (let n = 0; n < buf.length; n++) { c = (crc ^ buf[n]) & 0xff; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc = (crc >>> 8) ^ c; } return (crc ^ 0xffffffff) >>> 0; }

@@ -1,7 +1,7 @@
 // Street-level Singapore: raised kerbs (dropped at crossings), blue street-name signs with the real road names,
 // zebra crossings with zig-zags, LOOK RIGHT/LEFT and amber Belisha beacons, tactile strips, bollards, litter bins,
 // hydrants, speed signs, tree grates, "BUS STOP" boxes, overhead pedestrian bridges with bougainvillea planters and
-// covered linkways at MRT exits. Small props live in "near pools" (one InstancedMesh per prop type, refilled with the
+// covered linkways at MRT exits, bougainvillea troughs hung along the flyover parapets. Small props live in "near pools" (one InstancedMesh per prop type, refilled with the
 // instances around the camera when it moves) so the whole city costs a handful of draw calls. Also fills the road
 // shader's lookup texture (STREET.sig: R = traffic-signal area, B = yellow-box junction).
 import * as THREE from 'three';
@@ -279,6 +279,9 @@ export class StreetDetail {
     this.buildFurniture();
     await brk();
     this.buildBridges();
+    await brk();
+    this.buildViaductPlanters();
+    this.buildQuayRailings();
     await brk();
     this.buildWear();
     // light under the linkways and footbridges in the street-light map
@@ -806,6 +809,53 @@ export class StreetDetail {
       this.buildBridge(c, hw, S, run, at, dirs);
     }
   }
+  // ---------------------------------------------------------------- flyover planters
+  // Singapore's viaducts and flyovers carry troughs of bougainvillea hung on the outside of their parapets, magenta
+  // and pink spilling over the edge: one 2.4 m bay of trough + foliage + flowers is one instance (a near pool, so only
+  // the bays round the camera are drawn, in one draw call), laid along both parapets of every raised carriageway
+  // (the city builder's deck: parapet outer face hw out from the centreline, its top 1 m above the deck)
+  buildViaductPlanters() {
+    // (blobs of leaves along the trough, flower sprays on them and trailing down its face: an uneven bay, and every
+    // instance a little taller or longer than the last, so the run doesn't read as a pattern)
+    const blob = (r, sx, sy, sz, x, y, z, hex) => colorGeo(new THREE.IcosahedronGeometry(r, 0).scale(sx, sy, sz).translate(x, y, z), hex);
+    const parts = [box(0.36, 0.36, 2.3, 0.2, 0.62, 0, 0x8c8579),
+      blob(0.42, 0.85, 0.55, 1.9, 0.25, 0.86, -0.62, 0x2f6a2a), blob(0.4, 0.9, 0.6, 1.8, 0.28, 0.88, 0.55, 0x3b7631),
+      blob(0.3, 0.8, 1.2, 1.6, 0.4, 0.6, 0.05, 0x2a5e27), // a trail of leaves down the trough's face
+      blob(0.22, 1.0, 0.6, 1.5, 0.31, 1.0, -0.25, 0xc81d7e), blob(0.2, 0.9, 1.6, 1.2, 0.44, 0.48, 0.75, 0xd83a8f)];
+    const geo = mergeGeometries(parts.map(g => { const n = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(n.attributes)) if (!['position', 'normal', 'color'].includes(k)) n.deleteAttribute(k); return n; }));
+    this.planters = this.pool(geo, this.propMat, { cap: 420, radius: 160, name: 'viaductplanter' });
+    for (const r of this.game.city.data.roads) {
+      if (r.c >= 8 || !r.b || !r.y || (r.n && /^(The Helix|OCBC Skyway)$/i.test(r.n))) continue;
+      const hw = r.w / 2, n = r.p.length / 2;
+      for (let i = 0; i + 1 < n; i++) {
+        const ax = r.p[i * 2], az = r.p[i * 2 + 1], bx = r.p[i * 2 + 2], bz = r.p[i * 2 + 3], L = Math.hypot(bx - ax, bz - az);
+        if (L < 2.4) continue;
+        const tx = (bx - ax) / L, tz = (bz - az) / L, yaw = yawOf(tx, tz), m = Math.floor(L / 2.4);
+        for (let k = 0; k < m; k++) {
+          const f = (k + 0.5 + (L / 2.4 - m) / 2) / (L / 2.4), y = r.y[i] + (r.y[i + 1] - r.y[i]) * f;
+          if (y < 4) continue; // decks low over a river or canal: no troughs
+          const x = ax + (bx - ax) * f, z = az + (bz - az) * f;
+          // local +z along the road, local +x out of the parapet: the left side as built, the right side turned round
+          const h1 = hash(x, z), h2 = hash(z, x);
+          this.planters.add(x + tz * hw, y + 0.05, z - tx * hw, yaw, 1, 0.85 + 0.3 * h1, 0.92 + 0.16 * h2);
+          this.planters.add(x - tz * hw, y + 0.05, z + tx * hw, yaw + Math.PI, 1, 0.85 + 0.3 * h2, 0.92 + 0.16 * h1);
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- quay railings
+  // the slim steel railing the city builder sets along the bay, river and canal promenades (City.railings: x, z, yaw,
+  // length per ~2.4 m bay): a post at each end of a bay (adjacent bays' posts coincide), a handrail and a mid rail.
+  // Seen, not touched: swimmers still climb out over the quay edge
+  buildQuayRailings() {
+    const R = this.game.city.railings; if (!R) return;
+    const geo = mergeGeometries([box(0.05, 1.04, 0.05, 0, 0.52, 0, 0x7d8587), box(0.05, 1.04, 0.05, 0, 0.52, 2.4, 0x7d8587),
+      box(0.06, 0.05, 2.4, 0, 1.015, 1.2, 0x8b9395), box(0.03, 0.03, 2.4, 0, 0.5, 1.2, 0x7d8587)]);
+    this.railings = this.pool(geo, this.metalMat, { cap: 700, radius: 150, name: 'quayrail' });
+    for (let i = 0; i < R.length; i += 4) this.railings.add(R[i], 0, R[i + 1], R[i + 2], 1, 1, R[i + 3] / 2.4);
+  }
+
   /** a wall/structure collider at body height here (static colliders only; the ground isn't touched at y >= 1) */
   wallAt(x, z) {
     const W = this.game.physics.world, R = this.game.physics.R;

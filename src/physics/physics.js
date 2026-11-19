@@ -92,7 +92,7 @@ export class Physics {
       for (let sr = 0; sr < n; sr++) {
         let s0 = -1; // runs of land squares along the row become one quad
         for (let sc = 0; sc <= n; sc++) {
-          const land = sc < n && !city.isWater(x0 + (sc + 0.5) * sub, z0 + (sr + 0.5) * sub);
+          const land = sc < n && city.waterEdge(x0 + (sc + 0.5) * sub, z0 + (sr + 0.5) * sub) < 0;
           if (land && s0 < 0) s0 = sc;
           else if (!land && s0 >= 0) {
             const b = verts.length / 3, xa = x0 + s0 * sub, xb = x0 + sc * sub, za = z0 + sr * sub, zb = za + sub;

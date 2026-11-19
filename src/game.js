@@ -298,7 +298,7 @@ export class Game {
     let landmarks = null;
     try {
       const mod = await import('./world/landmarks/index.js');
-      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.isWater(x, z), facade: this.city.mats.walls });
+      landmarks = await mod.createLandmarks({ THREE, city: data, renderer: this.R.renderer, quality: this.R.q === QUALITY.low ? 'low' : this.R.q === QUALITY.medium ? 'medium' : 'high', isWater: (x, z) => this.city.waterEdge(x, z) > 0, facade: this.city.mats.walls });
       this.scene.add(landmarks.group);
       gpuOnly(landmarks.group); // (colliders were built from it already)
       for (const o of landmarks.reflective || []) o.traverse(m => m.layers.enable(REFLECT_LAYER));
@@ -390,8 +390,7 @@ export class Game {
     if (params.get('rain')) this.weather.force(parseFloat(params.get('rain')));
     prog(0.93, 'Writing pitch decks');
     await brk();
-    await this.ui.radar.setMapAsync(data, this.city.maskImg, { data: this.city.mask, w: this.city.maskW, h: this.city.maskH });
-    this.city.maskImg = null; // the ground texture and the radar have their own copies now
+    await this.ui.radar.setMapAsync(data, null, { data: this.city.mask, w: this.city.maskW, h: this.city.maskH });
     await this.mark('radar map');
     await brk();
     this.missions = new Missions(this);

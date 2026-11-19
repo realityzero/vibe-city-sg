@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import { createFacadeMaterial, createRoofMaterial, createRoadMaterial, createStructMaterial, createGroundMaterial, FACADE_REC, FACADE_REC_W } from '../gfx/materials.js';
 import { REFLECT_LAYER } from './water.js';
 import { nextTask } from '../core/nextTask.js';
+import { loadGroundMask, groundEdgeDistance, GROUND_SMAX } from './groundmask.js';
+
+const SHORE_TILE = 32; // texels a side of a tile of the waterline's edge distances kept on the CPU (see waterEdge)
 
 const NOBATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
 
@@ -42,23 +45,30 @@ export class City {
   }
 
   async load(onProgress) {
-    const [data, maskImg] = await Promise.all([
-      fetch('/data/city.json').then(r => r.json()),
-      new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = '/data/ground.png'; }),
-    ]);
+    const [data, ground] = await Promise.all([fetch('/data/city.json').then(r => r.json()), loadGroundMask('/data/ground.png')]);
     this.data = data;
     this.meta = data.meta;
-    this.maskImg = maskImg;
-    // CPU copy of the mask for queries (water / vegetation / paving)
-    const cv = document.createElement('canvas'); cv.width = maskImg.width; cv.height = maskImg.height;
-    const ctx = cv.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(maskImg, 0, 0);
-    // RGB planes only (alpha is always 255): a quarter less than the RGBA readback, and the canvas goes right away
-    const rgba = ctx.getImageData(0, 0, cv.width, cv.height).data, n = cv.width * cv.height, m = new Uint8Array(n * 3);
-    for (let i = 0, j = 0; i < n; i++, j += 4) { m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2]; }
-    this.mask = m;
-    this.maskW = cv.width; this.maskH = cv.height;
-    cv.width = cv.height = 0;
+    // the CPU copy for queries (water / vegetation / paving) keeps the RGB planes, and the class-edge distances only
+    // in the tiles a waterline runs through. The ground texture is put back together from those planes and the alpha
+    // plane, kept until then (6 MB, not the decoded 25 MB, through the city build)
+    const rgba = ground.data, W = ground.w, H = ground.h, m = new Uint8Array(W * H * 3), alpha = new Uint8Array(W * H);
+    const T = SHORE_TILE, tw = Math.ceil(W / T), th = Math.ceil(H / T), shore = new Uint8Array(tw * th);
+    for (let y = 0, i = 0, j = 0; y < H; y++) for (let x = 0; x < W; x++, i++, j += 4) {
+      m[i * 3] = rgba[j]; m[i * 3 + 1] = rgba[j + 1]; m[i * 3 + 2] = rgba[j + 2]; alpha[i] = rgba[j + 3];
+      // a waterline texel: its tile and any its land-side neighbours may be in
+      if (rgba[j] < 160 && rgba[j + 3] < 255) {
+        for (let ty = Math.max(0, (y - 1) / T | 0); ty <= Math.min(th - 1, (y + 1) / T | 0); ty++) for (let tx = Math.max(0, (x - 1) / T | 0); tx <= Math.min(tw - 1, (x + 1) / T | 0); tx++) shore[ty * tw + tx] = 1;
+      }
+    }
+    this.mask = m; this.groundAlpha = alpha;
+    this.maskW = W; this.maskH = H;
+    this.shoreTiles = new Map();
+    for (let k = 0; k < shore.length; k++) {
+      if (!shore[k]) continue;
+      const tx = k % tw, ty = (k / tw) | 0, a = new Uint8Array(T * T).fill(255);
+      for (let y = 0; y < T && ty * T + y < H; y++) for (let x = 0; x < T && tx * T + x < W; x++) a[y * T + x] = alpha[(ty * T + y) * W + tx * T + x];
+      this.shoreTiles.set(k, a);
+    }
     onProgress?.(0.05, 'Map data loaded');
     return data;
   }
@@ -71,6 +81,21 @@ export class City {
     return this.mask[(j * this.maskW + i) * 3 + ch];
   }
   isWater(x, z) { return this.maskAt(x, z) < 160; }
+  /** signed distance (m, + over water) to the drawn waterline: the ground shader's edge (the water class's edge distance
+   * in the mask's alpha, interpolated between texel centres), not the 2 m texel isWater answers by */
+  waterEdge(x, z) {
+    const M = this.meta, W = this.maskW, H = this.maskH, T = SHORE_TILE, tw = Math.ceil(W / T);
+    const fx = Math.min(W - 1.001, Math.max(0, (x - M.xmin) / M.res - 0.5)), fz = Math.min(H - 1.001, Math.max(0, (z - M.zmin) / M.res - 0.5));
+    const i0 = Math.floor(fx), j0 = Math.floor(fz), u = fx - i0, v = fz - j0, m = this.mask;
+    // (no water texel among the four: land, whatever a land texel's own class edge says)
+    if (m[(j0 * W + i0) * 3] >= 160 && m[(j0 * W + i0 + 1) * 3] >= 160 && m[((j0 + 1) * W + i0) * 3] >= 160 && m[((j0 + 1) * W + i0 + 1) * 3] >= 160) return -GROUND_SMAX;
+    const at = (i, j) => {
+      const tile = this.shoreTiles.get(Math.floor(j / T) * tw + Math.floor(i / T));
+      const s = groundEdgeDistance(tile ? tile[(j % T) * T + (i % T)] : 255);
+      return this.mask[(j * W + i) * 3] < 160 ? s : -s;
+    };
+    return (at(i0, j0) * (1 - u) + at(i0 + 1, j0) * u) * (1 - v) + (at(i0, j0 + 1) * (1 - u) + at(i0 + 1, j0 + 1) * u) * v;
+  }
 
   /** facades: walls a landmark draws with the facade shader ({ geometry, records }, see _facadeRecords); placed: street
    *  furniture a landmark sets out itself ([kind, x, z, yaw, h], world/worker/streetscape.js) */
@@ -86,6 +111,7 @@ export class City {
           this.trees = m.trees;
           this.buildingInfo = m.buildingInfo;
           this.furniture = m.furniture; // street furniture: { pieces, obstacles } (world/worker/streetscape.js)
+          this.railings = m.railings; // quay railing bays: x, z, yaw, length (StreetDetail draws them)
           this.rebuilt = new Set(m.rebuilt); // OSM buildings drawn as something else (landmarks, hawker pavilions)
           this.stats = m.stats;
           this._facadeRecords(m.facadeRecords, facades);
@@ -197,9 +223,12 @@ export class City {
 
   _createGround() {
     const M = this.meta;
-    const tex = new THREE.Texture(this.maskImg);
+    const W = this.maskW, H = this.maskH, m = this.mask, a = this.groundAlpha, px = new Uint8Array(W * H * 4);
+    for (let i = 0, j = 0; i < W * H; i++, j += 4) { px[j] = m[i * 3]; px[j + 1] = m[i * 3 + 1]; px[j + 2] = m[i * 3 + 2]; px[j + 3] = a[i]; }
+    this.groundAlpha = null;
+    const tex = new THREE.DataTexture(px, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
     tex.flipY = false; tex.colorSpace = THREE.NoColorSpace; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
-    tex.generateMipmaps = true; tex.anisotropy = 8; tex.needsUpdate = true;
+    tex.generateMipmaps = true; tex.anisotropy = 8; tex.needsUpdate = true; tex.userData.releaseSource = true; tex.name = 'groundMask';
     this.groundTex = tex;
     // The ground is cut into cells: all-land cells use a shader without `discard` (so early depth rejection skips it
     // under roads, pavements and buildings), cells touching water use the discarding shore variant, pure-water cells

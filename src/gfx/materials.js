@@ -861,7 +861,7 @@ ${SHOP_UNIT_SETUP}
 export function createRoofMaterial() {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.0 });
   return patch(mat, {
-    key: 'roof-v2',
+    key: 'roof-v3',
     uniforms: COMMON_U(),
     vertexHead: COMMON_VHEAD + `attribute vec4 aRoof; varying vec4 vRoof;`,
     vertexBody: COMMON_VBODY + `vRoof = aRoof;`,
@@ -916,10 +916,21 @@ export function createRoofMaterial() {
           albedo = mix(albedo * 0.8, pv, gap);
           rgh = mix(rgh, 0.18, gap * grid); mtl = gap * 0.4;
         }
+      } else if (vRoof.z > 1.5) {
+        // a terrace's plastered firewall, streaked with grime
+        albedo *= 0.88 + 0.2 * n - 0.15 * smoothstep(0.6, 0.85, vnoise(vec2(dot(vWPos.xz, vec2(0.7)) * 0.8, vWPos.y * 2.0)));
+        rgh = 0.85;
       } else if (vRoof.z > 0.5) {
-        float rows = fract(vWPos.y * 3.2);
-        albedo *= 0.78 + 0.22 * smoothstep(0.0, 0.25, rows);
-        albedo *= 0.85 + 0.3 * hash12(floor(vec2(vWPos.x + vWPos.z, vWPos.y * 3.2) * vec2(4.0, 1.0)));
+        // half-round clay tiles in rows running down the slope (u across it, ~22 cm a row) and overlapping courses
+        // (sl down it, ~29 cm); each tile its own shade. Where rows or courses shrink below a pixel they fade to their
+        // average, so a distant roof is an even clay colour instead of moire
+        float hl = length(vWN.xz);
+        vec2 hd = hl > 0.05 ? vec2(-vWN.z, vWN.x) / hl : vec2(1.0, 0.0);
+        float u = dot(vWPos.xz, hd) * 4.6, sl = vWPos.y / max(hl, 0.25) * 3.4;
+        float fu = 1.0 - smoothstep(0.3, 0.7, fwidth(u)), fs = 1.0 - smoothstep(0.3, 0.7, fwidth(sl));
+        float barrel = 0.7 + 0.345 * sqrt(sin(fract(u) * 3.14159));
+        float course = 0.8 + 0.2 * smoothstep(0.0, 0.22, fract(sl));
+        albedo *= mix(1.0, barrel, fu) * mix(0.98, course, fs) * mix(1.0, 0.88 + 0.24 * hash12(floor(vec2(u, sl))), min(fu, fs));
         // moss / soot on old clay tiles
         albedo = mix(albedo, albedo * vec3(0.45, 0.5, 0.42), smoothstep(0.55, 0.85, vnoise(vWPos.xz * 0.3)) * 0.6);
         rgh = 0.7;
@@ -1072,7 +1083,7 @@ void pavers(vec2 p, float style, out vec3 col, out float joint, out float pid) {
 export function createRoadMaterial() {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
   return patch(mat, {
-    key: 'road-v9',
+    key: 'road-v10',
     uniforms: { ...COMMON_U(), ...STREET_U(), uRefl: REFL.tex, uReflMat: REFL.mat, uReflOn: REFL.on, uReflRoad: REFL.road },
     vertexHead: COMMON_VHEAD + `attribute vec4 aRoad; attribute vec4 aLanes; attribute vec4 aJunc; varying vec4 vRoad; varying vec4 vLanes; varying vec4 vJunc; uniform mat4 uReflMat; uniform float uReflRoad; varying vec4 vRC;`,
     // street-plane capture (no water on screen): project the actual road point; water-level capture: the old trick
@@ -1149,17 +1160,19 @@ export function createRoadMaterial() {
         albedo = mix(albedo, vec3(0.018, 0.018, 0.02), sealed * 0.85);
         rgh -= sealed * 0.45; bh += sealed * 0.0015;
         albedo *= 1.0 - 0.45 * hair * far2;
-        // lane-wide reinstatement patches (rectangular, newer or older than the road around them)
+        // lane-wide reinstatement patches: fresh black asphalt, or an older patch a shade off the road round it (its
+        // grain kept), cut a little out of true and edged with a glossy band of tar sealant
         float pc = floor(along / 27.0), la = along - pc * 27.0;
         float hp = hash12(vec2(pc, laneI + w * 3.17));
         if (hp > 0.8) {
           float a0 = 1.5 + fract(hp * 31.7) * 9.0, a1 = a0 + 2.5 + fract(hp * 17.3) * 13.0;
           float l0 = fract(hp * 5.1) * 0.25, l1 = 0.7 + fract(hp * 9.7) * 0.32;
-          float inP = aaBand(la, a0, a1) * aaBand(lanePos, l0, l1);
-          float seam = inP * (1.0 - aaBand(la, a0 + 0.07, a1 - 0.07) * aaBand(lanePos, l0 + 0.02, l1 - 0.02));
-          vec3 pcol = fract(hp * 3.3) > 0.4 ? vec3(0.034, 0.034, 0.037) : vec3(0.1, 0.097, 0.09);
-          albedo = mix(albedo, pcol * (0.9 + 0.2 * n2), inP * 0.92);
-          albedo *= 1.0 - 0.35 * seam;
+          float pa = la + (vnoise(vec2(lanePos * 7.0, pc)) - 0.5) * 0.12, pl = lanePos + (vnoise(vec2(along * 0.9, laneI + 3.0)) - 0.5) * 0.03;
+          float inP = aaBand(pa, a0, a1) * aaBand(pl, l0, l1);
+          float seam = inP * (1.0 - aaBand(pa, a0 + 0.06, a1 - 0.06) * aaBand(pl, l0 + 0.018, l1 - 0.018));
+          vec3 pcol = fract(hp * 3.3) > 0.45 ? vec3(0.03, 0.03, 0.033) * (0.9 + 0.2 * n2) : albedo * vec3(0.84, 0.85, 0.88);
+          albedo = mix(albedo, pcol, inP * 0.92);
+          albedo = mix(albedo, vec3(0.012), seam * 0.75); rgh -= seam * 0.3;
           bh += inP * 0.003;
         }
         // long utility-trench reinstatement
@@ -1253,6 +1266,24 @@ export function createRoadMaterial() {
             float border = aaBand(edge, 0.25, 0.4);
             ym = max(ym, max(max(h1, h2), border) * inJ * step(0.5, edge));
           }
+        } else if (cls < 7.5) {
+          // estate and service roads: a precast kerb along each edge (where the ground's verge meets the road), its
+          // face's shadow on the asphalt, a yellow no-parking line inside it, and every so often, clear of the
+          // junctions, a road hump painted in black and yellow stripes
+          float kerb = (1.0 - aaStep(0.15, edge)) * jOK;
+          albedo = mix(albedo, vec3(0.34, 0.33, 0.31) * (0.85 + 0.3 * n2), kerb);
+          albedo *= 1.0 - 0.5 * aaBand(edge, 0.15, 0.21) * jOK;
+          bh += kerb * 0.01; rgh = mix(rgh, 0.8, kerb);
+          ym = aaBand(edge, 0.36, 0.44) * jOK;
+          float hc = floor(along / 48.0), hh = hash12(vec2(hc, w * 2.3 + 1.0));
+          float ha = along - hc * 48.0 - 14.0 - fract(hh * 7.1) * 20.0;
+          if (hh > 0.45 && abs(ha) < 0.8 && min(vJunc.x - vJunc.z, vJunc.y - vJunc.w) > 12.0) {
+            float hump = aaBand(ha, -0.7, 0.7) * step(0.15, edge);
+            float yel = aaPulse((s * 0.8 + ha) / 0.6, 0.5);
+            albedo = mix(albedo, mix(vec3(0.015), vec3(0.6, 0.43, 0.03), yel) * (0.75 + 0.35 * vnoise(wp * 2.3)), hump * 0.9);
+            bh += cos(clamp(ha / 0.7, -1.0, 1.0) * 1.5708) * 0.035 * step(0.15, edge);
+            rgh = mix(rgh, 0.55, hump);
+          }
         }
       } else if (kind > 3.5) {
         // junction disc: plain asphalt (+ yellow box hatch)
@@ -1329,63 +1360,150 @@ export function createStructMaterial() {
 }
 
 // ------------------------------------------------------------------ ground
+// 256x256 tiling lawn microstructure for grass seen up close (cut cow grass from above): R blade light and shade, G
+// blade height, B clump density, A clover and broadleaf weeds. Periodic throughout, so it tiles seamlessly.
+let _grassTex = null;
+function grassDetail() {
+  const N = 256, lum = new Float32Array(N * N), hgt = new Float32Array(N * N), weed = new Float32Array(N * N), px = new Uint8Array(N * N * 4);
+  let seed = 9071; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const h = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+  const vn = (x, y, p) => { // periodic value noise with period p cells
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const c = (a, b) => h(((a % p) + p) % p, ((b % p) + p) % p);
+    return (c(xi, yi) * (1 - u) + c(xi + 1, yi) * u) * (1 - v) + (c(xi, yi + 1) * (1 - u) + c(xi + 1, yi + 1) * u) * v;
+  };
+  const wrap = v => ((Math.floor(v) % N) + N) % N;
+  // blades: short strokes in every direction, lit towards the tip; the gaps between them are the shaded thatch below
+  for (let k = 0; k < 7000; k++) {
+    const x0 = rnd() * N, y0 = rnd() * N, a = rnd() * Math.PI * 2, len = 5 + rnd() * 10, shade = 0.5 + rnd() * 0.5;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    for (let t = 0; t <= len; t += 0.5) {
+      const i = wrap(y0 + sa * t) * N + wrap(x0 + ca * t), f = t / len;
+      lum[i] = Math.max(lum[i], shade * (0.65 + 0.35 * f)); hgt[i] = Math.max(hgt[i], 0.4 + 0.6 * f);
+    }
+  }
+  // clover / broadleaf rosettes in a few loose colonies
+  for (let k = 0; k < 26; k++) {
+    const cx = rnd() * N, cy = rnd() * N, n = 3 + Math.floor(rnd() * 9);
+    for (let q = 0; q < n; q++) {
+      const lx = cx + (rnd() - 0.5) * 30, ly = cy + (rnd() - 0.5) * 30, r = 1.8 + rnd() * 2.6;
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d = Math.hypot(dx, dy) / r; if (d < 1) { const i = wrap(ly + dy) * N + wrap(lx + dx); weed[i] = Math.max(weed[i], 1 - d * d); } }
+    }
+  }
+  let mean = 0; for (let i = 0; i < N * N; i++) mean += lum[i]; mean /= N * N;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x, o = i * 4;
+    px[o] = Math.round(Math.min(1, Math.max(0, 0.5 + (lum[i] - mean) * 0.85)) * 255);
+    px[o + 1] = Math.round(hgt[i] * 255);
+    px[o + 2] = Math.round(Math.min(1, Math.max(0, 0.5 + (vn(x / 32, y / 32, 8) - 0.5) * 0.9 + (vn(x / 8, y / 8, 32) - 0.5) * 0.4)) * 255);
+    px[o + 3] = Math.round(weed[i] * 255);
+  }
+  const t = new THREE.DataTexture(px, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+  t.userData.releaseSource = true; t.name = 'grassDetail';
+  return t;
+}
+
 // shore: the variant for ground cells that touch water (it discards water pixels so the bay shows through); the main
 // land variant has no discard, so the GPU's early depth test skips it wherever roads, pavements or buildings cover it
 export function createGroundMaterial(maskTex, meta, { shore = true } = {}) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0.0 });
   const sizeW = meta.w * meta.res, sizeH = meta.h * meta.res;
   return patch(mat, {
-    key: shore ? 'ground-v7-shore' : 'ground-v7',
-    uniforms: { ...COMMON_U(), ...STREET_U(), uMask: { value: maskTex }, uMaskOrigin: { value: new THREE.Vector2(meta.xmin, meta.zmin) }, uMaskSize: { value: new THREE.Vector2(sizeW, sizeH) } },
+    key: shore ? 'ground-v8-shore' : 'ground-v8',
+    uniforms: { ...COMMON_U(), ...STREET_U(), uMask: { value: maskTex }, uMaskOrigin: { value: new THREE.Vector2(meta.xmin, meta.zmin) }, uMaskSize: { value: new THREE.Vector2(sizeW, sizeH) }, uGrass: { value: _grassTex || (_grassTex = grassDetail()) } },
     vertexHead: COMMON_VHEAD, vertexBody: COMMON_VBODY,
-    fragHead: COMMON_HEAD + STREET_GLSL + `uniform sampler2D uMask; uniform vec2 uMaskOrigin; uniform vec2 uMaskSize;
-// The mask's G/B channels hold class codes (plaza 1.0, sidewalk 0.86, car park 0.78, apron 0.59; park 1.0, woods
-// 0.71, pitch 0.39). A filtered code between two classes is a third one: a plaza next to bare ground filtered
-// through car-park asphalt (dark snakes along every plaza edge), a lawn next to nothing through sports pitch. So the
-// class is always one of the four surrounding texels' own codes: the one nearest the bilinear value f (smooth class
-// borders, same shape as before), ignoring texels below lo (unpaved / unvegetated). 0 if none qualifies.
-float maskClass(vec4 v, float f, float lo) {
-  vec4 d = abs(v - f) + step(v, vec4(lo)) * 9.0;
-  float m = min(min(d.x, d.y), min(d.z, d.w));
-  vec4 k = step(d, vec4(m));
-  return m > 8.0 ? 0.0 : dot(v, k) / dot(k, vec4(1.0));
-}`,
+    fragHead: COMMON_HEAD + STREET_GLSL + `uniform sampler2D uMask; uniform vec2 uMaskOrigin; uniform vec2 uMaskSize; uniform sampler2D uGrass;
+// The mask's R/G/B channels hold class codes (water R < 0.63; park 1.0, woods 0.71, pitch 0.39 in G; plaza 1.0,
+// sidewalk 0.86, car park 0.78, building apron 0.59 in B) and A each texel's signed distance to the edge of its own
+// class, +-GSMAX m over 0..1 (tools/ground-sdf.mjs, whose classOf() groundClass() mirrors): 0 water, 1 vegetation,
+// 2 plaza, 3 sidewalk, 4 car park, 5 apron, 6 pitch, 7 bare ground
+const float GSMAX = 3.0;
+float groundClass(vec3 c) {
+  if (c.r < 0.6255) return 0.0;
+  if (c.g > 0.547) return 1.0;
+  if (c.b > 0.4373) return c.b > 0.951 ? 2.0 : c.b > 0.8294 ? 3.0 : c.b > 0.7471 ? 4.0 : 5.0;
+  return c.g > 0.194 ? 6.0 : 7.0;
+}
+// what a class covers the ground with: x vegetation (lawn, woods or pitch), y pitch turf, z paving
+vec3 classCover(float c) { return vec3(c == 1.0 || c == 6.0 ? 1.0 : 0.0, c == 6.0 ? 1.0 : 0.0, c > 1.5 && c < 5.5 ? 1.0 : 0.0); }
+// a paving class's code in the B channel (what the paving branch shades by)
+float classB(float c) { return c < 2.5 ? 1.0 : c < 3.5 ? 0.86 : c < 4.5 ? 0.78 : 0.59; }
+// share of the pixel footprint [x - w, x + w] inside [lo, hi]: crisp up close, a band's faint average once sub-pixel
+float bandF(float x, float lo, float hi, float w) { return clamp((min(hi, x + w) - max(lo, x - w)) / (2.0 * w), 0.0, 1.0); }`,
     fragAfterEmissive: `normal = bumpNormal(normal, bh, vViewPosition);
       if (uNight > 0.02) totalEmissiveRadiance += diffuseColor.rgb * lampLight(wp, camD);`,
     fragAfterMetal: /* glsl */`
       float bh = 0.0;
       float camD = distance(cameraPosition, vWPos);
       float fnear = 1.0 - smoothstep(12.0, 60.0, camD);
-      vec2 wp = vWPos.xz;
+      vec2 wp = vWPos.xz, dwx = dFdx(wp), dwy = dFdy(wp);
       vec2 muv = (wp - uMaskOrigin) / uMaskSize;
       vec4 m = texture2D(uMask, muv);
       bool outside = muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0;
-      ${shore ? 'if (m.r < 0.627) discard;' : ''}
       float g = outside ? 0.5 : m.g, b = outside ? 0.5 : m.b;
       float n1 = fbm3(wp * 0.07);
-      // vegetation channel: crisp, slightly irregular edges (the mask is only 2 m/px)
       float edgeN = (vnoise(wp * 0.9) - 0.5) * 0.12 + (vnoise(wp * 3.7) - 0.5) * 0.05;
-      // class codes from the unfiltered texels (see maskClass); coverage stays with the filtered, mip-mapped m.
-      // (Everywhere, not only where the filtered code varies across the pixel quad: the GPU's filter weights come in
-      // steps, so that test came and went in rings near every class border, and where it failed the pixel took the
-      // blended code's class — a dot lattice over sidewalks and plazas.)
-      float gc = g, bc = b;
+      // What covers the ground (cv: x vegetation, y pitch turf, z paving; bc the paving's code). Far away, where a pixel
+      // spans texels: the filtered, mip-mapped mask, its class borders soft and a little ragged. Nearer: the four
+      // surrounding texels' classes and edge distances (see groundClass), which put a class edge where the map has it,
+      // straight or curved, crisp to the pixel, and say how far this pixel is from it for the kerbs, edging courses and
+      // quay coping drawn along it (edgeK: 1 a kerb seen from the paving, -1 from the verge, 2 a joint between two
+      // pavings, 3 the water's edge; edgeD metres from the edge; edgeW the pixel's half-width across it). Read
+      // everywhere, not only where the filtered mask varies across the pixel quad: the GPU's filter weights come in
+      // steps, so such a test comes and goes in rings near every class border (a dot lattice over sidewalks and plazas)
+      vec3 cv = vec3(smoothstep(0.36, 0.42, g + edgeN), 0.0, b > 0.4 && g < 0.55 ? smoothstep(0.44, 0.5, b + edgeN) : 0.0);
+      cv.y = cv.x * (1.0 - smoothstep(0.42, 0.62, g + edgeN));
+      float bc = b, edgeK = 0.0, edgeD = 9.0, edgeW = 0.01;
+      bool wet = !outside && m.r < 0.627;
       if (!outside) {
         ivec2 msz = textureSize(uMask, 0);
         vec2 tc = muv * vec2(msz) - 0.5;
-        ivec2 t0 = clamp(ivec2(floor(tc)), ivec2(0), msz - 2);
-        vec2 tf = clamp(tc - vec2(t0), 0.0, 1.0);
-        vec4 q00 = texelFetch(uMask, t0, 0), q10 = texelFetch(uMask, t0 + ivec2(1, 0), 0), q01 = texelFetch(uMask, t0 + ivec2(0, 1), 0), q11 = texelFetch(uMask, t0 + ivec2(1, 1), 0);
-        vec4 lw = vec4((1.0 - tf.x) * (1.0 - tf.y), tf.x * (1.0 - tf.y), (1.0 - tf.x) * tf.y, tf.x * tf.y);
-        vec4 qg = vec4(q00.g, q10.g, q01.g, q11.g), qb = vec4(q00.b, q10.b, q01.b, q11.b);
-        gc = maskClass(qg, dot(qg, lw) + edgeN, 0.3); bc = maskClass(qb, dot(qb, lw) + edgeN, 0.4);
-        // (far away the mip-filtered coverage can reach past these four texels: keep its own code there)
-        if (gc < 0.3) gc = g;
-        if (bc < 0.4) bc = b;
+        float crisp = 1.0 - smoothstep(0.8, 1.6, max(length(dwx), length(dwy)) * float(msz.x) / uMaskSize.x); // texels a pixel
+        if (crisp > 0.0) {
+          ivec2 t0 = clamp(ivec2(floor(tc)), ivec2(0), msz - 2);
+          vec2 tf = clamp(tc - vec2(t0), 0.0, 1.0);
+          vec4 q00 = texelFetch(uMask, t0, 0), q10 = texelFetch(uMask, t0 + ivec2(1, 0), 0), q01 = texelFetch(uMask, t0 + ivec2(0, 1), 0), q11 = texelFetch(uMask, t0 + ivec2(1, 1), 0);
+          vec4 L = vec4(groundClass(q00.rgb), groundClass(q10.rgb), groundClass(q01.rgb), groundClass(q11.rgb));
+          vec4 S = (vec4(q00.a, q10.a, q01.a, q11.a) - 0.5) * (2.0 * GSMAX);
+          vec4 lw = vec4((1.0 - tf.x) * (1.0 - tf.y), tf.x * (1.0 - tf.y), (1.0 - tf.x) * tf.y, tf.x * tf.y);
+          // per corner class: its texels' distances counted +, the others' - (between two classes a straight edge comes
+          // back exactly); the best is the class here, the best of the rest the one across the nearest edge
+          vec4 f = vec4(dot(lw, S * (2.0 * vec4(equal(L, L.xxxx)) - 1.0)), dot(lw, S * (2.0 * vec4(equal(L, L.yyyy)) - 1.0)),
+                        dot(lw, S * (2.0 * vec4(equal(L, L.zzzz)) - 1.0)), dot(lw, S * (2.0 * vec4(equal(L, L.wwww)) - 1.0)));
+          float cA = L.x, fA = f.x;
+          if (f.y > fA) { cA = L.y; fA = f.y; }
+          if (f.z > fA) { cA = L.z; fA = f.z; }
+          if (f.w > fA) { cA = L.w; fA = f.w; }
+          vec4 fo = mix(vec4(-1e3), f, vec4(notEqual(L, vec4(cA))));
+          float fB = max(max(fo.x, fo.y), max(fo.z, fo.w));
+          float cB = fB < -500.0 ? cA : fB == fo.x ? L.x : fB == fo.y ? L.y : fB == fo.z ? L.z : L.w;
+          vec3 cc = classCover(cA);
+          if (cB != cA) {
+            // distance from the edge (half the gap between the two classes' fields) and the pixel's extent across it
+            vec4 v = S * (vec4(equal(L, vec4(cA))) - vec4(equal(L, vec4(cB))));
+            vec2 gd = vec2(mix(v.y - v.x, v.w - v.z, tf.y), mix(v.z - v.x, v.w - v.y, tf.x));
+            gd /= max(length(gd), 1e-5);
+            edgeW = max(0.5 * (abs(dot(dwx, gd)) + abs(dot(dwy, gd))), 1e-3);
+            float d = 0.5 * (fA - fB);
+            bool pavA = cA > 1.5 && cA < 5.5, pavB = cB > 1.5 && cB < 5.5;
+            // lawn, pitch and bare earth meet along a ragged line
+            if (!pavA && !pavB && cA != 0.0 && cB != 0.0) {
+              float sh = (vnoise(wp * 0.9) - 0.5) * 0.9 + (vnoise(wp * 3.1) - 0.5) * 0.3;
+              d += cA < cB ? sh : -sh;
+              if (d < 0.0) { float t = cA; cA = cB; cB = t; d = -d; }
+            }
+            cc = mix(classCover(cB), classCover(cA), clamp(0.5 + d / (2.0 * edgeW), 0.5, 1.0));
+            edgeD = d;
+            edgeK = crisp < 0.5 ? 0.0 : cB == 0.0 ? 3.0 : pavA && pavB ? 2.0 : pavA ? 1.0 : pavB && cA != 0.0 ? -1.0 : 0.0;
+          }
+          cv = mix(cv, cc, crisp);
+          bc = cA > 1.5 && cA < 5.5 ? classB(cA) : cB > 1.5 && cB < 5.5 ? classB(cB) : b;
+          wet = crisp > 0.5 ? cA == 0.0 : wet;
+        }
       }
-      float gv = smoothstep(0.36, 0.42, g + edgeN);
-      float kerbG = (1.0 - smoothstep(0.0, 0.035, abs(g + edgeN - 0.39))) * step(0.3, b);
-      float pavW = b > 0.4 && g < 0.55 ? smoothstep(0.44, 0.5, b + edgeN) : 0.0;
+      ${shore ? 'if (wet) discard;' : ''}
+      float gv = cv.x, pavW = cv.z;
       vec3 col = vec3(0.17, 0.12, 0.08); float rgh = 0.95;
       // grass / dirt / pitches — skipped where paving covers the ground completely (most of the city floor)
       if (pavW < 0.999) {
@@ -1393,13 +1511,13 @@ float maskClass(vec4 v, float f, float lo) {
         // grass (Singapore: lush, cut cow grass) with dry patches
         vec3 grass = mix(vec3(0.06, 0.13, 0.022), vec3(0.1, 0.19, 0.035), n1) * (0.85 + 0.25 * n2);
         grass = mix(grass, vec3(0.16, 0.16, 0.07), smoothstep(0.62, 0.8, n3) * 0.5);
-        // close up: clumps, clover and blade-scale grain so lawns stop looking like felt
-        float gnear = 1.0 - smoothstep(10.0, 45.0, camD);
+        // close up: blades, clumps and clover from the lawn texture at two scales and angles (no felt)
+        float gnear = 1.0 - smoothstep(12.0, 42.0, camD);
         if (gnear > 0.0) {
-          float bf = cellFade(wp, 58.0);
-          float clump = vnoise(wp * 1.6), blade = bf > 0.0 ? speckle(wp, 32.0) : 0.5, blade2 = vnoise(mat2(0.8, -0.6, 0.6, 0.8) * wp * 9.0);
-          grass *= 1.0 + ((clump - 0.5) * 0.35 + (blade2 - 0.5) * 0.3 * cellFade(wp, 9.0) + (blade - 0.5) * 0.32 * bf) * gnear;
-          bh += (blade2 * 0.6 + (blade - 0.5) * 0.4 * bf) * 0.008 * gnear;
+          vec4 gt = texture2D(uGrass, wp * 1.1), gt2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * wp * 0.27 + 0.37);
+          grass *= 1.0 + ((gt.r - 0.5) * 0.75 + (gt2.b - 0.5) * 0.45) * gnear;
+          grass = mix(grass, vec3(0.045, 0.14, 0.035) * (0.75 + 0.6 * gt.r), max(gt.a, gt2.a * 0.8) * 0.65 * gnear);
+          bh += (gt.g - 0.5) * 0.008 * gnear;
         }
         grass = mix(grass, grass * vec3(0.8, 1.15, 0.7), smoothstep(0.7, 0.8, vnoise(wp * 0.9 + 5.0)) * 0.5);
         vec3 pitch = mix(vec3(0.08, 0.2, 0.04), vec3(0.11, 0.26, 0.05), step(0.5, fract(wp.x * 0.1)));
@@ -1408,11 +1526,12 @@ float maskClass(vec4 v, float f, float lo) {
         // (woods darker than lawn and a pitch's brighter turf fade across the filtered mask: switching per 2 m texel drew
         // squares wherever a stray pitch or woods texel sits in a lawn)
         vec3 lawn = grass * mix(0.75, 1.0, smoothstep(0.74, 0.97, g + edgeN * 1.5));
-        vec3 gcol = gc < 0.5 ? mix(pitch, lawn, smoothstep(0.42, 0.62, g + edgeN)) : lawn;
-        col = mix(col, gcol, gv);
+        col = mix(col, mix(lawn, pitch, cv.y / max(gv, 1e-3)), gv);
+        // a verge along a kerb: a dark contact line, then patches of trodden earth for a hand's width
+        if (edgeK < -0.5) col = mix(mix(col, vec3(0.1, 0.075, 0.05) * (0.8 + 0.4 * n1), bandF(edgeD, 0.0, 0.25, edgeW) * smoothstep(0.35, 0.75, vnoise(wp * 2.7)) * 0.5), vec3(0.02, 0.016, 0.012), bandF(edgeD, 0.0, 0.035, edgeW));
       }
       // paving channel
-      if (b > 0.4 && g < 0.55) {
+      if (pavW > 0.0) {
         vec3 pav;
         float stain = smoothstep(0.6, 0.74, fbm3(wp * 0.33 + 4.0));
         if (bc > 0.95) { // plaza granite: 600 mm tiles, speckled, occasional darker accent courses, thin grout
@@ -1465,11 +1584,27 @@ float maskClass(vec4 v, float f, float lo) {
         col = mix(col, pav, pavW);
         bh *= pavW;
       }
-      col = mix(col, vec3(0.42, 0.41, 0.38), kerbG * 0.85); // concrete kerb where paving meets grass
-      float puddle = uWet > 0.01 ? smoothstep(0.6, 0.66, n1) * uWet * step(0.4, b) : 0.0;
+      if (edgeK > 0.5) {
+        if (edgeK < 1.5) { // precast concrete kerb on the paving side, a dark contact line at the grass
+          float k = bandF(edgeD, 0.0, 0.15, edgeW);
+          col = mix(col, vec3(0.36, 0.352, 0.33) * (0.85 + 0.3 * vnoise(wp * 5.0)), k);
+          col = mix(col, vec3(0.02, 0.016, 0.012), bandF(edgeD, 0.0, 0.02, edgeW));
+          bh += k * 0.012; rgh = mix(rgh, 0.8, k);
+        } else if (edgeK < 2.5) { // a course of dark granite edging where one paving meets another
+          float k = bandF(edgeD, 0.0, 0.07, edgeW);
+          col = mix(col, vec3(0.1, 0.097, 0.092) * (0.85 + 0.3 * vnoise(wp * 7.0)), k); bh -= k * 0.002; rgh = mix(rgh, 0.6, k);
+        } else { // the quay's pale granite coping (as at the Merlion), a dark arris on the water side
+          float k = bandF(edgeD, 0.0, 0.75, edgeW);
+          vec3 gr = vec3(0.4, 0.388, 0.36) * (0.86 + 0.22 * hash12(floor(wp * 0.9))) * (1.0 + (fnear > 0.0 ? speckle(wp, 40.0) - 0.5 : 0.0) * 0.4 * fnear);
+          col = mix(col, gr, k);
+          col = mix(col, col * 0.45, bandF(edgeD, 0.0, 0.025, edgeW) + bandF(edgeD, 0.75, 0.77, edgeW) * 0.6);
+          bh += k * 0.01; rgh = mix(rgh, 0.62, k);
+        }
+      }
+      float puddle = uWet > 0.01 ? smoothstep(0.6, 0.66, n1) * uWet * step(0.5, pavW) : 0.0;
       col *= mix(1.0, 0.65, uWet);
       col = mix(col, col * 0.5, puddle);
-      rgh = mix(rgh, mix(0.35, 0.03, puddle), uWet * step(0.4, b));
+      rgh = mix(rgh, mix(0.35, 0.03, puddle), uWet * step(0.5, pavW));
       bh *= 1.0 - puddle;
       diffuseColor.rgb = col;
       roughnessFactor = rgh;

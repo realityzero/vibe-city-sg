@@ -33,6 +33,11 @@ Headless screenshots: `node tests/shot.mjs <url> <out.png>` (Playwright chromium
     crests. The build fails (`validateBridges`) on a deck that dips to the ground between raised spans, steps where two
     meet, or climbs steeper than its grade.
 - `ground.png` — 2 m/px RGBA mask over the bbox. R: 255 land / 128 pond / 0 water. G: vegetation (255 park/grass, 180 woods, 100 pitch). B: paving (255 plaza, 220 sidewalk, 200 parking, 150 building apron).
+  A: signed distance (+-3 m) from the texel's centre to the edge of its ground class, measured on the vector geometry the
+  raster came from (`tools/ground-sdf.mjs`): the ground shader interpolates it into crisp sub-texel class edges, with
+  kerbs, edging courses and the quays' granite coping along them; seawalls follow the same contour. Read it with
+  `world/groundmask.js` (a canvas premultiplies colour by alpha: the class codes would come back rounded);
+  `City.waterEdge(x, z)` is the drawn waterline as a distance (shore shelf, landmark sites).
 
 ## Shared runtime contracts
 - `src/gfx/globals.js` exports shared uniform objects (`U.time`, `U.night` 0..1, `U.rain` 0..1, `U.wet`, `U.sunDir`, `U.wind`) — any custom shader may reference them; the engine updates them every frame.
@@ -269,7 +274,11 @@ for a while, so allocation *churn* during the load matters as well as what stays
   waterline. Vehicles live with that (boat exits use `Boat.shoreSpot()`, moorings `Spawns.findBerth()`, which keeps
   every starting boat within boarding reach of a solid quay — `tests/scratch/boats.mjs` boards each one). Characters
   also collide with a flat **shore shelf** (`Physics.addShoreShelf`, group `SHORE`, a trimesh of 1 m drawn-land squares
-  over the sloping cells), so on foot the quay edge is exactly where it is drawn.
+  over the sloping cells, by `City.waterEdge`), so on foot the quay edge is exactly where it is drawn.
+- Seawalls (city builder) stand on that drawn waterline, the zero contour of the water class's edge distance: a face,
+  a pale granite coping lipping over it (the ground draws the coping's top), and along the bay, river and canal
+  promenades a slim steel railing (`City.railings`, a `StreetDetail` near pool) that is seen but not collided with —
+  swimmers still climb out over the edge.
 - **Swimming** (`Player.updateSwim`): below `WATER_LEVEL - 0.6` Tommy floats on a damped spring (treading water /
   front crawl anims), is kept inside the drawn water (the land sheet overhangs the bank), and `findLedge()` down-rays
   for dry level ground within reach (railings up to ~1.6 m above the water are vaulted, walls are not) to play the
@@ -290,6 +299,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   thumbs' way. `tests/scratch/touch.mjs [WxH]` drives it with real CDP multi-touch on an emulated phone/tablet.
 - Post: the composer only draws to the screen from the last pass *added*, so `Renderer.outPass` (FXAA on sqrt luma,
   after SMAA) is the output whenever SMAA is off — without it the Low preset rendered black. Low has no film grain.
+- Flyover and viaduct parapets carry troughs of bougainvillea (`StreetDetail.buildViaductPlanters`, a near pool of
+  2.4 m bays on every raised carriageway deck over 4 m up).
 - Footbridges (`StreetDetail.buildBridges`) pick, per end, the stair direction whose flight and foot are clear of
   walls, tree trunks and traffic lanes, and leave gaps in the deck parapet at the landings.
   `tests/scratch/bridgewalk.mjs` walks over every bridge, `bridgeexits.mjs` checks each stair foot floods out to a sidewalk.
@@ -310,7 +321,8 @@ for a while, so allocation *churn* during the load matters as well as what stays
   fixed tables (some choped with tissue packets), fans and tray returns inside (`worker/hawkerhall.js` lays them out;
   they're street furniture). Each stall's lightbox, photo menus and NEA sticker are near-detail facade quads (style 15)
   sampling the sign atlas's food pool (`gfx/signAtlas.js`), lit while it trades. Long shophouse walls are rows of
-  ~5.5 m units in their own pastels; shophouses let as hotels or offices still trade at street level.
+  ~5.5 m units in their own pastels; shophouses let as hotels or offices still trade at street level. A terrace's
+  gable roof is split on the same grid, a roof per unit with a plastered firewall between.
 - Chinatown's lantern strings (`world/streetprops.js`) are strung only where rays from the street find a facade on
   both sides, and never through a street tree's crown. Every building outline (and each landmark footprint) is stamped
   into the builder's occupancy grid before trees are planted, so no crown grows through a roof.
